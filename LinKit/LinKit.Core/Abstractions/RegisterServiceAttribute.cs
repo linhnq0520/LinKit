@@ -19,7 +19,10 @@ public sealed class RegisterServiceAttribute : Attribute
     /// </summary>
     public Type? ServiceType { get; }
 
-    public RegisterServiceAttribute(Lifetime lifetime = Lifetime.Transient, Type? serviceType = null)
+    public RegisterServiceAttribute(
+        Lifetime lifetime = Lifetime.Transient,
+        Type? serviceType = null
+    )
     {
         Lifetime = lifetime;
         ServiceType = serviceType;

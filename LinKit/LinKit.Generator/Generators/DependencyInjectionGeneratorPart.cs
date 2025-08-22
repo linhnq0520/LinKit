@@ -1,50 +1,125 @@
-﻿using Microsoft.CodeAnalysis;
-using Microsoft.CodeAnalysis.CSharp.Syntax;
-using Microsoft.CodeAnalysis.Text;
-using System.Collections.Generic;
+﻿using System.Collections.Generic;
 using System.Linq;
 using System.Text;
-using static LinKit.Generator.Generators.SourceGenerationHelper;
+using LinKit.Core.Abstractions;
+using Microsoft.CodeAnalysis;
+using Microsoft.CodeAnalysis.CSharp.Syntax;
+using Microsoft.CodeAnalysis.Text;
 
 namespace LinKit.Generator.Generators;
 
 internal static class DependencyInjectionGeneratorPart
 {
-    private const string RegisterServiceAttributeName = "LinKit.Core.Abstractions.RegisterServiceAttribute";
+    private const string RegisterServiceAttributeName =
+        "LinKit.Core.Abstractions.RegisterServiceAttribute";
 
     public static void Initialize(IncrementalGeneratorInitializationContext context)
     {
-        IncrementalValuesProvider<(INamedTypeSymbol Implementation, AttributeData Attribute)> serviceDeclarations = context.SyntaxProvider
-            .ForAttributeWithMetadataName(
+        IncrementalValuesProvider<(
+            INamedTypeSymbol Implementation,
+            AttributeData Attribute
+        )> serviceDeclarations = context
+            .SyntaxProvider.ForAttributeWithMetadataName(
                 RegisterServiceAttributeName,
                 predicate: (node, _) => node is ClassDeclarationSyntax,
-                transform: (ctx, _) => (Implementation: (INamedTypeSymbol)ctx.TargetSymbol, Attribute: ctx.Attributes[0]))
+                transform: (ctx, _) =>
+                    (
+                        Implementation: (INamedTypeSymbol)ctx.TargetSymbol,
+                        Attribute: ctx.Attributes[0]
+                    )
+            )
             .Where(x => x.Implementation is not null);
 
-        IncrementalValueProvider<IReadOnlyList<ServiceInfo>> collectedServices =
-            serviceDeclarations.Collect().Select((services, _) =>
-            {
-                var serviceInfos = new List<ServiceInfo>();
-                foreach (var (implementation, attribute) in services)
+        IncrementalValueProvider<IReadOnlyList<ServiceInfo>> collectedServices = serviceDeclarations
+            .Collect()
+            .Select(
+                (services, _) =>
                 {
-                    var lifetime = (int)(attribute.ConstructorArguments[0].Value ?? 0);
-                    var serviceTypeSymbol = attribute.ConstructorArguments[1].Value as INamedTypeSymbol;
-                    var serviceTypeName = serviceTypeSymbol?.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat)
-                                          ?? implementation.AllInterfaces.FirstOrDefault()?.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat)
-                                          ?? implementation.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
+                    var serviceInfos = new List<ServiceInfo>();
+                    foreach (var (implementation, attribute) in services)
+                    {
+                        var lifetime = (int)(attribute.ConstructorArguments[0].Value ?? 0);
+                        var serviceTypeSymbol =
+                            attribute.ConstructorArguments[1].Value as INamedTypeSymbol;
+                        var serviceTypeName =
+                            serviceTypeSymbol?.ToDisplayString(
+                                SymbolDisplayFormat.FullyQualifiedFormat
+                            )
+                            ?? implementation
+                                .AllInterfaces.FirstOrDefault()
+                                ?.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat)
+                            ?? implementation.ToDisplayString(
+                                SymbolDisplayFormat.FullyQualifiedFormat
+                            );
 
-                    serviceInfos.Add(new ServiceInfo(
-                        serviceTypeName,
-                        implementation.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat),
-                        lifetime));
+                        serviceInfos.Add(
+                            new ServiceInfo(
+                                serviceTypeName,
+                                implementation.ToDisplayString(
+                                    SymbolDisplayFormat.FullyQualifiedFormat
+                                ),
+                                lifetime
+                            )
+                        );
+                    }
+                    return (IReadOnlyList<ServiceInfo>)serviceInfos;
                 }
-                return (IReadOnlyList<ServiceInfo>)serviceInfos;
-            });
+            );
 
-        context.RegisterSourceOutput(collectedServices, (spc, services) =>
+        context.RegisterSourceOutput(
+            collectedServices,
+            (spc, services) =>
+            {
+                if (!services.Any())
+                    return;
+                spc.AddSource(
+                    "Services.DependencyInjection.g.cs",
+                    SourceText.From(GenerateServicesDI(services), Encoding.UTF8)
+                );
+            }
+        );
+    }
+
+    public static string GenerateServicesDI(IReadOnlyList<ServiceInfo> services)
+    {
+        var sb = new StringBuilder();
+        sb.AppendLine(
+            @"// <auto-generated/> by LinKit.Generator
+#nullable enable
+using Microsoft.Extensions.DependencyInjection;
+using LinKit.Core.Abstractions;
+
+namespace LinKit.Core
+{
+    public static class ServicesExtensions
+    {
+        public static IServiceCollection AddGeneratedServices(this IServiceCollection services)
+        {"
+        );
+
+        foreach (var service in services)
         {
-            if (!services.Any()) return;
-            spc.AddSource("Services.DependencyInjection.g.cs", SourceText.From(GenerateServicesDI(services), Encoding.UTF8));
-        });
+            var lifetimeMethod = ((Lifetime)service.Lifetime) switch
+            {
+                Lifetime.Scoped => "AddScoped",
+                Lifetime.Singleton => "AddSingleton",
+                _ => "AddTransient",
+            };
+            sb.AppendLine(
+                $"            services.{lifetimeMethod}<{service.ServiceType}, {service.ImplementationType}>();"
+            );
+        }
+
+        sb.AppendLine(
+            @"
+            return services;
+        }
     }
 }
+"
+        );
+        return sb.ToString();
+    }
+}
+
+public record ServiceInfo(string ServiceType, string ImplementationType, int Lifetime);

@@ -1,8 +1,10 @@
 ﻿using LinKit.Core.Cqrs;
+using LinKit.Core.Endpoints;
 using SampleWebApp.Contracts.Behaviors;
 
 namespace SampleWebApp.Features.Users;
 
+[ApiEndpoint(ApiMethod.Post, "create-user")]
 public record CreateUserCommand(string Name) : ICommand<UserDto>, IAuditable;
 
 [CqrsHandler]

@@ -15,6 +15,7 @@ public sealed class CqrsHandlerAttribute : Attribute { }
 public sealed class CqrsContextAttribute : Attribute
 {
     public Type[] HandlerTypes { get; }
+
     public CqrsContextAttribute(params Type[] handlerTypes) => HandlerTypes = handlerTypes;
 }
 
@@ -26,6 +27,7 @@ public sealed class CqrsBehaviorAttribute : Attribute
 {
     public Type TargetInterface { get; }
     public int Order { get; }
+
     public CqrsBehaviorAttribute(Type targetInterface, int order = 0)
     {
         TargetInterface = targetInterface;
@@ -40,5 +42,6 @@ public sealed class CqrsBehaviorAttribute : Attribute
 public sealed class ApplyBehaviorAttribute : Attribute
 {
     public Type[] BehaviorTypes { get; }
+
     public ApplyBehaviorAttribute(params Type[] behaviorTypes) => BehaviorTypes = behaviorTypes;
 }

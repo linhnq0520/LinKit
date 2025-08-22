@@ -10,15 +10,21 @@
 	</PropertyGroup>
 
 	<ItemGroup>
-	  <PackageReference Include="LinKit.Core" Version="1.0.3" />
+		<ProjectReference Include="..\..\LinKit.Core\LinKit.Core.csproj" />
+		<ProjectReference Include="..\..\LinKit.Generator\LinKit.Generator.csproj" OutputItemType="Analyzer" ReferenceOutputAssembly="false" />
 	</ItemGroup>
-	
+
 	<ItemGroup>
 		<!-- Giữ lại rd.xml vì nó vẫn là chỉ thị quan trọng cho runtime -->
 		<RdXmlFile Include="rd.xml" />
 	</ItemGroup>
-	
 	<ItemGroup>
-	  <!--<PackageReference Include="LinKit.Core" Version="1.0.3" />-->
+		<Protobuf Include="Protos\users.proto" GrpcServices="Server" />
+	</ItemGroup>
+	<ItemGroup>
+	  <Folder Include="Protos\" />
+	</ItemGroup>
+	<ItemGroup>
+	  <PackageReference Include="Grpc.AspNetCore" Version="2.71.0" />
 	</ItemGroup>
 </Project>

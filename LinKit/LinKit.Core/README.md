@@ -17,8 +17,8 @@ Many popular .NET libraries rely on runtime reflection. While powerful, reflecti
 *   🚀 **Blazing Fast Performance:** Dispatches requests directly without any runtime reflection overhead.
 *   ⏱️ **Faster Startup:** No need for slow assembly scanning when your application starts.
 *   🗑️ **Trimming & AOT Safe:** Perfect for Blazor WASM, MAUI, and NativeAOT applications.
-*   ✍️ **Clean & Explicit API:** A clear, intent-driven API that encourages good CQRS practices.
-*   🤖 **Automated Boilerplate:** Reduces repetitive code like DI registrations.
+*   ✍️ **Clean & Explicit API:** A clear, intent-driven API that encourages good CQRS and API design.
+*   🤖 **Automated Boilerplate:** Reduces repetitive code for DI registrations and API endpoints.
 
 ## Features
 
@@ -28,7 +28,10 @@ The `LinKit.Core` package provides a collection of "kits" designed to solve comm
 A source-generated Mediator implementation for the CQRS pattern with a clear, explicit API.
 
 ### 2. The Dependency Injection Kit
-An automatic dependency injection registration system using attributes, eliminating manual `services.Add...()` calls.
+An automatic dependency injection registration system using attributes.
+
+### 3. The Endpoints Kit
+Automatically generates Minimal API endpoints directly from your Command and Query definitions.
 
 ## Installation
 
@@ -37,87 +40,57 @@ Install the core package from NuGet:
 dotnet add package LinKit.Core
 ```
 
+---
+
 ## Feature 1: The CQRS Kit
 
-A fast, AOT-safe way to implement the CQRS pattern with a clear separation of concerns.
+A fast, AOT-safe way to implement the CQRS pattern.
 
-### Step 1: Define Your Commands and Queries
+### Step 1: Define Your Commands & Queries
 
-Create records or classes that implement the specific interfaces:
-*   `ICommand`: An action that modifies state and does not return a value.
-*   `ICommand<TResult>`: An action that modifies state and returns a value.
-*   `IQuery<TResult>`: An action that only reads data and returns a value.
+Create records or classes that implement `ICommand`, `ICommand<TResult>`, or `IQuery<TResult>`.
 
 ```csharp
 // Features/Users/GetUser.cs
 using LinKit.Core.Cqrs;
 
-// A query that returns a UserDto
 public record GetUserQuery(int Id) : IQuery<UserDto>;
-
 public record UserDto(int Id, string Name);
 ```
 
 ### Step 2: Create Handlers
 
-Implement the corresponding handler interface (`ICommandHandler<T>` or `IQueryHandler<T>`). **Mark each handler with the `[CqrsHandler]` attribute.**
+Implement the corresponding handler and **mark it with the `[CqrsHandler]` attribute.**
 
 ```csharp
 // Features/Users/GetUserHandler.cs
 using LinKit.Core.Cqrs;
 
-// The handler for the query
 [CqrsHandler] // <-- Crucial attribute for discovery!
 public class GetUserQueryHandler : IQueryHandler<GetUserQuery, UserDto>
 {
     public Task<UserDto> HandleAsync(GetUserQuery query, CancellationToken ct)
     {
         var user = new UserDto(query.Id, "Awesome LinKit User");
-        // Task.FromResult is highly optimized for synchronous, completed results.
         return Task.FromResult(user);
     }
 }
 ```
 
-### Step 3: Register the CQRS System
+### Step 3: Register CQRS Services
 
 In `Program.cs`, call the `AddLinKitCqrs()` extension method.
 
 ```csharp
 // Program.cs
-using LinKit.Core; // This namespace contains the extension methods
+using LinKit.Core;
 
 var builder = WebApplication.CreateBuilder(args);
-
-// Registers the mediator and all [CqrsHandler] marked handlers
 builder.Services.AddLinKitCqrs();
-
-var app = builder.Build();
+// ...
 ```
 
-### Step 4: Dispatch Requests
-
-Inject `IMediator` and use the explicit `QueryAsync` and `SendAsync` methods.
-
-```csharp
-// Program.cs
-using LinKit.Core.Cqrs;
-using Microsoft.AspNetCore.Mvc;
-
-app.MapGet("/users/{id}", async (int id, [FromServices] IMediator mediator, CancellationToken ct) =>
-{
-    // Use QueryAsync for queries
-    var user = await mediator.QueryAsync(new GetUserQuery(id), ct);
-    return Results.Ok(user);
-});
-
-app.MapPost("/users", async (CreateUserCommand command, [FromServices] IMediator mediator, CancellationToken ct) =>
-{
-    // Use SendAsync for commands
-    await mediator.SendAsync(command, ct); 
-    return Results.Ok();
-});
-```
+---
 
 ## Feature 2: The Dependency Injection Kit
 
@@ -125,7 +98,7 @@ Tired of manually registering your services? Let the generator do it for you.
 
 ### Step 1: Mark Your Services
 
-Decorate your classes with the `[RegisterService]` attribute. You can specify the `Lifetime`. If you don't specify a `ServiceType`, the generator will automatically infer the first implemented interface.
+Decorate your classes with the `[RegisterService]` attribute. The generator will infer the service type from the first implemented interface if not specified.
 
 ```csharp
 // Services/MyScopedService.cs
@@ -133,12 +106,8 @@ using LinKit.Core.Abstractions;
 
 public interface IMyService { /* ... */ }
 
-// The generator will infer IMyService as the service type.
 [RegisterService(Lifetime.Scoped)]
-public class MyScopedService : IMyService
-{
-    // ...
-}
+public class MyScopedService : IMyService { /* ... */ }
 ```
 
 ### Step 2: Register Generated Services
@@ -150,23 +119,73 @@ In `Program.cs`, call the `AddGeneratedServices()` extension method.
 using LinKit.Core;
 
 var builder = WebApplication.CreateBuilder(args);
+builder.Services.AddGeneratedServices();
+// ...
+```
 
-// ... other services ...
+---
 
-// Scans and registers all services marked with [RegisterService]
+## Feature 3: The Endpoints Kit
+
+**Automatically generate Minimal API endpoints from your CQRS requests.** This keeps your `Program.cs` clean and co-locates your API definition with your request logic.
+
+### Step 1: Decorate Your Commands & Queries
+
+Add the `[ApiEndpoint]` attribute to any command or query you want to expose as an HTTP endpoint. Use `[FromRoute]`, `[FromQuery]`, etc., on properties to control model binding.
+
+**Example 1: GET with a route parameter**
+```csharp
+using LinKit.Core.Cqrs;
+using LinKit.Core.Endpoints;
+
+[CqrsHandler] // Still needed for the handler
+[ApiEndpoint(ApiMethod.Get, "users/{Id}")] // Expose as GET /api/users/{Id}
+public record GetUserQuery : IQuery<UserDto>
+{
+    [FromRoute] // Bind "Id" from the route
+    public int Id { get; init; } 
+}
+```
+
+**Example 2: POST with a request body**
+```csharp
+using LinKit.Core.Cqrs;
+using LinKit.Core.Endpoints;
+
+[CqrsHandler]
+[ApiEndpoint(ApiMethod.Post, "users")] // Expose as POST /api/users
+public record CreateUserCommand(string Name, string Email) : ICommand<int>;
+```
+
+### Step 2: Map the Generated Endpoints
+
+In `Program.cs`, call the `MapGeneratedEndpoints()` extension method on the `WebApplication` instance.
+
+```csharp
+// Program.cs
+using LinKit.Core;
+
+var builder = WebApplication.CreateBuilder(args);
+builder.Services.AddLinKitCqrs();
 builder.Services.AddGeneratedServices();
 
 var app = builder.Build();
+
+// This one line maps all endpoints marked with [ApiEndpoint]
+app.MapGeneratedEndpoints();
+
+app.Run();
 ```
-That's it! All your marked services are now correctly registered in the DI container without any manual effort.
+That's it! Your API endpoints are now live, fully integrated with the CQRS mediator, without a single `app.MapGet()` call in your `Program.cs`.
 
 ## How It Works
 
 The `LinKit.Core` package includes a powerful source generator that acts as the magic behind the scenes. When you build your project:
-1.  It scans your code for `[CqrsHandler]` and `[RegisterService]` attributes.
+1.  It scans your code for `[CqrsHandler]`, `[RegisterService]`, and `[ApiEndpoint]` attributes.
 2.  It generates new C# files containing:
-    *   Explicit extension methods (`SendAsync`, `QueryAsync`) for each of your requests.
     *   The `AddLinKitCqrs()` and `AddGeneratedServices()` methods with all necessary DI registrations.
+    *   The `MapGeneratedEndpoints()` method, which contains all the `MapGet`, `MapPost`, etc., calls.
+    *   (Previously) Explicit extension methods for `IMediator`.
 3.  These generated files are seamlessly included in your project's compilation.
 
 This compile-time approach ensures maximum performance, type safety, and compatibility, making your application faster, smaller, and more robust.

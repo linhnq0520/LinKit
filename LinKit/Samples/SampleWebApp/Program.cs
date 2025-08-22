@@ -14,22 +14,13 @@ builder.Services.ConfigureHttpJsonOptions(options =>
 {
     options.SerializerOptions.TypeInfoResolverChain.Insert(0, AppJsonContext.Default);
 });
+builder.Services.AddGrpc();
 var app = builder.Build();
 
 
 app.UseHttpsRedirection();
+app.MapGeneratedEndpoints();
 
-app.MapGet("/users/{id:int}", async (int id, [FromServices] IMediator mediator) =>
-{
-    var query = new GetUserQuery(id);
-    var user = await mediator.QueryAsync(query);
-    return Results.Ok(user);
-});
-
-app.MapPost("/create-user", async ([FromBody] CreateUserCommand createUserCommand, [FromServices] IMediator mediator) =>
-{
-    var user = await mediator.SendAsync(createUserCommand);
-    return Results.Ok(user);
-});
+app.MapGrpcService<SampleWebApp.Grpc.Users.LinKitUserGrpcService>();
 
 app.Run();

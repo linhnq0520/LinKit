@@ -1,0 +1,24 @@
+﻿syntax = "proto3";
+option csharp_namespace = "SampleWebApp.Grpc.Users";
+
+service UserGrpcService {
+  rpc GetUser (GetUserRequest) returns (User);
+  rpc GetUsers (GetUsersRequest) returns (GetUsersResponse);
+}
+
+message GetUserRequest {
+  int32 id = 1;
+}
+
+message GetUsersRequest {
+  // Có thể thêm filter/paging sau này, tạm thời để trống
+}
+
+message GetUsersResponse {
+  repeated User users = 1;
+}
+
+message User {
+  int32 id = 1;
+  string name = 2;
+}

@@ -4,5 +4,5 @@ public enum Lifetime
 {
     Transient,
     Scoped,
-    Singleton
+    Singleton,
 }

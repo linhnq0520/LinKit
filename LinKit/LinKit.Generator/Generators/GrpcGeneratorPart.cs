@@ -199,7 +199,7 @@ internal static class GrpcGeneratorPart
         return (simpleMaps, listMaps);
     }
 
-    private static List<PropertyMap> GetPropertyMaps(
+    public static List<PropertyMap> GetPropertyMaps(
         INamedTypeSymbol? source,
         INamedTypeSymbol? destination
     )
@@ -277,17 +277,21 @@ internal static class GrpcGeneratorPart
         sb.AppendLine("using Grpc.Core;");
         sb.AppendLine("using LinKit.Core.Cqrs;");
         sb.AppendLine("using LinKit.Core.Abstractions;");
+        sb.AppendLine("using Microsoft.Extensions.DependencyInjection;");
+        sb.AppendLine("using Microsoft.Extensions.Logging;");
         sb.AppendLine("using System;");
         sb.AppendLine("using System.ComponentModel.DataAnnotations;");
         sb.AppendLine("using System.Threading.Tasks;");
         sb.AppendLine();
 
         var endpointsByService = endpoints.GroupBy(e => e.ServiceBaseType);
+
         foreach (var serviceGroup in endpointsByService)
         {
             var serviceBaseType = serviceGroup.Key;
             var baseClassName = serviceBaseType.Split('.').Last();
             var generatedClassName = $"LinKit{baseClassName.Replace("Base", "")}";
+
             var namespaceParts = serviceBaseType.Split('.');
             var nsWithGlobal = string.Join(".", namespaceParts.Take(namespaceParts.Length - 2));
             if (string.IsNullOrEmpty(nsWithGlobal))
@@ -302,12 +306,18 @@ internal static class GrpcGeneratorPart
             sb.AppendLine($"    public sealed class {generatedClassName} : {serviceBaseType}");
             sb.AppendLine("    {");
             sb.AppendLine("        private readonly IMediator _mediator;");
+            sb.AppendLine($"        private readonly ILogger<{generatedClassName}>? _logger;");
             sb.AppendLine();
-            sb.AppendLine($"        public {generatedClassName}(IMediator mediator)");
+
+            sb.AppendLine(
+                $"        public {generatedClassName}(IMediator mediator, IServiceProvider serviceProvider)"
+            );
             sb.AppendLine("        {");
             sb.AppendLine("            _mediator = mediator;");
+            sb.AppendLine(
+                $"            _logger = serviceProvider.GetService<ILogger<{generatedClassName}>>();"
+            );
             sb.AppendLine("        }");
-            sb.AppendLine();
 
             foreach (var endpoint in serviceGroup)
             {
@@ -317,12 +327,16 @@ internal static class GrpcGeneratorPart
                 var mediatorMethod = endpoint.IsCqrsQuery ? "QueryAsync" : "SendAsync";
                 var cqrsResponseIsNullable = endpoint.CqrsResponseType.EndsWith("?");
 
+                sb.AppendLine();
                 sb.AppendLine(
                     $"        public override async Task<{endpoint.GrpcResponseType}> {endpoint.GrpcMethodName}({endpoint.GrpcRequestType} request, ServerCallContext context)"
                 );
                 sb.AppendLine("        {");
                 sb.AppendLine("            try");
                 sb.AppendLine("            {");
+                sb.AppendLine(
+                    $"                LinKit.Core.Grpc.GrpcContextAccessor.Current = context;"
+                );
                 sb.AppendLine(
                     $"                var cqrsRequest = new {endpoint.CqrsRequestType}(){requestMappings};"
                 );
@@ -384,10 +398,13 @@ internal static class GrpcGeneratorPart
                     "                throw new RpcException(new Status(StatusCode.InvalidArgument, ex.Message));"
                 );
                 sb.AppendLine("            }");
-                sb.AppendLine("            catch (Exception)");
+                sb.AppendLine("            catch (Exception ex)");
                 sb.AppendLine("            {");
                 sb.AppendLine(
-                    "                throw new RpcException(new Status(StatusCode.Internal, \"An internal error occurred.\"));"
+                    $"                _logger?.LogError(ex, \"An unexpected error occurred while handling {endpoint.GrpcMethodName}.\");"
+                );
+                sb.AppendLine(
+                    @"                throw new RpcException(new Status(StatusCode.Internal, ""An internal error occurred.""));"
                 );
                 sb.AppendLine("            }");
                 sb.AppendLine("        }");

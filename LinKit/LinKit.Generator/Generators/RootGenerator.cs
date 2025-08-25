@@ -10,6 +10,7 @@ public class RootGenerator : IIncrementalGenerator
         CqrsGeneratorPart.Initialize(context);
         EndpointsGeneratorPart.Initialize(context);
         GrpcGeneratorPart.Initialize(context);
+        GrpcClientGeneratorPart.Initialize(context);
         DependencyInjectionGeneratorPart.Initialize(context);
     }
 }

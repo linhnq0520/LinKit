@@ -3,7 +3,7 @@
 <Project>
   <PropertyGroup>
     <_PublishTargetUrl>C:\Users\linh.nguyen10\Documents\Linh\LinKit\Samples\SampleWebApp\bin\Release\net8.0\publish\</_PublishTargetUrl>
-    <History>False|2025-08-21T10:04:57.8127314Z||;</History>
+    <History>True|2025-08-25T03:44:17.1005046Z||;False|2025-08-21T17:04:57.8127314+07:00||;</History>
     <LastFailureDetails />
   </PropertyGroup>
 </Project>

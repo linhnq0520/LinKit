@@ -9,6 +9,8 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "LinKit.Generator", "LinKit.
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "SampleWebApp", "Samples\SampleWebApp\SampleWebApp.csproj", "{84EBAC83-A5A8-8DC8-B629-9E3EF9B08D58}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "SampleWebApp1", "Samples\SampleWebApp1\SampleWebApp1.csproj", "{D7323A65-51F5-4B7A-AFB0-C7F1C07A1A51}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -27,6 +29,10 @@ Global
 		{84EBAC83-A5A8-8DC8-B629-9E3EF9B08D58}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{84EBAC83-A5A8-8DC8-B629-9E3EF9B08D58}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{84EBAC83-A5A8-8DC8-B629-9E3EF9B08D58}.Release|Any CPU.Build.0 = Release|Any CPU
+		{D7323A65-51F5-4B7A-AFB0-C7F1C07A1A51}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{D7323A65-51F5-4B7A-AFB0-C7F1C07A1A51}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{D7323A65-51F5-4B7A-AFB0-C7F1C07A1A51}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{D7323A65-51F5-4B7A-AFB0-C7F1C07A1A51}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE

@@ -18,20 +18,16 @@ Many popular .NET libraries rely on runtime reflection. While powerful, reflecti
 *   ⏱️ **Faster Startup:** No need for slow assembly scanning when your application starts.
 *   🗑️ **Trimming & AOT Safe:** Perfect for Blazor WASM, MAUI, and NativeAOT applications.
 *   ✍️ **Clean & Explicit API:** A clear, intent-driven API that encourages good CQRS and API design.
-*   🤖 **Automated Boilerplate:** Reduces repetitive code for DI registrations and API endpoints.
+*   🤖 **Automated Boilerplate:** Reduces repetitive code for DI registrations, Minimal API endpoints, and gRPC services.
 
 ## Features
 
 The `LinKit.Core` package provides a collection of "kits" designed to solve common problems.
 
-### 1. The CQRS Kit
-A source-generated Mediator implementation for the CQRS pattern with a clear, explicit API.
-
-### 2. The Dependency Injection Kit
-An automatic dependency injection registration system using attributes.
-
-### 3. The Endpoints Kit
-Automatically generates Minimal API endpoints directly from your Command and Query definitions.
+1.  **The CQRS Kit:** A source-generated Mediator for the CQRS pattern.
+2.  **The Dependency Injection Kit:** Automatic DI registration using attributes.
+3.  **The Endpoints Kit:** Auto-generates Minimal API endpoints from CQRS requests.
+4.  **The gRPC Kit:** Auto-generates gRPC service implementations from CQRS requests.
 
 ## Installation
 
@@ -42,153 +38,137 @@ dotnet add package LinKit.Core
 
 ---
 
-## Feature 1: The CQRS Kit
+## The Kits in Detail
+
+### 1. The CQRS Kit
 
 A fast, AOT-safe way to implement the CQRS pattern.
 
-### Step 1: Define Your Commands & Queries
-
-Create records or classes that implement `ICommand`, `ICommand<TResult>`, or `IQuery<TResult>`.
+*   **Define Requests:** Create records/classes implementing `ICommand`, `ICommand<TResult>`, or `IQuery<TResult>`.
+*   **Create Handlers:** Implement the corresponding handler and **mark it with `[CqrsHandler]`**.
+*   **Register:** Call `builder.Services.AddLinKitCqrs()` in `Program.cs`.
 
 ```csharp
-// Features/Users/GetUser.cs
-using LinKit.Core.Cqrs;
-
+// GetUserQuery.cs
+[CqrsHandler]
 public record GetUserQuery(int Id) : IQuery<UserDto>;
-public record UserDto(int Id, string Name);
-```
 
-### Step 2: Create Handlers
-
-Implement the corresponding handler and **mark it with the `[CqrsHandler]` attribute.**
-
-```csharp
-// Features/Users/GetUserHandler.cs
-using LinKit.Core.Cqrs;
-
-[CqrsHandler] // <-- Crucial attribute for discovery!
+// GetUserQueryHandler.cs
 public class GetUserQueryHandler : IQueryHandler<GetUserQuery, UserDto>
 {
     public Task<UserDto> HandleAsync(GetUserQuery query, CancellationToken ct)
     {
-        var user = new UserDto(query.Id, "Awesome LinKit User");
-        return Task.FromResult(user);
+        // ... business logic ...
+        return Task.FromResult(new UserDto(query.Id, "Awesome LinKit User"));
     }
 }
 ```
 
-### Step 3: Register CQRS Services
+### 2. The Dependency Injection Kit
 
-In `Program.cs`, call the `AddLinKitCqrs()` extension method.
+Tired of manually registering services?
 
-```csharp
-// Program.cs
-using LinKit.Core;
-
-var builder = WebApplication.CreateBuilder(args);
-builder.Services.AddLinKitCqrs();
-// ...
-```
-
----
-
-## Feature 2: The Dependency Injection Kit
-
-Tired of manually registering your services? Let the generator do it for you.
-
-### Step 1: Mark Your Services
-
-Decorate your classes with the `[RegisterService]` attribute. The generator will infer the service type from the first implemented interface if not specified.
+*   **Mark Services:** Decorate your classes with `[RegisterService(Lifetime.Scoped)]`.
+*   **Register:** Call `builder.Services.AddGeneratedServices()` in `Program.cs`.
 
 ```csharp
-// Services/MyScopedService.cs
+// MyService.cs
 using LinKit.Core.Abstractions;
 
 public interface IMyService { /* ... */ }
 
 [RegisterService(Lifetime.Scoped)]
-public class MyScopedService : IMyService { /* ... */ }
+public class MyService : IMyService { /* ... */ }
 ```
 
-### Step 2: Register Generated Services
+### 3. The Endpoints Kit (for Minimal APIs)
 
-In `Program.cs`, call the `AddGeneratedServices()` extension method.
+**Automatically generate Minimal API endpoints from your CQRS requests.**
+
+*   **Decorate Requests:** Add `[ApiEndpoint]` to your command/query. Use `[FromRoute]`, `[FromQuery]` on properties to control binding.
+*   **Map Endpoints:** Call `app.MapGeneratedEndpoints()` in `Program.cs`.
 
 ```csharp
-// Program.cs
-using LinKit.Core;
-
-var builder = WebApplication.CreateBuilder(args);
-builder.Services.AddGeneratedServices();
-// ...
-```
-
----
-
-## Feature 3: The Endpoints Kit
-
-**Automatically generate Minimal API endpoints from your CQRS requests.** This keeps your `Program.cs` clean and co-locates your API definition with your request logic.
-
-### Step 1: Decorate Your Commands & Queries
-
-Add the `[ApiEndpoint]` attribute to any command or query you want to expose as an HTTP endpoint. Use `[FromRoute]`, `[FromQuery]`, etc., on properties to control model binding.
-
-**Example 1: GET with a route parameter**
-```csharp
-using LinKit.Core.Cqrs;
-using LinKit.Core.Endpoints;
-
-[CqrsHandler] // Still needed for the handler
-[ApiEndpoint(ApiMethod.Get, "users/{Id}")] // Expose as GET /api/users/{Id}
-public record GetUserQuery : IQuery<UserDto>
-{
-    [FromRoute] // Bind "Id" from the route
-    public int Id { get; init; } 
-}
-```
-
-**Example 2: POST with a request body**
-```csharp
-using LinKit.Core.Cqrs;
+// GetUserQuery.cs
 using LinKit.Core.Endpoints;
 
 [CqrsHandler]
-[ApiEndpoint(ApiMethod.Post, "users")] // Expose as POST /api/users
-public record CreateUserCommand(string Name, string Email) : ICommand<int>;
+[ApiEndpoint(ApiMethod.GET, "users/{Id}")] // Exposes GET /api/users/{Id}
+public record GetUserQuery : IQuery<UserDto>
+{
+    [FromRoute] public int Id { get; init; } 
+}
+```
+```csharp
+// Program.cs
+var app = builder.Build();
+app.MapGeneratedEndpoints(); // Maps all [ApiEndpoint] requests
+app.Run();
 ```
 
-### Step 2: Map the Generated Endpoints
+### 4. The gRPC Kit
 
-In `Program.cs`, call the `MapGeneratedEndpoints()` extension method on the `WebApplication` instance.
+**Automatically generate gRPC service implementations from your CQRS requests,** turning your gRPC services into thin, clean adapters.
+
+#### Step 1: Define your `.proto` file
+
+Define your service and messages as you normally would with gRPC.
+```protobuf
+// Protos/users.proto
+syntax = "proto3";
+option csharp_namespace = "SampleWebApp.Grpc.Users";
+
+service UserService {
+  rpc GetUser (GetUserRequest) returns (GetUserResponse);
+}
+message GetUserRequest { int32 id = 1; }
+message User { int32 id = 1; string name = 2; }
+message GetUserResponse { User user = 1; }
+```
+
+#### Step 2: Decorate Your CQRS Request
+
+Add the `[GrpcEndpoint]` attribute to your corresponding command or query, linking it to the gRPC service and method.
+
+```csharp
+// Features/Users/GetUserQuery.cs
+using LinKit.Core.Cqrs;
+using LinKit.Core.Grpc;
+using SampleWebApp.Grpc.Users; // Namespace from the .proto file
+
+[CqrsHandler]
+[GrpcEndpoint(typeof(UserService.UserServiceBase), "GetUser")] // Link to the gRPC definition
+public record GetUserQuery(int Id) : IQuery<UserDto?>;
+```
+*Note: LinKit automatically maps properties with matching names between your gRPC messages and your CQRS records/classes.*
+
+#### Step 3: Register and Map the Generated Service
+
+In `Program.cs`, the `[RegisterService]` attribute on the generated gRPC service handles DI. You just need to map the service.
 
 ```csharp
 // Program.cs
-using LinKit.Core;
+using SampleWebApp.Grpc.Users; // Contains the generated service
 
 var builder = WebApplication.CreateBuilder(args);
+builder.Services.AddGrpc();
 builder.Services.AddLinKitCqrs();
-builder.Services.AddGeneratedServices();
+builder.Services.AddGeneratedServices(); // This will register the generated gRPC service
 
 var app = builder.Build();
 
-// This one line maps all endpoints marked with [ApiEndpoint]
-app.MapGeneratedEndpoints();
+// Map the service implementation that LinKit generated for you
+app.MapGrpcService<LinKitUserService>(); 
 
 app.Run();
 ```
-That's it! Your API endpoints are now live, fully integrated with the CQRS mediator, without a single `app.MapGet()` call in your `Program.cs`.
+That's it! Your gRPC endpoint is now live, and all incoming requests are automatically routed through your CQRS pipeline, keeping your business logic clean and separate from the transport layer.
 
 ## How It Works
 
-The `LinKit.Core` package includes a powerful source generator that acts as the magic behind the scenes. When you build your project:
-1.  It scans your code for `[CqrsHandler]`, `[RegisterService]`, and `[ApiEndpoint]` attributes.
-2.  It generates new C# files containing:
-    *   The `AddLinKitCqrs()` and `AddGeneratedServices()` methods with all necessary DI registrations.
-    *   The `MapGeneratedEndpoints()` method, which contains all the `MapGet`, `MapPost`, etc., calls.
-    *   (Previously) Explicit extension methods for `IMediator`.
-3.  These generated files are seamlessly included in your project's compilation.
+The `LinKit.Core` package includes a powerful source generator. When you build your project, it scans for `[CqrsHandler]`, `[RegisterService]`, `[ApiEndpoint]`, and `[GrpcEndpoint]` attributes and generates the necessary boilerplate code—DI registrations, Mediator pipelines, Minimal API endpoints, and gRPC service implementations—all at compile time.
 
-This compile-time approach ensures maximum performance, type safety, and compatibility, making your application faster, smaller, and more robust.
+This approach ensures maximum performance, type safety, and compatibility, making your application faster, smaller, and more robust.
 
 ## Contributing
 

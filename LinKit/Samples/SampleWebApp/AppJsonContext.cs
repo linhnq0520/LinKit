@@ -1,11 +1,11 @@
-﻿using SampleWebApp.Features.Users;
-using System.Text.Json.Serialization;
+﻿using System.Text.Json.Serialization;
+using Grpc.Core;
+using SampleWebApp.Features.Users;
 
 namespace SampleWebApp;
 
 [JsonSerializable(typeof(UserDto))]
 [JsonSerializable(typeof(GetUserQuery))]
 [JsonSerializable(typeof(CreateUserCommand))]
-public partial class AppJsonContext : JsonSerializerContext
-{
-}
+[JsonSerializable(typeof(Metadata))]
+public partial class AppJsonContext : JsonSerializerContext { }

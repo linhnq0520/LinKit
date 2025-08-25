@@ -64,6 +64,67 @@ internal static class GrpcClientGeneratorPart
         );
     }
 
+    public static IncrementalValueProvider<IReadOnlyList<GrpcClientServiceInfo>> GetServices(
+        IncrementalGeneratorInitializationContext context
+    )
+    {
+        IncrementalValuesProvider<GrpcClientEndpointInfo?> clientDeclarations = context
+            .SyntaxProvider.ForAttributeWithMetadataName(
+                GrpcClientAttributeName,
+                predicate: (node, _) => node is ClassDeclarationSyntax or RecordDeclarationSyntax,
+                transform: (ctx, _) => GetGrpcClientEndpointInfo(ctx)
+            )
+            .Where(info => info is not null);
+
+        return clientDeclarations
+            .Collect()
+            .Select(
+                (endpoints, _) =>
+                {
+                    var validEndpoints = endpoints.OfType<GrpcClientEndpointInfo>().ToList();
+                    var services = new List<GrpcClientServiceInfo>();
+
+                    if (validEndpoints.Any())
+                    {
+                        // Đăng ký mediator
+                        services.Add(
+                            new GrpcClientServiceInfo(
+                                "services.AddTransient<LinKit.Core.Grpc.IGrpcMediator, LinKit.Generated.Grpc.GrpcClientMediator>();"
+                            )
+                        );
+                    }
+
+                    // Nếu có các service khác cần đăng ký, append thêm vào đây
+
+                    return (IReadOnlyList<GrpcClientServiceInfo>)services;
+                }
+            );
+    }
+
+    public static void GenerateNonDIFiles(IncrementalGeneratorInitializationContext context)
+    {
+        IncrementalValuesProvider<GrpcClientEndpointInfo?> clientDeclarations = context
+            .SyntaxProvider.ForAttributeWithMetadataName(
+                GrpcClientAttributeName,
+                predicate: (node, _) => node is ClassDeclarationSyntax or RecordDeclarationSyntax,
+                transform: (ctx, _) => GetGrpcClientEndpointInfo(ctx)
+            )
+            .Where(info => info is not null);
+
+        context.RegisterSourceOutput(
+            clientDeclarations.Collect(),
+            (spc, endpoints) =>
+            {
+                var validEndpoints = endpoints.OfType<GrpcClientEndpointInfo>().ToList();
+                if (!validEndpoints.Any())
+                    return;
+
+                var source = GenerateGrpcMediator(validEndpoints);
+                spc.AddSource("Grpc.ClientMediator.g.cs", SourceText.From(source, Encoding.UTF8));
+            }
+        );
+    }
+
     private static GrpcClientEndpointInfo? GetGrpcClientEndpointInfo(
         GeneratorAttributeSyntaxContext context
     )

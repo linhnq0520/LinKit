@@ -8,8 +8,9 @@ using LinKit.Core;
 var builder = WebApplication.CreateBuilder(args);
 
 
-builder.Services.AddLinKitCqrs();
-builder.Services.AddGeneratedServices();
+//builder.Services.AddLinKitCqrs();
+//builder.Services.AddGeneratedServices();
+builder.Services.AddAllGeneratedServices();
 builder.Services.ConfigureHttpJsonOptions(options =>
 {
     options.SerializerOptions.TypeInfoResolverChain.Insert(0, AppJsonContext.Default);

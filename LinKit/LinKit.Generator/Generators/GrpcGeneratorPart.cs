@@ -418,4 +418,32 @@ internal static class GrpcGeneratorPart
 
         return sb.ToString();
     }
+
+    public static IncrementalValueProvider<IReadOnlyList<GrpcServiceInfo>> GetServices(
+        IncrementalGeneratorInitializationContext context
+    )
+    {
+        IncrementalValuesProvider<GrpcEndpointInfo?> grpcDeclarations = context
+            .SyntaxProvider.ForAttributeWithMetadataName(
+                GrpcEndpointAttributeName,
+                predicate: (node, _) => node is ClassDeclarationSyntax or RecordDeclarationSyntax,
+                transform: (ctx, _) => GetGrpcEndpointInfo(ctx)
+            )
+            .Where(info => info is not null);
+
+        return grpcDeclarations
+            .Collect()
+            .Select(
+                (endpoints, _) =>
+                {
+                    
+                    var services = new List<GrpcServiceInfo>();
+
+                    return (IReadOnlyList<GrpcServiceInfo>)services;
+                }
+            );
+    }
 }
+
+// Thêm record cho service info nếu chưa có
+internal record GrpcServiceInfo(string RegistrationCode);

@@ -1,19 +1,40 @@
 ﻿<Project Sdk="Microsoft.NET.Sdk">
-
   <PropertyGroup>
     <TargetFramework>net8.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
+    <PackageId>LinKit.Grpc</PackageId>
+    <Version>1.0.0</Version>
+    <Authors>Linh Nguyen</Authors>
+    <Description>gRPC server/client code generation for CQRS requests in LinKit. High-performance, source-generated, AOT/Trimming safe.</Description>
+    <PackageTags>source-generator;grpc;performance;aot;cqrs;mediator</PackageTags>
+    <PackageLicenseExpression>MIT</PackageLicenseExpression>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+    <RepositoryUrl>https://github.com/linhnq0520/LinKit</RepositoryUrl>
+    <RepositoryType>git</RepositoryType>
+    <IncludeSymbols>true</IncludeSymbols>
+    <SymbolPackageFormat>snupkg</SymbolPackageFormat>
   </PropertyGroup>
-
-	<ItemGroup>
-		<PackageReference Include="Grpc.Core" Version="2.46.6" />
-		<PackageReference Include="Microsoft.Extensions.DependencyInjection.Abstractions" Version="8.0.0" />
-		<PackageReference Include="Grpc.AspNetCore" Version="2.71.0" />
-	</ItemGroup>
-
-	<ItemGroup>
-	  <ProjectReference Include="..\LinKit.Core\LinKit.Core.csproj" />
-	</ItemGroup>
-
+  <ItemGroup>
+    <None Include="README.md" Pack="true" PackagePath="\" />
+  </ItemGroup>
+  <ItemGroup>
+    <PackageReference Include="Grpc.Core" Version="2.46.6" />
+    <PackageReference
+      Include="Microsoft.Extensions.DependencyInjection.Abstractions"
+      Version="8.0.0"
+    />
+    <PackageReference Include="Grpc.AspNetCore" Version="2.71.0" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\LinKit.Core\LinKit.Core.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <None
+      Include="..\LinKit.Grpc.Generator\bin\$(Configuration)\netstandard2.0\LinKit.Grpc.Generator.dll"
+      Pack="true"
+      PackagePath="analyzers/dotnet/cs"
+      Visible="false"
+    />
+  </ItemGroup>
 </Project>

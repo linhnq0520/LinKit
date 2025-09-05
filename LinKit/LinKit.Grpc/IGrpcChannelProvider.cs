@@ -1,7 +1,7 @@
 ﻿using Grpc.Core;
 using Grpc.Net.Client;
 
-namespace LinKit.Core.Grpc;
+namespace LinKit.Grpc;
 
 /// <summary>
 /// Provides a mechanism to get the appropriate GrpcChannel for a given gRPC client type.

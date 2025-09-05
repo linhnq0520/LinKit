@@ -1,5 +1,5 @@
 ﻿using LinKit.Core.Cqrs;
-using LinKit.Core.Grpc;
+using LinKit.Grpc;
 using SampleWebApp.Grpc.Users;
 using System.Text.Json;
 using System.Text.Json.Serialization;

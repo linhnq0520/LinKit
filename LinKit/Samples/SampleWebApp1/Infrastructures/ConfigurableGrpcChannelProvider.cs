@@ -1,7 +1,7 @@
 ﻿using System.Collections.Concurrent;
 using Grpc.Core;
 using Grpc.Net.Client;
-using LinKit.Core.Grpc;
+using LinKit.Grpc;
 
 namespace SampleWebApp1.Infrastructures;
 

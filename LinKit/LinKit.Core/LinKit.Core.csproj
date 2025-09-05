@@ -23,9 +23,7 @@
 	</ItemGroup>
 
 	<ItemGroup>
-		<PackageReference Include="Grpc.Core" Version="2.46.6" />
 		<PackageReference Include="Microsoft.Extensions.DependencyInjection.Abstractions" Version="8.0.0" />
-		<PackageReference Include="Grpc.AspNetCore" Version="2.71.0" />
 	</ItemGroup>
 
 	<ItemGroup>

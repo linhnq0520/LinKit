@@ -1,5 +1,5 @@
 ﻿using LinKit.Core;
-using LinKit.Core.Grpc;
+using LinKit.Grpc;
 using SampleWebApp1.Features;
 using SampleWebApp1.Infrastructures;
 using System.Text.Json.Serialization;

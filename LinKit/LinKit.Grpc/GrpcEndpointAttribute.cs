@@ -1,4 +1,4 @@
-﻿namespace LinKit.Core.Grpc;
+﻿namespace LinKit.Grpc;
 
 /// <summary>
 /// Marks a CQRS Command or Query to be exposed as a gRPC service method.

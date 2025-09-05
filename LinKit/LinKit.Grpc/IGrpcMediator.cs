@@ -1,6 +1,6 @@
 ﻿using LinKit.Core.Cqrs;
 
-namespace LinKit.Core.Grpc;
+namespace LinKit.Grpc;
 
 public interface IGrpcMediator
 {

@@ -1,8 +1,7 @@
 ﻿using Contract.Models;
 using LinKit.Core.Cqrs;
 using LinKit.Core.Endpoints;
-using LinKit.Core.Grpc;
-using LinKit.Generated.Mapping;
+using LinKit.Grpc;
 
 namespace SampleWebApp1.Features
 {

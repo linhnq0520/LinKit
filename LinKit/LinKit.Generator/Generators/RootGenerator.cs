@@ -13,31 +13,27 @@ public class RootGenerator : IIncrementalGenerator
     public void Initialize(IncrementalGeneratorInitializationContext context)
     {
         var cqrsServices = CqrsGeneratorPart.GetServices(context);
-        var grpcClientServices = GrpcClientGeneratorPart.GetServices(context);
+        //var grpcClientServices = GrpcClientGeneratorPart.GetServices(context);
         var diServices = DependencyInjectionGeneratorPart.GetServices(context);
-        var grpcServices = GrpcGeneratorPart.GetServices(context);
+        //var grpcServices = GrpcGeneratorPart.GetServices(context);
         var messagingServices = MessagingGeneratorPart.GetServices(context);
 
         CqrsGeneratorPart.Initialize(context);
-        GrpcClientGeneratorPart.Initialize(context);
-        GrpcGeneratorPart.Initialize(context);
+        //GrpcClientGeneratorPart.Initialize(context);
+        //GrpcGeneratorPart.Initialize(context);
         EndpointsGeneratorPart.Initialize(context);
         MessagingGeneratorPart.Initialize(context);
         MapperGeneratorPart.Initialize(context);
 
         var allServices = cqrsServices
-            .Combine(grpcClientServices)
             .Combine(diServices)
-            .Combine(grpcServices)
             .Combine(messagingServices)
             .Select(
                 (combined, _) =>
                     new AllServicesInfo
                     {
-                        CqrsServices = combined.Left.Left.Left.Left,
-                        GrpcClientServices = combined.Left.Left.Left.Right,
-                        DIServices = combined.Left.Left.Right,
-                        GrpcServices = combined.Left.Right,
+                        CqrsServices = combined.Left.Left,
+                        DIServices = combined.Left.Right,
                         MessagingServices = combined.Right,
                     }
             );
@@ -58,29 +54,29 @@ public class RootGenerator : IIncrementalGenerator
                     spc.AddSource($"Cqrs.DependencyInjection.g.cs", SourceText.From(src, Encoding.UTF8));
                 }
 
-                // --- gRPC Client ---
-                if (services.GrpcClientServices.Any())
-                {
-                    var src = GeneratePartialDI(
-                        services.GrpcClientServices.Select(s => s.RegistrationCode),
-                        "LinKit.Core",
-                        "AddLinKitGrpcClient",
-                        "gRPC Client Mediator"
-                    );
-                    spc.AddSource($"GrpcClient.DependencyInjection.g.cs", SourceText.From(src, Encoding.UTF8));
-                }
+                //// --- gRPC Client ---
+                //if (services.GrpcClientServices.Any())
+                //{
+                //    var src = GeneratePartialDI(
+                //        services.GrpcClientServices.Select(s => s.RegistrationCode),
+                //        "LinKit.Core",
+                //        "AddLinKitGrpcClient",
+                //        "gRPC Client Mediator"
+                //    );
+                //    spc.AddSource($"GrpcClient.DependencyInjection.g.cs", SourceText.From(src, Encoding.UTF8));
+                //}
 
-                // --- gRPC Server ---
-                if (services.GrpcServices.Any())
-                {
-                    var src = GeneratePartialDI(
-                        services.GrpcServices.Select(s => s.RegistrationCode),
-                        "LinKit.Core",
-                        "AddLinKitGrpcServer",
-                        "gRPC Server Services (Generated Implementations)"
-                    );
-                    spc.AddSource($"GrpcServer.DependencyInjection.g.cs", SourceText.From(src, Encoding.UTF8));
-                }
+                //// --- gRPC Server ---
+                //if (services.GrpcServices.Any())
+                //{
+                //    var src = GeneratePartialDI(
+                //        services.GrpcServices.Select(s => s.RegistrationCode),
+                //        "LinKit.Core",
+                //        "AddLinKitGrpcServer",
+                //        "gRPC Server Services (Generated Implementations)"
+                //    );
+                //    spc.AddSource($"GrpcServer.DependencyInjection.g.cs", SourceText.From(src, Encoding.UTF8));
+                //}
 
                 // --- Custom DI Services ---
                 if (services.DIServices.Any())
@@ -190,13 +186,13 @@ using LinKit.Core.Abstractions;"
 internal record AllServicesInfo
 {
     public IReadOnlyList<CqrsServiceInfo> CqrsServices { get; init; } = new List<CqrsServiceInfo>();
-    public IReadOnlyList<GrpcClientServiceInfo> GrpcClientServices { get; init; } = new List<GrpcClientServiceInfo>();
+    //public IReadOnlyList<GrpcClientServiceInfo> GrpcClientServices { get; init; } = new List<GrpcClientServiceInfo>();
     public IReadOnlyList<ServiceInfo> DIServices { get; init; } = new List<ServiceInfo>();
-    public IReadOnlyList<GrpcServiceInfo> GrpcServices { get; init; } = new List<GrpcServiceInfo>();
+    //public IReadOnlyList<GrpcServiceInfo> GrpcServices { get; init; } = new List<GrpcServiceInfo>();
     public IReadOnlyList<MessagingServiceInfo> MessagingServices { get; init; } = new List<MessagingServiceInfo>();
 }
 
 internal record CqrsServiceInfo(string RegistrationCode);
-internal record GrpcClientServiceInfo(string RegistrationCode);
-internal record GrpcServiceInfo(string RegistrationCode);
+//internal record GrpcClientServiceInfo(string RegistrationCode);
+//internal record GrpcServiceInfo(string RegistrationCode);
 internal record MessagingServiceInfo(string RegistrationCode);

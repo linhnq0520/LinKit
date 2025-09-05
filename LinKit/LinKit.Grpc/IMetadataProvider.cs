@@ -1,6 +1,6 @@
 ﻿using Grpc.Core;
 
-namespace LinKit.Core.Grpc;
+namespace LinKit.Grpc;
 
 /// <summary>
 /// Provides dynamic metadata (headers) for outgoing gRPC calls.

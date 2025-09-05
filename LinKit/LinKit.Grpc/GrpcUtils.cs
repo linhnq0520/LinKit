@@ -1,7 +1,7 @@
 ﻿using System.Text.Json.Serialization;
 using Grpc.Core;
 
-namespace LinKit.Core.Grpc;
+namespace LinKit.Grpc;
 
 public class GrpcUtils
 {

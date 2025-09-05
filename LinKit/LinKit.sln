@@ -17,6 +17,10 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "LinKit.Messaging.RabbitMQ",
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "LinKit.Messaging.Kafka", "LinKit.Messaging.Kafka\LinKit.Messaging.Kafka.csproj", "{7C13B7FA-7C46-4DBF-8654-75372FDE907D}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "LinKit.Grpc", "LinKit.Grpc\LinKit.Grpc.csproj", "{9329E9C9-DB52-4BCF-B9D4-70E3909693EF}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "LinKit.Grpc.Generator", "LinKit.Grpc.Generator\LinKit.Grpc.Generator.csproj", "{0E8328CF-725D-4171-BA52-CD24B47C529B}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -51,6 +55,14 @@ Global
 		{7C13B7FA-7C46-4DBF-8654-75372FDE907D}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{7C13B7FA-7C46-4DBF-8654-75372FDE907D}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{7C13B7FA-7C46-4DBF-8654-75372FDE907D}.Release|Any CPU.Build.0 = Release|Any CPU
+		{9329E9C9-DB52-4BCF-B9D4-70E3909693EF}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{9329E9C9-DB52-4BCF-B9D4-70E3909693EF}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{9329E9C9-DB52-4BCF-B9D4-70E3909693EF}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{9329E9C9-DB52-4BCF-B9D4-70E3909693EF}.Release|Any CPU.Build.0 = Release|Any CPU
+		{0E8328CF-725D-4171-BA52-CD24B47C529B}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{0E8328CF-725D-4171-BA52-CD24B47C529B}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{0E8328CF-725D-4171-BA52-CD24B47C529B}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{0E8328CF-725D-4171-BA52-CD24B47C529B}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE

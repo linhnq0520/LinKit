@@ -1,7 +1,7 @@
 ﻿using Contract.Models;
 using LinKit.Core.Cqrs;
 using LinKit.Core.Endpoints;
-using LinKit.Core.Grpc;
+using LinKit.Grpc;
 using SampleWebApp.Contracts.Behaviors;
 using SampleWebApp.Grpc.Users;
 

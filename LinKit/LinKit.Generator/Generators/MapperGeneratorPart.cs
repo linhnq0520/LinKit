@@ -1,13 +1,13 @@
-﻿using LinKit.Core.Mapping;
-using Microsoft.CodeAnalysis;
-using Microsoft.CodeAnalysis.CSharp;
-using Microsoft.CodeAnalysis.CSharp.Syntax;
-using Microsoft.CodeAnalysis.Text;
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Collections.Immutable;
 using System.Linq;
 using System.Text;
+using LinKit.Core.Mapping;
+using Microsoft.CodeAnalysis;
+using Microsoft.CodeAnalysis.CSharp;
+using Microsoft.CodeAnalysis.CSharp.Syntax;
+using Microsoft.CodeAnalysis.Text;
 
 namespace LinKit.Generator.Generators;
 
@@ -25,10 +25,7 @@ internal sealed record MapConfig(
     List<ForMemberRule> Rules
 );
 
-internal sealed record MapConfigWithDiags(
-    MapConfig Config,
-    ImmutableArray<Diagnostic> Diagnostics
-);
+internal sealed record MapConfigWithDiags(MapConfig Config, ImmutableArray<Diagnostic> Diagnostics);
 
 internal sealed record MapperInfo(
     string Namespace, // Thêm namespace của class context
@@ -54,143 +51,188 @@ public static class MapperGeneratorPart
     {
         // Tìm class có [MapperContext] và partial
         var mapperContexts = context.SyntaxProvider.ForAttributeWithMetadataName(
-                MapperContextAttr,
-                static (node, _) => node is ClassDeclarationSyntax c
-                    && c.Modifiers.Any(m => m.IsKind(SyntaxKind.PartialKeyword)),
-                static (ctx, _) => (ClassDeclarationSyntax)ctx.TargetNode
-            );
+            MapperContextAttr,
+            static (node, _) =>
+                node is ClassDeclarationSyntax c
+                && c.Modifiers.Any(m => m.IsKind(SyntaxKind.PartialKeyword)),
+            static (ctx, _) => (ClassDeclarationSyntax)ctx.TargetNode
+        );
 
         // Phân tích mỗi class để lấy danh sách MapConfig + diagnostics
         var mapConfigsPerClass = mapperContexts
             .Combine(context.CompilationProvider)
-            .Select(static (tuple, ct) =>
-            {
-                var (classSyntax, compilation) = tuple;
-                var model = compilation.GetSemanticModel(classSyntax.SyntaxTree);
-                if (model.GetDeclaredSymbol(classSyntax) is not INamedTypeSymbol classSymbol)
+            .Select(
+                static (tuple, ct) =>
                 {
-                    return (Namespace: "", Configs: ImmutableArray<MapConfigWithDiags>.Empty);
-                }
-                // Lấy namespace của class context
-                string classNamespace = classSymbol.ContainingNamespace.IsGlobalNamespace
-                    ? ""
-                    : classSymbol.ContainingNamespace.ToDisplayString();
-
-                var configureMethodSyntax = classSymbol.DeclaringSyntaxReferences
-                    .Select(r => r.GetSyntax())
-                    .OfType<ClassDeclarationSyntax>()
-                    .SelectMany(c => c.Members.OfType<MethodDeclarationSyntax>())
-                    .FirstOrDefault(m => m.Identifier.Text == "Configure"
-                                      && m.ParameterList.Parameters.Count == 1);
-
-                // fallback: try the original classSyntax members
-                if (configureMethodSyntax is null)
-                {
-                    configureMethodSyntax = classSyntax.Members
-                        .OfType<MethodDeclarationSyntax>()
-                        .FirstOrDefault(m => m.Identifier.Text == "Configure"
-                                          && m.ParameterList.Parameters.Count == 1);
-                }
-
-                if (configureMethodSyntax is null)
-                {
-                    return (Namespace: classNamespace, Configs: ImmutableArray<MapConfigWithDiags>.Empty);
-                }
-
-                var configsWithDiags = new List<MapConfigWithDiags>();
-                // Tìm tất cả lời gọi builder.CreateMap<TSrc, TDest>() trong Configure
-                foreach (var inv in configureMethodSyntax.DescendantNodes().OfType<InvocationExpressionSyntax>())
-                {
-                    if (inv.Expression is MemberAccessExpressionSyntax ma
-                        && ma.Name is GenericNameSyntax gns
-                        && gns.Identifier.Text == "CreateMap")
+                    var (classSyntax, compilation) = tuple;
+                    var model = compilation.GetSemanticModel(classSyntax.SyntaxTree);
+                    if (model.GetDeclaredSymbol(classSyntax) is not INamedTypeSymbol classSymbol)
                     {
-                        var typeArgs = gns.TypeArgumentList.Arguments;
-                        if (typeArgs.Count != 2)
-                        {
-                            continue;
-                        }
-                        if (model.GetTypeInfo(typeArgs[0]).Type is not INamedTypeSymbol srcType ||
-                            model.GetTypeInfo(typeArgs[1]).Type is not INamedTypeSymbol dstType)
-                        {
-                            continue;
-                        }
-                        // Thu thập các ForMember chain phía sau, kèm diagnostics
-                        var (rules, diags) = CollectForMemberChain(inv, model, srcType);
-                        var cfg = new MapConfig(srcType, dstType, rules);
-                        configsWithDiags.Add(new MapConfigWithDiags(cfg, diags.ToImmutableArray()));
+                        return (Namespace: "", Configs: ImmutableArray<MapConfigWithDiags>.Empty);
                     }
+                    // Lấy namespace của class context
+                    string classNamespace = classSymbol.ContainingNamespace.IsGlobalNamespace
+                        ? ""
+                        : classSymbol.ContainingNamespace.ToDisplayString();
+
+                    var configureMethodSyntax = classSymbol
+                        .DeclaringSyntaxReferences.Select(r => r.GetSyntax())
+                        .OfType<ClassDeclarationSyntax>()
+                        .SelectMany(c => c.Members.OfType<MethodDeclarationSyntax>())
+                        .FirstOrDefault(m =>
+                            m.Identifier.Text == "Configure"
+                            && m.ParameterList.Parameters.Count == 1
+                        );
+
+                    // fallback: try the original classSyntax members
+                    if (configureMethodSyntax is null)
+                    {
+                        configureMethodSyntax = classSyntax
+                            .Members.OfType<MethodDeclarationSyntax>()
+                            .FirstOrDefault(m =>
+                                m.Identifier.Text == "Configure"
+                                && m.ParameterList.Parameters.Count == 1
+                            );
+                    }
+
+                    if (configureMethodSyntax is null)
+                    {
+                        return (
+                            Namespace: classNamespace,
+                            Configs: ImmutableArray<MapConfigWithDiags>.Empty
+                        );
+                    }
+
+                    var configsWithDiags = new List<MapConfigWithDiags>();
+                    // Tìm tất cả lời gọi builder.CreateMap<TSrc, TDest>() trong Configure
+                    foreach (
+                        var inv in configureMethodSyntax
+                            .DescendantNodes()
+                            .OfType<InvocationExpressionSyntax>()
+                    )
+                    {
+                        if (
+                            inv.Expression is MemberAccessExpressionSyntax ma
+                            && ma.Name is GenericNameSyntax gns
+                            && gns.Identifier.Text == "CreateMap"
+                        )
+                        {
+                            var typeArgs = gns.TypeArgumentList.Arguments;
+                            if (typeArgs.Count != 2)
+                            {
+                                continue;
+                            }
+                            if (
+                                model.GetTypeInfo(typeArgs[0]).Type is not INamedTypeSymbol srcType
+                                || model.GetTypeInfo(typeArgs[1]).Type
+                                    is not INamedTypeSymbol dstType
+                            )
+                            {
+                                continue;
+                            }
+                            // Thu thập các ForMember chain phía sau, kèm diagnostics
+                            var (rules, diags) = CollectForMemberChain(inv, model, srcType);
+                            var cfg = new MapConfig(srcType, dstType, rules);
+                            configsWithDiags.Add(
+                                new MapConfigWithDiags(cfg, diags.ToImmutableArray())
+                            );
+                        }
+                    }
+                    return (
+                        Namespace: classNamespace,
+                        Configs: configsWithDiags.ToImmutableArray()
+                    );
                 }
-                return (Namespace: classNamespace, Configs: configsWithDiags.ToImmutableArray());
-            });
+            );
 
         // Gom tất cả map từ mọi class
         var allMapConfigs = mapConfigsPerClass.Collect();
 
         // Build MapperInfo + Generate + Report diagnostics
-        context.RegisterSourceOutput(allMapConfigs, static (spc, allConfigsBatch) =>
-        {
-            // allConfigsBatch: IEnumerable<(string Namespace, ImmutableArray<MapConfigWithDiags>)>
-            var allConfigsWithDiags = allConfigsBatch
-                .SelectMany(tuple => tuple.Configs.Select(cfg => (tuple.Namespace, Config: cfg)))
-                .ToList();
-
-            // Report diagnostics first
-            foreach (var item in allConfigsWithDiags)
+        context.RegisterSourceOutput(
+            allMapConfigs,
+            static (spc, allConfigsBatch) =>
             {
-                foreach (var d in item.Config.Diagnostics)
+                // allConfigsBatch: IEnumerable<(string Namespace, ImmutableArray<MapConfigWithDiags>)>
+                var allConfigsWithDiags = allConfigsBatch
+                    .SelectMany(tuple =>
+                        tuple.Configs.Select(cfg => (tuple.Namespace, Config: cfg))
+                    )
+                    .ToList();
+
+                // Report diagnostics first
+                foreach (var item in allConfigsWithDiags)
                 {
-                    spc.ReportDiagnostic(d);
+                    foreach (var d in item.Config.Diagnostics)
+                    {
+                        spc.ReportDiagnostic(d);
+                    }
                 }
+
+                var allConfigs = allConfigsWithDiags
+                    .Select(x => (x.Namespace, x.Config.Config))
+                    .ToList();
+                if (allConfigs.Count == 0)
+                {
+                    return;
+                }
+
+                // Chuẩn bị tra cứu để hỗ trợ Rule #4 (nested)
+                var mapPairs = allConfigs
+                    .Select(c => (Src: c.Config.SourceSymbol, Dst: c.Config.DestSymbol))
+                    .ToList();
+
+                // Convert sang MapperInfo với các assignment (áp 4 rule)
+                var mapperInfos = new List<MapperInfo>();
+                foreach (var cfg in allConfigs)
+                {
+                    var assignments = BuildAssignments(cfg.Config, mapPairs);
+                    mapperInfos.Add(
+                        new MapperInfo(
+                            Namespace: cfg.Namespace, // Lưu namespace của class context
+                            SourceType: cfg.Config.SourceSymbol.ToDisplayString(
+                                SymbolDisplayFormat.FullyQualifiedFormat
+                            ),
+                            DestType: cfg.Config.DestSymbol.ToDisplayString(
+                                SymbolDisplayFormat.FullyQualifiedFormat
+                            ),
+                            DestShortName: cfg.Config.DestSymbol.Name,
+                            Assignments: assignments
+                        )
+                    );
+                }
+
+                var code = GenerateCode(mapperInfos);
+                spc.AddSource("Mappers.g.cs", SourceText.From(code, Encoding.UTF8));
             }
-
-            var allConfigs = allConfigsWithDiags.Select(x => (x.Namespace, x.Config.Config)).ToList();
-            if (allConfigs.Count == 0)
-            {
-                return;
-            }
-
-            // Chuẩn bị tra cứu để hỗ trợ Rule #4 (nested)
-            var mapPairs = allConfigs
-                .Select(c => (Src: c.Config.SourceSymbol, Dst: c.Config.DestSymbol))
-                .ToList();
-
-            // Convert sang MapperInfo với các assignment (áp 4 rule)
-            var mapperInfos = new List<MapperInfo>();
-            foreach (var cfg in allConfigs)
-            {
-                var assignments = BuildAssignments(cfg.Config, mapPairs);
-                mapperInfos.Add(new MapperInfo(
-                    Namespace: cfg.Namespace, // Lưu namespace của class context
-                    SourceType: cfg.Config.SourceSymbol.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat),
-                    DestType: cfg.Config.DestSymbol.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat),
-                    DestShortName: cfg.Config.DestSymbol.Name,
-                    Assignments: assignments
-                ));
-            }
-
-            var code = GenerateCode(mapperInfos);
-            spc.AddSource("Mappers.g.cs", SourceText.From(code, Encoding.UTF8));
-        });
+        );
     }
 
     // ---- Collect ForMember chain, but also produce diagnostics when source member not found ----
     private static (List<ForMemberRule> Rules, List<Diagnostic> Diagnostics) CollectForMemberChain(
         InvocationExpressionSyntax createMapCall,
         SemanticModel model,
-        INamedTypeSymbol sourceTypeSymbol)
+        INamedTypeSymbol sourceTypeSymbol
+    )
     {
         var rules = new List<ForMemberRule>();
         var diagnostics = new List<Diagnostic>();
         SyntaxNode? current = createMapCall;
         while (true)
         {
-            if (current.Parent is MemberAccessExpressionSyntax parentMemberAccess
-                && parentMemberAccess.Name.Identifier.Text == "ForMember")
+            if (
+                current.Parent is MemberAccessExpressionSyntax parentMemberAccess
+                && parentMemberAccess.Name.Identifier.Text == "ForMember"
+            )
             {
                 if (parentMemberAccess.Parent is InvocationExpressionSyntax forMemberInvocation)
                 {
-                    var parseResult = ParseForMemberInvocation(forMemberInvocation, model, sourceTypeSymbol, out var diag);
+                    var parseResult = ParseForMemberInvocation(
+                        forMemberInvocation,
+                        model,
+                        sourceTypeSymbol,
+                        out var diag
+                    );
                     if (parseResult is not null)
                     {
                         rules.Add(parseResult);
@@ -213,7 +255,8 @@ public static class MapperGeneratorPart
         InvocationExpressionSyntax invocation,
         SemanticModel model,
         INamedTypeSymbol sourceTypeSymbol,
-        out Diagnostic? diagnostic)
+        out Diagnostic? diagnostic
+    )
     {
         diagnostic = null;
         var args = invocation.ArgumentList.Arguments;
@@ -244,10 +287,20 @@ public static class MapperGeneratorPart
                 {
                     if (!SourceHasMember(sourceTypeSymbol, conv?.SourceMember))
                     {
-                        diagnostic = CreateMissingMemberDiagnostic(invocation.ArgumentList.Arguments.ElementAtOrDefault(3)?.GetLocation() ?? invocation.GetLocation(), conv?.SourceMember, sourceTypeSymbol);
+                        diagnostic = CreateMissingMemberDiagnostic(
+                            invocation.ArgumentList.Arguments.ElementAtOrDefault(3)?.GetLocation()
+                                ?? invocation.GetLocation(),
+                            conv?.SourceMember,
+                            sourceTypeSymbol
+                        );
                     }
                 }
-                return new ForMemberRule(dest, conv?.SourceMember, conv?.ConverterTypeDisplay, conv?.ConverterMethod);
+                return new ForMemberRule(
+                    dest,
+                    conv?.SourceMember,
+                    conv?.ConverterTypeDisplay,
+                    conv?.ConverterMethod
+                );
             }
             return null;
         }
@@ -256,15 +309,21 @@ public static class MapperGeneratorPart
         if (!string.IsNullOrEmpty(src))
         {
             // check special Ignore token
-            if (string.Equals(src, MappingRules.Ignore, StringComparison.OrdinalIgnoreCase)
-                || string.Equals(src, "Ignore", StringComparison.OrdinalIgnoreCase))
+            if (
+                string.Equals(src, MappingRules.Ignore, StringComparison.OrdinalIgnoreCase)
+                || string.Equals(src, "Ignore", StringComparison.OrdinalIgnoreCase)
+            )
             {
                 return new ForMemberRule(dest, null, null, null, true);
             }
             // validate source member exists
             if (!SourceHasMember(sourceTypeSymbol, src))
             {
-                diagnostic = CreateMissingMemberDiagnostic(second.GetLocation(), src, sourceTypeSymbol);
+                diagnostic = CreateMissingMemberDiagnostic(
+                    second.GetLocation(),
+                    src,
+                    sourceTypeSymbol
+                );
             }
             return new ForMemberRule(dest, src, null, null);
         }
@@ -278,13 +337,19 @@ public static class MapperGeneratorPart
             return false;
         }
         // check properties/fields (we care about properties primarily)
-        var prop = sourceTypeSymbol.GetMembers().OfType<IPropertySymbol>().FirstOrDefault(p => p.Name.Equals(memberName, StringComparison.OrdinalIgnoreCase));
+        var prop = sourceTypeSymbol
+            .GetMembers()
+            .OfType<IPropertySymbol>()
+            .FirstOrDefault(p => p.Name.Equals(memberName, StringComparison.OrdinalIgnoreCase));
         if (prop != null)
         {
             return true;
         }
         // also accept fields
-        var field = sourceTypeSymbol.GetMembers().OfType<IFieldSymbol>().FirstOrDefault(f => f.Name.Equals(memberName, StringComparison.OrdinalIgnoreCase));
+        var field = sourceTypeSymbol
+            .GetMembers()
+            .OfType<IFieldSymbol>()
+            .FirstOrDefault(f => f.Name.Equals(memberName, StringComparison.OrdinalIgnoreCase));
         if (field != null)
         {
             return true;
@@ -292,7 +357,11 @@ public static class MapperGeneratorPart
         return false;
     }
 
-    private static Diagnostic CreateMissingMemberDiagnostic(Location location, string missingMember, INamedTypeSymbol sourceTypeSymbol)
+    private static Diagnostic CreateMissingMemberDiagnostic(
+        Location location,
+        string missingMember,
+        INamedTypeSymbol sourceTypeSymbol
+    )
     {
         var diag = Diagnostic.Create(
             MissingSourceMemberRule,
@@ -309,7 +378,8 @@ public static class MapperGeneratorPart
         {
             case LiteralExpressionSyntax lit when lit.IsKind(SyntaxKind.StringLiteralExpression):
                 return lit.Token.ValueText;
-            case InvocationExpressionSyntax inv when inv.Expression is IdentifierNameSyntax id && id.Identifier.Text == "nameof":
+            case InvocationExpressionSyntax inv
+                when inv.Expression is IdentifierNameSyntax id && id.Identifier.Text == "nameof":
                 if (inv.ArgumentList.Arguments.Count == 1)
                 {
                     var argExpr = inv.ArgumentList.Arguments[0].Expression;
@@ -337,7 +407,8 @@ public static class MapperGeneratorPart
         {
             case LiteralExpressionSyntax lit when lit.IsKind(SyntaxKind.StringLiteralExpression):
                 return lit.Token.ValueText;
-            case InvocationExpressionSyntax inv when inv.Expression is IdentifierNameSyntax id && id.Identifier.Text == "nameof":
+            case InvocationExpressionSyntax inv
+                when inv.Expression is IdentifierNameSyntax id && id.Identifier.Text == "nameof":
                 if (inv.ArgumentList.Arguments.Count == 1)
                 {
                     var argExpr = inv.ArgumentList.Arguments[0].Expression;
@@ -359,7 +430,11 @@ public static class MapperGeneratorPart
         return null;
     }
 
-    private static (string ConverterTypeDisplay, string ConverterMethod, string? SourceMember)? ParseConverterStyle(SeparatedSyntaxList<ArgumentSyntax> args, SemanticModel model)
+    private static (
+        string ConverterTypeDisplay,
+        string ConverterMethod,
+        string? SourceMember
+    )? ParseConverterStyle(SeparatedSyntaxList<ArgumentSyntax> args, SemanticModel model)
     {
         if (args.Count < 3)
         {
@@ -371,17 +446,20 @@ public static class MapperGeneratorPart
             return null;
         }
         var convTypeSymbol = model.GetTypeInfo(typeOfExpr.Type).Type as INamedTypeSymbol;
-        var convTypeDisplay = convTypeSymbol?.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
+        var convTypeDisplay = convTypeSymbol?.ToDisplayString(
+            SymbolDisplayFormat.FullyQualifiedFormat
+        );
         if (string.IsNullOrEmpty(convTypeDisplay))
         {
             return null;
         }
         string? methodName = args.ElementAtOrDefault(2)?.Expression switch
         {
-            LiteralExpressionSyntax lit3 when lit3.IsKind(SyntaxKind.StringLiteralExpression) => lit3.Token.ValueText,
+            LiteralExpressionSyntax lit3 when lit3.IsKind(SyntaxKind.StringLiteralExpression) =>
+                lit3.Token.ValueText,
             IdentifierNameSyntax idExpr => idExpr.Identifier.ValueText,
             MemberAccessExpressionSyntax maName => maName.ToString(),
-            _ => args.ElementAtOrDefault(2)?.GetFirstToken().ValueText
+            _ => args.ElementAtOrDefault(2)?.GetFirstToken().ValueText,
         };
         string? sourceMember = null;
         if (args.Count > 3)
@@ -397,12 +475,17 @@ public static class MapperGeneratorPart
         {
             return null;
         }
-        return (convTypeDisplay!, methodName!, string.IsNullOrEmpty(sourceMember) ? null : sourceMember);
+        return (
+            convTypeDisplay!,
+            methodName!,
+            string.IsNullOrEmpty(sourceMember) ? null : sourceMember
+        );
     }
 
     private static List<(string DestProp, string SourceExpr)> BuildAssignments(
         MapConfig cfg,
-        List<(INamedTypeSymbol Src, INamedTypeSymbol Dst)> allMapPairs)
+        List<(INamedTypeSymbol Src, INamedTypeSymbol Dst)> allMapPairs
+    )
     {
         var srcProps = GetReadableProps(cfg.SourceSymbol).ToList();
         var dstProps = GetSettableProps(cfg.DestSymbol).ToList();
@@ -411,7 +494,14 @@ public static class MapperGeneratorPart
 
         foreach (var r in cfg.Rules)
         {
-            if (r.Ignore || string.Equals(r.SourceMember, MappingRules.Ignore, StringComparison.OrdinalIgnoreCase))
+            if (
+                r.Ignore
+                || string.Equals(
+                    r.SourceMember,
+                    MappingRules.Ignore,
+                    StringComparison.OrdinalIgnoreCase
+                )
+            )
             {
                 ignoredProps.Add(r.DestinationMember);
                 continue;
@@ -419,14 +509,20 @@ public static class MapperGeneratorPart
             if (r.ConverterTypeDisplay is not null)
             {
                 string arg = r.SourceMember is null ? "source" : $"source.{r.SourceMember}";
-                result[r.DestinationMember] = $"{r.ConverterTypeDisplay}.{r.ConverterMethod}({arg})";
+                result[r.DestinationMember] =
+                    $"{r.ConverterTypeDisplay}.{r.ConverterMethod}({arg})";
                 continue;
             }
             if (r.SourceMember is not null)
             {
-                var sp = srcProps.FirstOrDefault(s => s.Name.Equals(r.SourceMember, StringComparison.OrdinalIgnoreCase));
-                var dp = dstProps.FirstOrDefault(d => d.Name.Equals(r.DestinationMember, StringComparison.OrdinalIgnoreCase));
-                if (dp is null) continue;
+                var sp = srcProps.FirstOrDefault(s =>
+                    s.Name.Equals(r.SourceMember, StringComparison.OrdinalIgnoreCase)
+                );
+                var dp = dstProps.FirstOrDefault(d =>
+                    d.Name.Equals(r.DestinationMember, StringComparison.OrdinalIgnoreCase)
+                );
+                if (dp is null)
+                    continue;
                 if (sp is null)
                 {
                     result[r.DestinationMember] = $"source.{r.SourceMember}";
@@ -434,7 +530,11 @@ public static class MapperGeneratorPart
                 }
                 if (SymbolEqualityComparer.Default.Equals(sp.Type, dp.Type))
                 {
-                    result[r.DestinationMember] = BuildNullableAwareExpression(sp, dp, $"source.{sp.Name}");
+                    result[r.DestinationMember] = BuildNullableAwareExpression(
+                        sp,
+                        dp,
+                        $"source.{sp.Name}"
+                    );
                 }
                 else if (TryBuildCollectionMappingExpr(sp, dp, allMapPairs, out var collExpr))
                 {
@@ -444,7 +544,12 @@ public static class MapperGeneratorPart
                 {
                     var destShort = (dp.Type as INamedTypeSymbol)!.Name;
                     var expr = $"source.{sp.Name}?.To{destShort}()";
-                    result[r.DestinationMember] = BuildNullableAwareExpression(sp, dp, expr, isProjection: true);
+                    result[r.DestinationMember] = BuildNullableAwareExpression(
+                        sp,
+                        dp,
+                        expr,
+                        isProjection: true
+                    );
                 }
                 else if (dp.Type.SpecialType == SpecialType.System_String)
                 {
@@ -452,7 +557,8 @@ public static class MapperGeneratorPart
                 }
                 else
                 {
-                    result[r.DestinationMember] = $"({dp.Type.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat)})source.{sp.Name}";
+                    result[r.DestinationMember] =
+                        $"({dp.Type.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat)})source.{sp.Name}";
                 }
             }
         }
@@ -466,7 +572,13 @@ public static class MapperGeneratorPart
             var destJson = GetJsonPropertyName(dp);
             if (destJson is not null)
             {
-                var sp = srcProps.FirstOrDefault(s => string.Equals(GetJsonPropertyName(s), destJson, StringComparison.OrdinalIgnoreCase));
+                var sp = srcProps.FirstOrDefault(s =>
+                    string.Equals(
+                        GetJsonPropertyName(s),
+                        destJson,
+                        StringComparison.OrdinalIgnoreCase
+                    )
+                );
                 if (sp != null)
                 {
                     if (TryBuildAssignmentExpression(sp, dp, allMapPairs, out var jsonExpr))
@@ -476,7 +588,9 @@ public static class MapperGeneratorPart
                     }
                 }
             }
-            var spSameName = srcProps.FirstOrDefault(s => s.Name.Equals(dp.Name, StringComparison.OrdinalIgnoreCase));
+            var spSameName = srcProps.FirstOrDefault(s =>
+                s.Name.Equals(dp.Name, StringComparison.OrdinalIgnoreCase)
+            );
             if (spSameName != null)
             {
                 if (TryBuildAssignmentExpression(spSameName, dp, allMapPairs, out var nameExpr))
@@ -485,7 +599,10 @@ public static class MapperGeneratorPart
                     continue;
                 }
             }
-            var spNested = srcProps.FirstOrDefault(s => HasMapping(allMapPairs, s.Type, dp.Type) && !result.Values.Any(v => v.Contains($"source.{s.Name}")));
+            var spNested = srcProps.FirstOrDefault(s =>
+                HasMapping(allMapPairs, s.Type, dp.Type)
+                && !result.Values.Any(v => v.Contains($"source.{s.Name}"))
+            );
             if (spNested != null)
             {
                 if (TryBuildAssignmentExpression(spNested, dp, allMapPairs, out var nestedExpr))
@@ -498,7 +615,12 @@ public static class MapperGeneratorPart
         return result.Select(kv => (kv.Key, kv.Value)).ToList();
     }
 
-    private static bool TryBuildAssignmentExpression(IPropertySymbol sp, IPropertySymbol dp, List<(INamedTypeSymbol Src, INamedTypeSymbol Dst)> allMapPairs, out string? expr)
+    private static bool TryBuildAssignmentExpression(
+        IPropertySymbol sp,
+        IPropertySymbol dp,
+        List<(INamedTypeSymbol Src, INamedTypeSymbol Dst)> allMapPairs,
+        out string? expr
+    )
     {
         expr = "";
         if (SymbolEqualityComparer.Default.Equals(sp.Type, dp.Type))
@@ -521,7 +643,12 @@ public static class MapperGeneratorPart
         return false;
     }
 
-    private static string BuildNullableAwareExpression(IPropertySymbol sourceProp, IPropertySymbol destProp, string expr, bool isProjection = false)
+    private static string BuildNullableAwareExpression(
+        IPropertySymbol sourceProp,
+        IPropertySymbol destProp,
+        string expr,
+        bool isProjection = false
+    )
     {
         bool sourceNullable = sourceProp.NullableAnnotation == NullableAnnotation.Annotated;
         bool destNotNullable = destProp.NullableAnnotation == NullableAnnotation.NotAnnotated;
@@ -532,7 +659,12 @@ public static class MapperGeneratorPart
         return expr;
     }
 
-    private static bool TryBuildCollectionMappingExpr(IPropertySymbol sp, IPropertySymbol dp, List<(INamedTypeSymbol Src, INamedTypeSymbol Dst)> allMapPairs, out string? expr)
+    private static bool TryBuildCollectionMappingExpr(
+        IPropertySymbol sp,
+        IPropertySymbol dp,
+        List<(INamedTypeSymbol Src, INamedTypeSymbol Dst)> allMapPairs,
+        out string? expr
+    )
     {
         expr = null;
         if (!IsEnumerableType(sp.Type, out var srcItemType))
@@ -569,10 +701,24 @@ public static class MapperGeneratorPart
             if (named.IsGenericType)
             {
                 var constructedFrom = named.ConstructedFrom.ToDisplayString();
-                if (constructedFrom.StartsWith("System.Collections.Generic.List<", StringComparison.Ordinal)
-                    || constructedFrom.StartsWith("System.Collections.Generic.IList<", StringComparison.Ordinal)
-                    || constructedFrom.StartsWith("System.Collections.Generic.IEnumerable<", StringComparison.Ordinal)
-                    || constructedFrom.StartsWith("System.Collections.Generic.ICollection<", StringComparison.Ordinal))
+                if (
+                    constructedFrom.StartsWith(
+                        "System.Collections.Generic.List<",
+                        StringComparison.Ordinal
+                    )
+                    || constructedFrom.StartsWith(
+                        "System.Collections.Generic.IList<",
+                        StringComparison.Ordinal
+                    )
+                    || constructedFrom.StartsWith(
+                        "System.Collections.Generic.IEnumerable<",
+                        StringComparison.Ordinal
+                    )
+                    || constructedFrom.StartsWith(
+                        "System.Collections.Generic.ICollection<",
+                        StringComparison.Ordinal
+                    )
+                )
                 {
                     itemType = named.TypeArguments[0];
                     return true;
@@ -589,7 +735,12 @@ public static class MapperGeneratorPart
             if (@interface.IsGenericType)
             {
                 var name = @interface.ConstructedFrom.ToDisplayString();
-                if (name.StartsWith("System.Collections.Generic.IEnumerable<", StringComparison.Ordinal))
+                if (
+                    name.StartsWith(
+                        "System.Collections.Generic.IEnumerable<",
+                        StringComparison.Ordinal
+                    )
+                )
                 {
                     itemType = @interface.TypeArguments[0];
                     return true;
@@ -606,16 +757,20 @@ public static class MapperGeneratorPart
             var attrDisplayString = attr.AttributeClass?.ToDisplayString();
             if (attrDisplayString == "System.Text.Json.Serialization.JsonPropertyNameAttribute")
             {
-                if (attr.ConstructorArguments.Length == 1 &&
-                    attr.ConstructorArguments[0].Value is string s)
+                if (
+                    attr.ConstructorArguments.Length == 1
+                    && attr.ConstructorArguments[0].Value is string s
+                )
                 {
                     return s;
                 }
             }
             if (attrDisplayString == "Newtonsoft.Json.JsonPropertyAttribute")
             {
-                if (attr.ConstructorArguments.Length == 1 &&
-                    attr.ConstructorArguments[0].Value is string s)
+                if (
+                    attr.ConstructorArguments.Length == 1
+                    && attr.ConstructorArguments[0].Value is string s
+                )
                 {
                     return s;
                 }
@@ -634,7 +789,8 @@ public static class MapperGeneratorPart
     private static bool HasMapping(
         List<(INamedTypeSymbol Src, INamedTypeSymbol Dst)> pairs,
         ITypeSymbol? src,
-        ITypeSymbol? dst)
+        ITypeSymbol? dst
+    )
     {
         if (src is null || dst is null)
         {
@@ -645,8 +801,9 @@ public static class MapperGeneratorPart
             return false;
         }
         return pairs.Any(p =>
-            SymbolEqualityComparer.Default.Equals(p.Src, s) &&
-            SymbolEqualityComparer.Default.Equals(p.Dst, d));
+            SymbolEqualityComparer.Default.Equals(p.Src, s)
+            && SymbolEqualityComparer.Default.Equals(p.Dst, d)
+        );
     }
 
     private static IEnumerable<IPropertySymbol> GetSettableProps(INamedTypeSymbol type)
@@ -720,7 +877,9 @@ public static class MapperGeneratorPart
             foreach (var m in nsGroup)
             {
                 // Object mapper
-                AppendLine($"public static {m.DestType}? To{m.DestShortName}(this {m.SourceType}? source)");
+                AppendLine(
+                    $"public static {m.DestType}? To{m.DestShortName}(this {m.SourceType}? source)"
+                );
                 AppendLine("{");
                 indent++;
                 AppendLine("if (source == null) return default;");
@@ -735,7 +894,9 @@ public static class MapperGeneratorPart
                 AppendLine();
 
                 // Enumerable mapper
-                AppendLine($"public static List<{m.DestType}> To{m.DestShortName}List(this IEnumerable<{m.SourceType}>? source)");
+                AppendLine(
+                    $"public static List<{m.DestType}> To{m.DestShortName}List(this IEnumerable<{m.SourceType}>? source)"
+                );
                 AppendLine("{");
                 indent++;
                 AppendLine($"if (source == null) return new List<{m.DestType}>();");
@@ -765,5 +926,4 @@ public static class MapperGeneratorPart
 
         return sb.ToString();
     }
-
 }

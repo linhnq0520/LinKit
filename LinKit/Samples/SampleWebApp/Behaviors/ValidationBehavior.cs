@@ -1,5 +1,6 @@
 ﻿using LinKit.Core.Cqrs;
 using SampleWebApp.Contracts.Behaviors;
+using System.ComponentModel.DataAnnotations;
 
 namespace SampleWebApp.Behaviors;
 
@@ -13,16 +14,22 @@ public class ValidationBehavior<TRequest, TResponse>(IServiceProvider servicePro
     {
         var validator = _serviceProvider.GetService<IValidator<TRequest>>();
 
-        if (validator is not null)
+        try
         {
-            Console.WriteLine($"[VALIDATION] Found validator for {typeof(TRequest).Name}. Validating...");
-            validator.Validate(request);
+            if (validator is not null)
+            {
+                Console.WriteLine($"[VALIDATION] Found validator for {typeof(TRequest).Name}. Validating...");
+                validator.Validate(request);
+            }
+            else
+            {
+                Console.WriteLine($"[VALIDATION] No validator found for {typeof(TRequest).Name}. Skipping.");
+            }
         }
-        else
-        {
-            Console.WriteLine($"[VALIDATION] No validator found for {typeof(TRequest).Name}. Skipping.");
+        catch (Exception ex) {
+            throw new ValidationException(ex.Message, ex.InnerException ?? ex);
         }
-        ;
+        
         return await next();
     }
 }

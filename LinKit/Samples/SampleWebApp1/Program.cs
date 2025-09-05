@@ -1,44 +1,57 @@
-using LinKit.Core;
+﻿using LinKit.Core;
 using LinKit.Core.Grpc;
 using SampleWebApp1.Features;
 using SampleWebApp1.Infrastructures;
 using System.Text.Json.Serialization;
+using System.Text.Json.Serialization.Metadata;
 
-var builder = WebApplication.CreateSlimBuilder(args);
+var builder = WebApplication.CreateBuilder(args);
 
 builder.Services.ConfigureHttpJsonOptions(options =>
 {
-    options.SerializerOptions.TypeInfoResolverChain.Insert(0, AppJsonSerializerContext.Default);
+    options.SerializerOptions.TypeInfoResolver =
+        JsonTypeInfoResolver.Combine(
+            AppJsonSerializerContext.Default,
+            new DefaultJsonTypeInfoResolver()
+        );
 });
-builder.Services.AddLinKitCqrs();
-builder.Services.AddGrpcMediator();
+
+
+builder.Services.AddLinKitCqrs().AddLinKitGrpcClient();
 builder.Services.AddSingleton<IGrpcChannelProvider, ConfigurableGrpcChannelProvider>();
-
+//builder.Services.AddLinKitMessaging();//.AddLinKitRabbitMQ(builder.Configuration);  // Đăng ký IMessagePublisher được sinh ra
 var app = builder.Build();
+app.Use(async (context, next) =>
+{
+    try
+    {
+        await next();
+    }
+    catch (Exception ex)
+    {
+        var logger = context.RequestServices
+            .GetRequiredService<ILoggerFactory>()
+            .CreateLogger("GlobalException");
 
-var sampleTodos = new Todo[] {
-    new(1, "Walk the dog"),
-    new(2, "Do the dishes", DateOnly.FromDateTime(DateTime.Now)),
-    new(3, "Do the laundry", DateOnly.FromDateTime(DateTime.Now.AddDays(1))),
-    new(4, "Clean the bathroom"),
-    new(5, "Clean the car", DateOnly.FromDateTime(DateTime.Now.AddDays(2)))
-};
+        logger.LogError(ex,
+            "Unhandled exception at {Path}", context.Request.Path);
 
-var todosApi = app.MapGroup("/todos");
-todosApi.MapGet("/", () => sampleTodos);
-todosApi.MapGet("/{id}", (int id) =>
-    sampleTodos.FirstOrDefault(a => a.Id == id) is { } todo
-        ? Results.Ok(todo)
-        : Results.NotFound());
+        context.Response.StatusCode = StatusCodes.Status500InternalServerError;
+        context.Response.ContentType = "application/json";
+
+        await context.Response.WriteAsJsonAsync(new
+        {
+            error = ex.Message
+        });
+    }
+});
 
 app.MapGeneratedEndpoints();
 app.Run();
 
-public record Todo(int Id, string? Title, DateOnly? DueBy = null, bool IsComplete = false);
-
-[JsonSerializable(typeof(Todo[]))]
-[JsonSerializable(typeof(UserDto))]
+[JsonSerializable(typeof(Contract.Models.UserDto))]
 [JsonSerializable(typeof(GetUserQuery))]
+[JsonSerializable(typeof(Contract.Models.GetUserById))]
 internal partial class AppJsonSerializerContext : JsonSerializerContext
 {
 

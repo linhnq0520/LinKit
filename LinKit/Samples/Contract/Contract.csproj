@@ -1,0 +1,18 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+	  <PublishAot>true</PublishAot>
+  </PropertyGroup>
+
+	<ItemGroup>
+		<Protobuf Include="Protos\users.proto" GrpcServices="Both" />
+		<PackageReference Include="Grpc.AspNetCore" Version="2.71.0" />
+		<!--<PackageReference Include="LinKit.Core" Version="1.0.5" />-->
+		<ProjectReference Include="..\..\LinKit.Core\LinKit.Core.csproj" />
+		<ProjectReference Include="..\..\LinKit.Generator\LinKit.Generator.csproj" OutputItemType="Analyzer" ReferenceOutputAssembly="false" />
+	
+	</ItemGroup>
+</Project>

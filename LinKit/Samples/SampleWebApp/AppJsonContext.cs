@@ -1,4 +1,5 @@
 ﻿using System.Text.Json.Serialization;
+using Contract.Models;
 using Grpc.Core;
 using SampleWebApp.Features.Users;
 

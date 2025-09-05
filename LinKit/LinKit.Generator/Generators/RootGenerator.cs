@@ -12,130 +12,173 @@ public class RootGenerator : IIncrementalGenerator
 {
     public void Initialize(IncrementalGeneratorInitializationContext context)
     {
-        // Lấy service info từ các part
         var cqrsServices = CqrsGeneratorPart.GetServices(context);
         var grpcClientServices = GrpcClientGeneratorPart.GetServices(context);
         var diServices = DependencyInjectionGeneratorPart.GetServices(context);
         var grpcServices = GrpcGeneratorPart.GetServices(context);
+        var messagingServices = MessagingGeneratorPart.GetServices(context);
 
-        // Generate non-DI files từ các part
-        CqrsGeneratorPart.GenerateNonDIFiles(context);
-        GrpcClientGeneratorPart.GenerateNonDIFiles(context);
+        CqrsGeneratorPart.Initialize(context);
+        GrpcClientGeneratorPart.Initialize(context);
         GrpcGeneratorPart.Initialize(context);
         EndpointsGeneratorPart.Initialize(context);
+        MessagingGeneratorPart.Initialize(context);
+        MapperGeneratorPart.Initialize(context);
 
-        // Combine tất cả service info lại
         var allServices = cqrsServices
             .Combine(grpcClientServices)
             .Combine(diServices)
             .Combine(grpcServices)
+            .Combine(messagingServices)
             .Select(
                 (combined, _) =>
                     new AllServicesInfo
                     {
-                        CqrsServices = combined.Left.Left.Left,
-                        GrpcClientServices = combined.Left.Left.Right,
-                        DIServices = combined.Left.Right,
-                        GrpcServices = combined.Right,
+                        CqrsServices = combined.Left.Left.Left.Left,
+                        GrpcClientServices = combined.Left.Left.Left.Right,
+                        DIServices = combined.Left.Left.Right,
+                        GrpcServices = combined.Left.Right,
+                        MessagingServices = combined.Right,
                     }
             );
 
-        // Generate file DI tổng hợp
         context.RegisterSourceOutput(
             allServices,
             (spc, services) =>
             {
-                if (IsEmpty(services))
-                    return;
+                // --- CQRS ---
+                if (services.CqrsServices.Any())
+                {
+                    var src = GeneratePartialDI(
+                        services.CqrsServices.Select(s => s.RegistrationCode),
+                        "LinKit.Core",
+                        "AddLinKitCqrs",
+                        "CQRS Services (Mediator, Handlers, Behaviors)"
+                    );
+                    spc.AddSource($"Cqrs.DependencyInjection.g.cs", SourceText.From(src, Encoding.UTF8));
+                }
 
-                var source = GenerateCombinedDI(services);
-                spc.AddSource(
-                    "AllServices.DependencyInjection.g.cs",
-                    SourceText.From(source, Encoding.UTF8)
-                );
+                // --- gRPC Client ---
+                if (services.GrpcClientServices.Any())
+                {
+                    var src = GeneratePartialDI(
+                        services.GrpcClientServices.Select(s => s.RegistrationCode),
+                        "LinKit.Core",
+                        "AddLinKitGrpcClient",
+                        "gRPC Client Mediator"
+                    );
+                    spc.AddSource($"GrpcClient.DependencyInjection.g.cs", SourceText.From(src, Encoding.UTF8));
+                }
+
+                // --- gRPC Server ---
+                if (services.GrpcServices.Any())
+                {
+                    var src = GeneratePartialDI(
+                        services.GrpcServices.Select(s => s.RegistrationCode),
+                        "LinKit.Core",
+                        "AddLinKitGrpcServer",
+                        "gRPC Server Services (Generated Implementations)"
+                    );
+                    spc.AddSource($"GrpcServer.DependencyInjection.g.cs", SourceText.From(src, Encoding.UTF8));
+                }
+
+                // --- Custom DI Services ---
+                if (services.DIServices.Any())
+                {
+                    var src = GeneratePartialDI(
+                        services.DIServices.Select(s =>
+                        {
+                            // Remove global:: prefix for cleaner type names
+                            var serviceType = s.ServiceType.StartsWith("global::") ? s.ServiceType.Substring(8) : s.ServiceType;
+                            var implType = s.ImplementationType.StartsWith("global::") ? s.ImplementationType.Substring(8) : s.ImplementationType;
+
+                            var lifetime = ((Lifetime)s.Lifetime) switch
+                            {
+                                Lifetime.Scoped => "AddScoped",
+                                Lifetime.Singleton => "AddSingleton",
+                                _ => "AddTransient",
+                            };
+
+                            if (s.IsGeneric && !string.IsNullOrWhiteSpace(s.Key))
+                            {
+                                // Handle keyed generic registration (e.g., services.AddKeyedScoped(typeof(IRepository<>), "key", typeof(BaseRepository<>)))
+                                lifetime = ((Lifetime)s.Lifetime) switch
+                                {
+                                    Lifetime.Scoped => "AddKeyedScoped",
+                                    Lifetime.Singleton => "AddKeyedSingleton",
+                                    _ => "AddKeyedTransient",
+                                };
+                                return $"services.{lifetime}(typeof({serviceType}), \"{s.Key}\", typeof({implType}));";
+                            }
+                            else if (s.IsGeneric)
+                            {
+                                // Handle generic registration (e.g., services.AddScoped(typeof(IABC<>), typeof(CreateUserValidator<>)))
+                                return $"services.{lifetime}(typeof({serviceType}), typeof({implType}));";
+                            }
+                            else if (!string.IsNullOrWhiteSpace(s.Key))
+                            {
+                                // Handle keyed non-generic registration (e.g., services.AddKeyedScoped<IValidator, Validator>("key"))
+                                lifetime = ((Lifetime)s.Lifetime) switch
+                                {
+                                    Lifetime.Scoped => "AddKeyedScoped",
+                                    Lifetime.Singleton => "AddKeyedSingleton",
+                                    _ => "AddKeyedTransient",
+                                };
+                                return $"services.{lifetime}<{serviceType}, {implType}>(\"{s.Key}\");";
+                            }
+                            else
+                            {
+                                // Handle standard non-generic registration (e.g., services.AddScoped<IValidator, Validator>())
+                                return $"services.{lifetime}<{serviceType}, {implType}>();";
+                            }
+                        }),
+                        "LinKit.Core",
+                        "AddLinKitDependency",
+                        "Custom Registered Services via [RegisterService]"
+                    );
+                    spc.AddSource($"CustomDI.DependencyInjection.g.cs", SourceText.From(src, Encoding.UTF8));
+                }
+
+                // --- Messaging ---
+                if (services.MessagingServices.Any())
+                {
+                    var src = GeneratePartialDI(
+                        services.MessagingServices.Select(s => s.RegistrationCode),
+                        "LinKit.Core",
+                        "AddLinKitMessaging",
+                        "Messaging Services (Publisher, Consumers)"
+                    );
+                    spc.AddSource($"Messaging.DependencyInjection.g.cs", SourceText.From(src, Encoding.UTF8));
+                }
             }
         );
     }
 
-    private static bool IsEmpty(AllServicesInfo services)
-    {
-        return !services.CqrsServices.Any()
-            && !services.GrpcClientServices.Any()
-            && !services.DIServices.Any()
-            && !services.GrpcServices.Any();
-    }
-
-    private static string GenerateCombinedDI(AllServicesInfo services)
+    private static string GeneratePartialDI(IEnumerable<string> registrations, string @namespace, string methodName, string comment)
     {
         var sb = new StringBuilder();
         sb.AppendLine(
             @"// <auto-generated/> by LinKit.Generator
 #nullable enable
 using Microsoft.Extensions.DependencyInjection;
-using LinKit.Core.Abstractions;
-
-namespace LinKit.Core
-{
-    public static class AllGeneratedServicesExtensions
-    {
-        public static IServiceCollection AddAllGeneratedServices(this IServiceCollection services)
-        {"
+using LinKit.Core.Abstractions;"
         );
 
-        // Add CQRS services
-        if (services.CqrsServices.Any())
-        {
-            sb.AppendLine("            // CQRS Services");
-            foreach (var service in services.CqrsServices)
-            {
-                sb.AppendLine($"            {service.RegistrationCode}");
-            }
-            sb.AppendLine();
-        }
+        sb.AppendLine($"namespace {@namespace}");
+        sb.AppendLine(@"{
+    public static partial class ServicesExtensions
+    {");
+        sb.AppendLine($"        public static IServiceCollection {methodName}(this IServiceCollection services)");
+        sb.AppendLine("        {");
+        sb.AppendLine($"            // --- {comment} ---");
 
-        // Add gRPC Client services
-        if (services.GrpcClientServices.Any())
+        foreach (var reg in registrations.Distinct())
         {
-            sb.AppendLine("            // gRPC Client Services");
-            foreach (var service in services.GrpcClientServices)
-            {
-                sb.AppendLine($"            {service.RegistrationCode}");
-            }
-            sb.AppendLine();
-        }
-
-        // Add gRPC Server services
-        if (services.GrpcServices.Any())
-        {
-            sb.AppendLine("            // gRPC Server Services");
-            foreach (var service in services.GrpcServices)
-            {
-                sb.AppendLine($"            {service.RegistrationCode}");
-            }
-            sb.AppendLine();
-        }
-
-        // Add DI services
-        if (services.DIServices.Any())
-        {
-            sb.AppendLine("            // Registered Services");
-            foreach (var service in services.DIServices)
-            {
-                var lifetime = ((Lifetime)service.Lifetime) switch
-                {
-                    Lifetime.Scoped => "AddScoped",
-                    Lifetime.Singleton => "AddSingleton",
-                    _ => "AddTransient",
-                };
-                sb.AppendLine(
-                    $"            services.{lifetime}<{service.ServiceType}, {service.ImplementationType}>();"
-                );
-            }
+            sb.AppendLine($"            {reg}");
         }
 
         sb.AppendLine(
-            @"
-            return services;
+    @"            return services;
         }
     }
 }"
@@ -144,16 +187,16 @@ namespace LinKit.Core
     }
 }
 
-// Data structures for centralized approach
 internal record AllServicesInfo
 {
     public IReadOnlyList<CqrsServiceInfo> CqrsServices { get; init; } = new List<CqrsServiceInfo>();
-    public IReadOnlyList<GrpcClientServiceInfo> GrpcClientServices { get; init; } =
-        new List<GrpcClientServiceInfo>();
+    public IReadOnlyList<GrpcClientServiceInfo> GrpcClientServices { get; init; } = new List<GrpcClientServiceInfo>();
     public IReadOnlyList<ServiceInfo> DIServices { get; init; } = new List<ServiceInfo>();
     public IReadOnlyList<GrpcServiceInfo> GrpcServices { get; init; } = new List<GrpcServiceInfo>();
+    public IReadOnlyList<MessagingServiceInfo> MessagingServices { get; init; } = new List<MessagingServiceInfo>();
 }
 
 internal record CqrsServiceInfo(string RegistrationCode);
-
 internal record GrpcClientServiceInfo(string RegistrationCode);
+internal record GrpcServiceInfo(string RegistrationCode);
+internal record MessagingServiceInfo(string RegistrationCode);

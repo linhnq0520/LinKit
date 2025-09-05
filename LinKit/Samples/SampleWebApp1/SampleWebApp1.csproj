@@ -1,20 +1,26 @@
 ﻿<Project Sdk="Microsoft.NET.Sdk.Web">
 
-  <PropertyGroup>
-    <TargetFramework>net8.0</TargetFramework>
-    <Nullable>enable</Nullable>
-    <ImplicitUsings>enable</ImplicitUsings>
-    <InvariantGlobalization>true</InvariantGlobalization>
-    <PublishAot>true</PublishAot>
-  </PropertyGroup>
+	<PropertyGroup>
+		<TargetFramework>net8.0</TargetFramework>
+		<Nullable>disable</Nullable>
+		<ImplicitUsings>enable</ImplicitUsings>
+		<PublishAot>true</PublishAot>
+		<IlcGenerateCompleteTypeMetadata>true</IlcGenerateCompleteTypeMetadata>
+		<EmitCompilerGeneratedFiles>true</EmitCompilerGeneratedFiles>
+	</PropertyGroup>
 
 	<ItemGroup>
 		<ProjectReference Include="..\..\LinKit.Core\LinKit.Core.csproj" />
 		<ProjectReference Include="..\..\LinKit.Generator\LinKit.Generator.csproj" OutputItemType="Analyzer" ReferenceOutputAssembly="false" />
+		<ProjectReference Include="..\..\LinKit.Messaging.RabbitMQ\LinKit.Messaging.RabbitMQ.csproj" />
+		<ProjectReference Include="..\Contract\Contract.csproj" />
 	</ItemGroup>
-
 	<ItemGroup>
-		<Protobuf Include="Protos\users.proto" GrpcServices="Client" />
+		<!-- Giữ lại rd.xml vì nó vẫn là chỉ thị quan trọng cho runtime -->
+		<RdXmlFile Include="rd.xml" />
+	</ItemGroup>
+	<ItemGroup>
 		<PackageReference Include="Grpc.AspNetCore" Version="2.71.0" />
+		<!--<PackageReference Include="LinKit.Core" Version="1.0.5" />-->
 	</ItemGroup>
 </Project>

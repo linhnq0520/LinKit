@@ -6,7 +6,7 @@
 		<Nullable>enable</Nullable>
 
 		<PackageId>LinKit.Core</PackageId>
-		<Version>1.0.4</Version>
+		<Version>1.0.7</Version>
 		<Authors>Linh Nguyen</Authors>
 		<Description>A toolkit of high-performance, source-generated helpers for modern .NET. Boosts performance and provides AOT/Trimming safety.</Description>
 		<PackageTags>source-generator;performance;aot;cqrs;mediator;di</PackageTags>

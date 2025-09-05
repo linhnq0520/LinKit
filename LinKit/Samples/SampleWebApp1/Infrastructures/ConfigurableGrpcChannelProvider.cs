@@ -50,7 +50,10 @@ public class ConfigurableGrpcChannelProvider : IGrpcChannelProvider, IDisposable
     public void Dispose()
     {
         foreach (var channel in _channels.Values)
+        {
             channel.Dispose();
+        }
+
         GC.SuppressFinalize(this);
     }
 }

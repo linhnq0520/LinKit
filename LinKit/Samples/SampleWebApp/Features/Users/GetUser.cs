@@ -1,4 +1,4 @@
-﻿using System.Text.Json;
+﻿using Contract.Models;
 using LinKit.Core.Cqrs;
 using LinKit.Core.Endpoints;
 using LinKit.Core.Grpc;
@@ -6,13 +6,6 @@ using SampleWebApp.Contracts.Behaviors;
 using SampleWebApp.Grpc.Users;
 
 namespace SampleWebApp.Features.Users;
-
-public record UserDto(int Id, string Name);
-
-public class UsersDto
-{
-    public List<UserDto> Users { get; set; }
-}
 
 [ApiEndpoint(ApiMethod.Get, "get-user/{id}")]
 [GrpcEndpoint(typeof(UserGrpcService.UserGrpcServiceBase), "GetUser")]

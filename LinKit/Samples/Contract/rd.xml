@@ -1,0 +1,14 @@
+﻿<?xml version="1.0" encoding="utf-8" ?>
+<Directives>
+	<Application>
+		<!--
+            This directive instructs the runtime to root the entire 'Microsoft.AspNetCore'
+            assembly and all of its types with all their members.
+            This is a powerful but broad workaround for libraries that use heavy reflection
+            at runtime, which the AOT static analysis cannot predict.
+            It ensures that when Assembly.Load("Microsoft.AspNetCore") is called,
+            the assembly and its metadata are available.
+        -->
+		<Assembly Name="Microsoft.AspNetCore" Dynamic="Required All" />
+	</Application>
+</Directives>

@@ -1,18 +1,11 @@
-﻿using System.ComponentModel.DataAnnotations;
+﻿using Contract.Models;
 using LinKit.Core.Cqrs;
 using LinKit.Core.Endpoints;
 using LinKit.Core.Grpc;
-using SampleWebApp.Grpc.Users;
+using LinKit.Generated.Mapping;
 
 namespace SampleWebApp1.Features
 {
-    public class UserDto
-    {
-        public int Id { get; set; }
-        public string Name { get; set; }
-    }
-
-    [GrpcClient(typeof(UserGrpcService.UserGrpcServiceClient), "GetUserAsync")]
     [ApiEndpoint(ApiMethod.Get, "get-user/{id}")]
     public record GetUserQuery : IQuery<UserDto?>
     {
@@ -28,6 +21,7 @@ namespace SampleWebApp1.Features
         public int Id { get; set; }
     };
 
+
     [CqrsHandler]
     public class GetUserQueryHandler(IGrpcMediator grpcMediator)
         : IQueryHandler<GetUserQuery, UserDto>
@@ -36,7 +30,16 @@ namespace SampleWebApp1.Features
 
         public async Task<UserDto> HandleAsync(GetUserQuery query, CancellationToken ct = default)
         {
-            return await _grpcMediator.QueryAsync<GetUserQuery, UserDto>(query);
+            try
+            {
+                var model = query.ToGetUserById();
+                return await _grpcMediator.QueryAsync<GetUserById, UserDto>(model);
+            }
+            catch (Exception ex)
+            {
+                throw;
+            }
+
         }
     }
 }

@@ -1,6 +1,4 @@
-﻿using System;
-
-namespace LinKit.Core.Grpc;
+﻿namespace LinKit.Core.Grpc;
 
 /// <summary>
 /// Marks a CQRS Command or Query to indicate that it should be dispatched

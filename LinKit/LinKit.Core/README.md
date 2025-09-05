@@ -3,173 +3,240 @@
 [![NuGet Version](https://img.shields.io/nuget/v/LinKit.Core.svg)](https://www.nuget.org/packages/LinKit.Core/)
 [![NuGet Downloads](https://img.shields.io/nuget/dt/LinKit.Core.svg)](https://www.nuget.org/packages/LinKit.Core/)
 
-**LinKit** is a toolkit of high-performance, source-generated helpers for modern .NET. It's designed to boost runtime performance, reduce application startup time, and ensure compatibility with advanced .NET features like AOT (Ahead-Of-Time) compilation and assembly trimming.
+**LinKit** is a toolkit of high-performance, source-generated helpers for modern .NET. It's designed to eliminate boilerplate, boost runtime performance, and ensure compatibility with advanced .NET features like AOT (Ahead-Of-Time) compilation and assembly trimming.
 
 The name "LinKit" is a play on "Link It", reflecting the library's role in connecting application components at compile time, and is also a nod to the author's name, Linh.
 
 ## Why LinKit?
 
-Many popular .NET libraries rely on runtime reflection. While powerful, reflection can be slow, memory-intensive, and is incompatible with technologies like NativeAOT that rely on static analysis.
+Many popular .NET libraries rely on runtime reflection. While powerful, reflection is slow, memory-intensive, and incompatible with technologies like NativeAOT.
 
-**LinKit takes a different approach.** It uses C# Source Generators to analyze your code at compile time and generate highly optimized, boilerplate-free C# code that "links" your application's components together.
+**LinKit takes a different approach.** It uses C# Source Generators to analyze your code and generate highly optimized, boilerplate-free C# code that "links" your application's components together.
 
 **Benefits for ALL .NET Projects:**
-*   🚀 **Blazing Fast Performance:** Dispatches requests directly without any runtime reflection overhead.
-*   ⏱️ **Faster Startup:** No need for slow assembly scanning when your application starts.
-*   🗑️ **Trimming & AOT Safe:** Perfect for Blazor WASM, MAUI, and NativeAOT applications.
-*   ✍️ **Clean & Explicit API:** A clear, intent-driven API that encourages good CQRS and API design.
-*   🤖 **Automated Boilerplate:** Reduces repetitive code for DI registrations, Minimal API endpoints, and gRPC services.
 
-## Features
+* 🚀 **Blazing Fast Performance:** Zero reflection overhead at runtime.
+* ⏱️ **Faster Startup:** No need for slow assembly scanning.
+* 🗑️ **Trimming & AOT Safe:** Perfect for Blazor, MAUI, and NativeAOT.
+* ✍️ **Clean & Explicit API:** A clear, intent-driven API that encourages good design patterns.
+* 🤖 **Automated Boilerplate:** Reduces repetitive code for DI, API endpoints, gRPC services, message consumers, and object mapping.
 
-The `LinKit.Core` package provides a collection of "kits" designed to solve common problems.
+## The LinKit Ecosystem
 
-1.  **The CQRS Kit:** A source-generated Mediator for the CQRS pattern.
-2.  **The Dependency Injection Kit:** Automatic DI registration using attributes.
-3.  **The Endpoints Kit:** Auto-generates Minimal API endpoints from CQRS requests.
-4.  **The gRPC Kit:** Auto-generates gRPC service implementations from CQRS requests.
+LinKit is a modular toolkit. You start with the core package and add implementations as needed.
+
+| Package | Description | NuGet |
+| --- | --- | --- |
+| `LinKit.Core` | **Required.** Contains all interfaces, attributes, and the source generator. | [![NuGet](https://img.shields.io/nuget/v/LinKit.Core.svg)](https://www.nuget.org/packages/LinKit.Core/) |
+| `LinKit.Messaging.RabbitMQ` | RabbitMQ implementation for the Messaging Kit. | [![NuGet](https://img.shields.io/nuget/v/LinKit.Messaging.RabbitMQ.svg)](https://www.nuget.org/packages/LinKit.Messaging.RabbitMQ/) |
+| `LinKit.Messaging.Kafka` | Apache Kafka implementation for the Messaging Kit. | [![NuGet](https://img.shields.io/nuget/v/LinKit.Messaging.Kafka.svg)](https://www.nuget.org/packages/LinKit.Messaging.Kafka/) |
 
 ## Installation
 
-Install the core package from NuGet:
+Install the core package:
 ```shell
 dotnet add package LinKit.Core
 ```
-
----
+Then, add any specific implementation packages you need, for example:
+```shell
+dotnet add package LinKit.Messaging.RabbitMQ
+```
 
 ## The Kits in Detail
 
 ### 1. The CQRS Kit
-
-A fast, AOT-safe way to implement the CQRS pattern.
+A source-generated Mediator for the CQRS pattern.
 
 *   **Define Requests:** Create records/classes implementing `ICommand`, `ICommand<TResult>`, or `IQuery<TResult>`.
 *   **Create Handlers:** Implement the corresponding handler and **mark it with `[CqrsHandler]`**.
 *   **Register:** Call `builder.Services.AddLinKitCqrs()` in `Program.cs`.
 
 ```csharp
-// GetUserQuery.cs
 [CqrsHandler]
-public record GetUserQuery(int Id) : IQuery<UserDto>;
-
-// GetUserQueryHandler.cs
 public class GetUserQueryHandler : IQueryHandler<GetUserQuery, UserDto>
 {
-    public Task<UserDto> HandleAsync(GetUserQuery query, CancellationToken ct)
-    {
-        // ... business logic ...
-        return Task.FromResult(new UserDto(query.Id, "Awesome LinKit User"));
-    }
+    public Task<UserDto> HandleAsync(GetUserQuery query, CancellationToken ct) { /* ... */ }
 }
 ```
 
 ### 2. The Dependency Injection Kit
+Automatically register services using attributes.
 
-Tired of manually registering services?
-
-*   **Mark Services:** Decorate your classes with `[RegisterService(Lifetime.Scoped)]`.
-*   **Register:** Call `builder.Services.AddGeneratedServices()` in `Program.cs`.
+*   **Mark Services:** Decorate your classes with `[RegisterService(Lifetime.Scoped)]`. The generator will infer the service type from the first implemented interface.
+*   **Register:** The `AddLinKit...()` methods automatically call `AddGeneratedServices()`, or you can call it manually.
 
 ```csharp
-// MyService.cs
-using LinKit.Core.Abstractions;
-
-public interface IMyService { /* ... */ }
-
 [RegisterService(Lifetime.Scoped)]
 public class MyService : IMyService { /* ... */ }
 ```
 
-### 3. The Endpoints Kit (for Minimal APIs)
-
+### 3. The Endpoints Kit (Minimal APIs)
 **Automatically generate Minimal API endpoints from your CQRS requests.**
 
 *   **Decorate Requests:** Add `[ApiEndpoint]` to your command/query. Use `[FromRoute]`, `[FromQuery]` on properties to control binding.
 *   **Map Endpoints:** Call `app.MapGeneratedEndpoints()` in `Program.cs`.
 
 ```csharp
-// GetUserQuery.cs
-using LinKit.Core.Endpoints;
-
 [CqrsHandler]
-[ApiEndpoint(ApiMethod.GET, "users/{Id}")] // Exposes GET /api/users/{Id}
+[ApiEndpoint(ApiMethod.GET, "users/{Id}")]
 public record GetUserQuery : IQuery<UserDto>
 {
     [FromRoute] public int Id { get; init; } 
 }
-```
-```csharp
-// Program.cs
-var app = builder.Build();
-app.MapGeneratedEndpoints(); // Maps all [ApiEndpoint] requests
-app.Run();
+
+// In Program.cs
+app.MapGeneratedEndpoints();
 ```
 
-### 4. The gRPC Kit
+### 4. The gRPC Kit (Server & Client)
 
-**Automatically generate gRPC service implementations from your CQRS requests,** turning your gRPC services into thin, clean adapters.
+**Automatically generate gRPC service implementations and type-safe gRPC clients.**
 
-#### Step 1: Define your `.proto` file
-
-Define your service and messages as you normally would with gRPC.
-```protobuf
-// Protos/users.proto
-syntax = "proto3";
-option csharp_namespace = "SampleWebApp.Grpc.Users";
-
-service UserService {
-  rpc GetUser (GetUserRequest) returns (GetUserResponse);
-}
-message GetUserRequest { int32 id = 1; }
-message User { int32 id = 1; string name = 2; }
-message GetUserResponse { User user = 1; }
-```
-
-#### Step 2: Decorate Your CQRS Request
-
-Add the `[GrpcEndpoint]` attribute to your corresponding command or query, linking it to the gRPC service and method.
+#### For the Server:
+*   **Decorate Requests:** Add `[GrpcEndpoint(typeof(UserService.UserServiceBase), "GetUserById")]` to link a CQRS request to a gRPC method defined in your `.proto` file.
+*   **Map Service:** Call `app.MapGrpcService<LinKitUserService>()` in `Program.cs` to map the implementation generated by LinKit.
 
 ```csharp
-// Features/Users/GetUserQuery.cs
-using LinKit.Core.Cqrs;
-using LinKit.Core.Grpc;
-using SampleWebApp.Grpc.Users; // Namespace from the .proto file
-
+// GetUserQuery.cs
 [CqrsHandler]
-[GrpcEndpoint(typeof(UserService.UserServiceBase), "GetUser")] // Link to the gRPC definition
+[GrpcEndpoint(typeof(UserService.UserServiceBase), "GetUserById")]
 public record GetUserQuery(int Id) : IQuery<UserDto?>;
+
+// Program.cs
+app.MapGrpcService<LinKitUserService>();
 ```
-*Note: LinKit automatically maps properties with matching names between your gRPC messages and your CQRS records/classes.*
 
-#### Step 3: Register and Map the Generated Service
-
-In `Program.cs`, the `[RegisterService]` attribute on the generated gRPC service handles DI. You just need to map the service.
+#### For the Client:
+*   **Decorate Requests:** In your client project, share the same CQRS request definitions but mark them with `[GrpcClient(typeof(UserService.UserClient), "GetUserByIdAsync")]`.
+*   **Register & Use:** Register an `IGrpcChannelProvider`. LinKit will generate a `GrpcClientMediator` that implements `IMediator`. You can now use `IMediator` transparently, and LinKit will handle the gRPC calls in the background.
 
 ```csharp
-// Program.cs
-using SampleWebApp.Grpc.Users; // Contains the generated service
+// GetUserQuery.cs in Client Project
+[GrpcClient(typeof(UserService.UserClient), "GetUserByIdAsync")]
+public record GetUserQuery(int Id) : IQuery<UserDto?>;
 
-var builder = WebApplication.CreateBuilder(args);
-builder.Services.AddGrpc();
-builder.Services.AddLinKitCqrs();
-builder.Services.AddGeneratedServices(); // This will register the generated gRPC service
-
-var app = builder.Build();
-
-// Map the service implementation that LinKit generated for you
-app.MapGrpcService<LinKitUserService>(); 
-
-app.Run();
+// Blazor Page
+var user = await Mediator.QueryAsync(new GetUserQuery(123)); // This is now a gRPC call!
 ```
-That's it! Your gRPC endpoint is now live, and all incoming requests are automatically routed through your CQRS pipeline, keeping your business logic clean and separate from the transport layer.
 
-## How It Works
+### 5. The Messaging Kit (RabbitMQ & Kafka)
 
-The `LinKit.Core` package includes a powerful source generator. When you build your project, it scans for `[CqrsHandler]`, `[RegisterService]`, `[ApiEndpoint]`, and `[GrpcEndpoint]` attributes and generates the necessary boilerplate code—DI registrations, Mediator pipelines, Minimal API endpoints, and gRPC service implementations—all at compile time.
+**Abstract away your message broker and auto-generate publishers and consumers.**
 
-This approach ensures maximum performance, type safety, and compatibility, making your application faster, smaller, and more robust.
+#### Step 1: Decorate Events/Commands
+Mark any class you want to publish with the `[Message]` attribute. `QueueName` is used by the generator to create a consumer for that queue.
+```csharp
+[Message("user-events", RoutingKey = "user.created", QueueName = "email-service-queue")]
+public record UserCreatedEvent(int UserId, string Email);
+```
+
+#### Step 2: Write Handlers
+In your consumer service, write a standard `[CqrsHandler]` for the event.
+```csharp
+[CqrsHandler]
+public class UserCreatedEventHandler : ICommandHandler<UserCreatedEvent> { /* ... */ }
+```
+
+#### Step 3: Configure `Program.cs`
+
+**In the Publisher service:**
+```csharp
+// Program.cs (Publisher)
+builder.Services.AddLinKitMessaging(); // Registers the generated IMessagePublisher
+builder.Services.AddLinKitRabbitMQ(builder.Configuration); // Provide the implementation
+
+// Usage:
+// await publisher.PublishAsync(new UserCreatedEvent(...));
+```
+
+**In the Consumer service:**
+```csharp
+// Program.cs (Consumer Worker)
+builder.Services.AddLinKitCqrs();
+builder.Services.AddLinKitMessaging(); // Registers the generated Consumer IHostedService
+builder.Services.AddLinKitRabbitMQ(builder.Configuration);
+```
+LinKit handles all the boilerplate of creating channels, publishing, creating long-running consumers, deserializing, and dispatching messages to your CQRS handlers.
+
+
+### 6. The Mapping Kit (Object-to-Object Mapper)
+
+**A powerful, reflection-free, source-generated object mapper with a fluent configuration API.** LinKit.Mapper generates highly optimized extension methods to map between your objects, with intelligent conventions and a centralized configuration approach.
+
+#### Step 1: Create a Mapper Context
+
+Create a `partial` class that is marked with `[MapperContext]` and implements `IMappingConfigurator`. This class will be the single source of truth for all your application's object mappings.
+
+```csharp
+// Mappers/ApplicationMapperContext.cs
+using LinKit.Core.Mapping;
+
+[MapperContext]
+public partial class ApplicationMapperContext : IMappingConfigurator
+{
+    public void Configure(IMapperConfigurationBuilder builder)
+    {
+        // Define a mapping from the User domain entity to the UserDto
+        builder.CreateMap<User, UserDto>()
+            // Explicitly map User.UserName to UserDto.Name
+            .ForMember("Name", "UserName")
+            // Use a custom converter for complex transformations
+            .ForMember("Age", typeof(Converters), "CalculateAge", "DateOfBirth");
+
+        // Define another simple mapping
+        builder.CreateMap<Product, ProductDto>();
+
+        // ... add all other mappings here
+    }
+}
+```
+
+#### Step 2: Use the Generated Mappers
+
+LinKit will analyze your `MapperContext` and generate extension methods for every mapping you define. Simply import the generated namespace and use them.
+
+The Mapper Kit does not require any runtime DI registration.
+
+```csharp
+using LinKit.Generated.Mapping; // Import the generated mappers
+using YourApp.Domain;
+using YourApp.Dtos;
+
+public class UserService
+{
+    public UserDto GetUser(User userEntity)
+    {
+        // LinKit generated this extension method for you!
+        return userEntity.ToUserDto();
+    }
+    
+    public List<UserDto> GetUsers(List<User> userEntities)
+    {
+        // It also generates mappers for collections.
+        return userEntities.ToUserDtoList();
+    }
+}
+```
+
+#### Intelligent Mapping Conventions
+
+LinKit.Mapper is smart. You don't need to configure every single property. It will automatically map properties based on this order of precedence:
+
+1.  **Explicit Configuration:** Rules defined with `.ForMember()` in your context are always prioritized.
+2.  **Name Matching:** Properties with the same name (case-insensitive) are mapped.
+3.  **JSON Property Matching:** If names don't match, it will try to match properties based on `[JsonPropertyName]` or `[JsonProperty]` attributes, allowing you to reuse your API contract metadata for mapping.
+
+This approach minimizes configuration while providing full control when needed.
+
+#### When to Use
+
+* Mapping **DTOs ↔ Entities**
+* API **request/response shaping**
+* Transformations between **layers** without reflection cost
+* Safe in **Blazor, MAUI, and NativeAOT**
+
+## AOT & Trimming Considerations
+LinKit is designed to be AOT-friendly. For full compatibility, especially with the Messaging and gRPC kits, it is **highly recommended** to use `System.Text.Json`'s **Source Generation mode** for your DTOs and message contracts to ensure serialization and deserialization are also AOT-safe.
 
 ## Contributing
-
 Contributions, issues, and feature requests are welcome.

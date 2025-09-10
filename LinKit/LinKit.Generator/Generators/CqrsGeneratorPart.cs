@@ -47,7 +47,7 @@ internal static class CqrsGeneratorPart
 
                     if (handlers.Any())
                     {
-                        services.Add(new CqrsServiceInfo("services.AddSingleton<LinKit.Core.Cqrs.IMediator, LinKit.Generated.Cqrs.Mediator>();"));
+                        services.Add(new CqrsServiceInfo("services.AddScoped<LinKit.Core.Cqrs.IMediator, LinKit.Generated.Cqrs.Mediator>();"));
 
                         foreach (var handler in handlers)
                         {

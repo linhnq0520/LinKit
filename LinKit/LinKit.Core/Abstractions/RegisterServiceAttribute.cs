@@ -33,7 +33,8 @@ public sealed class RegisterServiceAttribute : Attribute
         Lifetime lifetime = Lifetime.Transient,
         Type? serviceType = null,
         string? key = null,
-        bool isGeneric = false)
+        bool isGeneric = false
+    )
     {
         Lifetime = lifetime;
         ServiceType = serviceType;

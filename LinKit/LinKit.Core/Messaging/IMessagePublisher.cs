@@ -2,5 +2,5 @@
 
 public interface IMessagePublisher
 {
-    Task PublishAsync<TMessage>(TMessage message, CancellationToken ct = default);
+    Task PublishAsync<TMessage>(TMessage message, CancellationToken cancellationToken = default);
 }

@@ -1,5 +1,6 @@
 ﻿using System.Collections.Concurrent;
 using Grpc.Core;
+using Grpc.Core.Interceptors;
 using Grpc.Net.Client;
 using LinKit.Grpc;
 

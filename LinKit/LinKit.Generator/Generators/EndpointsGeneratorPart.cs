@@ -1,9 +1,9 @@
-﻿using Microsoft.CodeAnalysis;
-using Microsoft.CodeAnalysis.CSharp.Syntax;
-using Microsoft.CodeAnalysis.Text;
-using System.Collections.Generic;
+﻿using System.Collections.Generic;
 using System.Linq;
 using System.Text;
+using Microsoft.CodeAnalysis;
+using Microsoft.CodeAnalysis.CSharp.Syntax;
+using Microsoft.CodeAnalysis.Text;
 
 namespace LinKit.Generator.Generators;
 
@@ -15,7 +15,9 @@ internal record EndpointInfo(
     IReadOnlyList<ParameterInfo> Parameters,
     bool IsCommandWithoutResult
 );
+
 internal record ParameterInfo(string Name, string Type, string Source);
+
 internal record EndpointServiceInfo(string RegistrationCode);
 
 internal static class EndpointsGeneratorPart
@@ -29,9 +31,12 @@ internal static class EndpointsGeneratorPart
 
     #region Pipeline Setup
 
-    public static IncrementalValueProvider<IReadOnlyList<EndpointServiceInfo>> GetServices(IncrementalGeneratorInitializationContext context)
+    public static IncrementalValueProvider<IReadOnlyList<EndpointServiceInfo>> GetServices(
+        IncrementalGeneratorInitializationContext context
+    )
     {
-        return context.SyntaxProvider.CreateSyntaxProvider((_, _) => true, (_, _) => true)
+        return context
+            .SyntaxProvider.CreateSyntaxProvider((_, _) => true, (_, _) => true)
             .Collect()
             .Select((_, _) => (IReadOnlyList<EndpointServiceInfo>)new List<EndpointServiceInfo>());
     }
@@ -73,9 +78,14 @@ internal static class EndpointsGeneratorPart
         }
 
         var attributeData = context.Attributes[0];
-        var httpMethodEnum = (Core.Endpoints.ApiMethod)(attributeData.ConstructorArguments[0].Value ?? 0);
+        var httpMethodEnum = (Core.Endpoints.ApiMethod)(
+            attributeData.ConstructorArguments[0].Value ?? 0
+        );
         var route = attributeData.ConstructorArguments[1].Value as string ?? "";
-        var cqrsInterface = requestSymbol.AllInterfaces.FirstOrDefault(i => i.OriginalDefinition.ToDisplayString().StartsWith(IQueryInterfaceName) || i.OriginalDefinition.ToDisplayString().StartsWith(ICommandInterfaceName));
+        var cqrsInterface = requestSymbol.AllInterfaces.FirstOrDefault(i =>
+            i.OriginalDefinition.ToDisplayString().StartsWith(IQueryInterfaceName)
+            || i.OriginalDefinition.ToDisplayString().StartsWith(ICommandInterfaceName)
+        );
         if (cqrsInterface is null)
         {
             return null;
@@ -85,7 +95,9 @@ internal static class EndpointsGeneratorPart
         bool isCommandWithoutResult = false;
         if (cqrsInterface.TypeArguments.Length > 0)
         {
-            responseType = cqrsInterface.TypeArguments[0].ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
+            responseType = cqrsInterface
+                .TypeArguments[0]
+                .ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
         }
         else
         {
@@ -96,14 +108,56 @@ internal static class EndpointsGeneratorPart
         var allProperties = requestSymbol.GetMembers().OfType<IPropertySymbol>().ToList();
         foreach (var prop in allProperties.Where(p => p.SetMethod is not null))
         {
-            if (prop.GetAttributes().Any(a => a.AttributeClass?.ToDisplayString() == FromRouteAttributeName)) { parameters.Add(new ParameterInfo(prop.Name, prop.Type.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat), "Route")); }
-            else if (prop.GetAttributes().Any(a => a.AttributeClass?.ToDisplayString() == FromQueryAttributeName)) { parameters.Add(new ParameterInfo(prop.Name, prop.Type.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat), "Query")); }
-            else if (prop.GetAttributes().Any(a => a.AttributeClass?.ToDisplayString() == FromHeaderAttributeName)) { parameters.Add(new ParameterInfo(prop.Name, prop.Type.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat), "Header")); }
+            if (
+                prop.GetAttributes()
+                    .Any(a => a.AttributeClass?.ToDisplayString() == FromRouteAttributeName)
+            )
+            {
+                parameters.Add(
+                    new ParameterInfo(
+                        prop.Name,
+                        prop.Type.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat),
+                        "Route"
+                    )
+                );
+            }
+            else if (
+                prop.GetAttributes()
+                    .Any(a => a.AttributeClass?.ToDisplayString() == FromQueryAttributeName)
+            )
+            {
+                parameters.Add(
+                    new ParameterInfo(
+                        prop.Name,
+                        prop.Type.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat),
+                        "Query"
+                    )
+                );
+            }
+            else if (
+                prop.GetAttributes()
+                    .Any(a => a.AttributeClass?.ToDisplayString() == FromHeaderAttributeName)
+            )
+            {
+                parameters.Add(
+                    new ParameterInfo(
+                        prop.Name,
+                        prop.Type.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat),
+                        "Header"
+                    )
+                );
+            }
         }
         var httpMethodString = httpMethodEnum.ToString().ToUpper();
         if (httpMethodString == "POST" || httpMethodString == "PUT" || httpMethodString == "PATCH")
         {
-            parameters.Add(new ParameterInfo("request", requestSymbol.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat), "Body"));
+            parameters.Add(
+                new ParameterInfo(
+                    "request",
+                    requestSymbol.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat),
+                    "Body"
+                )
+            );
         }
         return new EndpointInfo(
             RequestType: requestSymbol.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat),
@@ -137,7 +191,9 @@ internal static class EndpointsGeneratorPart
         sb.AppendLine("{");
         sb.AppendLine("    public static partial class GeneratedEndpointsExtensions");
         sb.AppendLine("    {");
-        sb.AppendLine("        public static IEndpointRouteBuilder MapGeneratedEndpoints(this IEndpointRouteBuilder app)");
+        sb.AppendLine(
+            "        public static IEndpointRouteBuilder MapGeneratedEndpoints(this IEndpointRouteBuilder app)"
+        );
         sb.AppendLine("        {");
 
         foreach (var endpoint in endpoints)
@@ -151,19 +207,25 @@ internal static class EndpointsGeneratorPart
 
             foreach (var param in endpoint.Parameters.Where(p => p.Source != "Body"))
             {
-                handlerParams.Add($"[Microsoft.AspNetCore.Mvc.From{param.Source}] {param.Type} {param.Name}");
+                handlerParams.Add(
+                    $"[Microsoft.AspNetCore.Mvc.From{param.Source}] {param.Type} {param.Name}"
+                );
             }
 
             if (hasBody)
             {
                 var bodyParam = endpoint.Parameters.First(p => p.Source == "Body");
-                handlerParams.Add($"[Microsoft.AspNetCore.Mvc.FromBody] {bodyParam.Type} {bodyParam.Name}");
+                handlerParams.Add(
+                    $"[Microsoft.AspNetCore.Mvc.FromBody] {bodyParam.Type} {bodyParam.Name}"
+                );
             }
 
             handlerParams.Add("[Microsoft.AspNetCore.Mvc.FromServices] IMediator mediator");
-            handlerParams.Add("CancellationToken ct");
+            handlerParams.Add("CancellationToken cancellationToken");
 
-            sb.AppendLine($@"            app.MapMethods(""{endpoint.Route}"", new[] {{ ""{endpoint.HttpMethod.ToUpper()}"", ""OPTIONS"" }}, async ({string.Join(", ", handlerParams)}) =>");
+            sb.AppendLine(
+                $@"            app.MapMethods(""{endpoint.Route}"", new[] {{ ""{endpoint.HttpMethod.ToUpper()}"", ""OPTIONS"" }}, async ({string.Join(", ", handlerParams)}) =>"
+            );
             sb.AppendLine("            {");
             sb.AppendLine("                try");
             sb.AppendLine("                {");
@@ -179,28 +241,38 @@ internal static class EndpointsGeneratorPart
                 {
                     requestCreationParts.Add($"{param.Name} = {param.Name}");
                 }
-                sb.AppendLine(requestCreationParts.Any()
-                    ? $"                    var {requestInstanceName} = new {endpoint.RequestType} {{ {string.Join(", ", requestCreationParts)} }};"
-                    : $"                    var {requestInstanceName} = new {endpoint.RequestType}();");
+                sb.AppendLine(
+                    requestCreationParts.Any()
+                        ? $"                    var {requestInstanceName} = new {endpoint.RequestType} {{ {string.Join(", ", requestCreationParts)} }};"
+                        : $"                    var {requestInstanceName} = new {endpoint.RequestType}();"
+                );
             }
 
             if (endpoint.IsCommandWithoutResult)
             {
-                sb.AppendLine($"                    await mediator.SendAsync({requestInstanceName}, ct);");
+                sb.AppendLine(
+                    $"                    await mediator.SendAsync({requestInstanceName}, cancellationToken);"
+                );
                 sb.AppendLine("                    return Results.Ok();");
             }
             else
             {
                 var isQuery = endpoint.HttpMethod.ToUpper() == "GET";
                 var mediatorMethod = isQuery ? "QueryAsync" : "SendAsync";
-                sb.AppendLine($"                    var result = await mediator.{mediatorMethod}<{endpoint.RequestType}, {endpoint.ResponseType.TrimEnd('?')}>({requestInstanceName}, ct);");
-                sb.AppendLine("                    return result is not null ? Results.Ok(result) : Results.NotFound();");
+                sb.AppendLine(
+                    $"                    var result = await mediator.{mediatorMethod}<{endpoint.RequestType}, {endpoint.ResponseType.TrimEnd('?')}>({requestInstanceName}, cancellationToken);"
+                );
+                sb.AppendLine(
+                    "                    return result is not null ? Results.Ok(result) : Results.NotFound();"
+                );
             }
 
             sb.AppendLine("                }");
             sb.AppendLine("                catch (ValidationException ex)");
             sb.AppendLine("                {");
-            sb.AppendLine("                    return Results.BadRequest(new { Error = ex.Message });");
+            sb.AppendLine(
+                "                    return Results.BadRequest(new { Error = ex.Message });"
+            );
             sb.AppendLine("                }");
             sb.AppendLine("                catch");
             sb.AppendLine("                {");

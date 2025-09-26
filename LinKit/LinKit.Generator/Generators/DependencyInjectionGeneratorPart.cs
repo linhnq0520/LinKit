@@ -6,7 +6,13 @@ using Microsoft.CodeAnalysis.CSharp.Syntax;
 
 namespace LinKit.Generator.Generators;
 
-public record ServiceInfo(string ServiceType, string ImplementationType, int Lifetime, string? Key = null, bool IsGeneric = false);
+public record ServiceInfo(
+    string ServiceType,
+    string ImplementationType,
+    int Lifetime,
+    string? Key = null,
+    bool IsGeneric = false
+);
 
 internal static class DependencyInjectionGeneratorPart
 {
@@ -14,7 +20,8 @@ internal static class DependencyInjectionGeneratorPart
         "LinKit.Core.Abstractions.RegisterServiceAttribute";
 
     public static IncrementalValueProvider<IReadOnlyList<ServiceInfo>> GetServices(
-        IncrementalGeneratorInitializationContext context)
+        IncrementalGeneratorInitializationContext context
+    )
     {
         IncrementalValuesProvider<(
             INamedTypeSymbol Implementation,
@@ -40,7 +47,12 @@ internal static class DependencyInjectionGeneratorPart
                     foreach (var (implementation, attribute) in services)
                     {
                         var lifetime = GetParameter<int>(attribute, 0, "Lifetime", 0);
-                        var serviceTypeSymbol = GetParameter<INamedTypeSymbol>(attribute, 1, "ServiceType", null);
+                        var serviceTypeSymbol = GetParameter<INamedTypeSymbol>(
+                            attribute,
+                            1,
+                            "ServiceType",
+                            null
+                        );
                         var key = GetParameter<string>(attribute, 2, "Key", null);
                         var isGeneric = GetParameter<bool>(attribute, 3, "IsGeneric", false);
 
@@ -49,25 +61,42 @@ internal static class DependencyInjectionGeneratorPart
                             serviceTypeSymbol = implementation.AllInterfaces.FirstOrDefault();
                         }
 
-                        string serviceTypeName = serviceTypeSymbol?.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat)
-                            ?? implementation.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
+                        string serviceTypeName =
+                            serviceTypeSymbol?.ToDisplayString(
+                                SymbolDisplayFormat.FullyQualifiedFormat
+                            )
+                            ?? implementation.ToDisplayString(
+                                SymbolDisplayFormat.FullyQualifiedFormat
+                            );
 
                         if (isGeneric && serviceTypeSymbol != null)
                         {
-                            var openGenericType = serviceTypeSymbol.ConstructedFrom ?? serviceTypeSymbol;
-                            serviceTypeName = openGenericType.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
+                            var openGenericType =
+                                serviceTypeSymbol.ConstructedFrom ?? serviceTypeSymbol;
+                            serviceTypeName = openGenericType.ToDisplayString(
+                                SymbolDisplayFormat.FullyQualifiedFormat
+                            );
                             int paramCount = openGenericType.TypeParameters.Length;
                             string genericPlaceholder = "<" + new string(',', paramCount - 1) + ">";
-                            serviceTypeName = Regex.Replace(serviceTypeName, @"<[^>]+>", genericPlaceholder);
+                            serviceTypeName = Regex.Replace(
+                                serviceTypeName,
+                                @"<[^>]+>",
+                                genericPlaceholder
+                            );
                         }
 
                         string implementationTypeName = implementation.ToDisplayString(
-                            SymbolDisplayFormat.FullyQualifiedFormat);
+                            SymbolDisplayFormat.FullyQualifiedFormat
+                        );
                         if (isGeneric)
                         {
                             int paramCount = implementation.TypeParameters.Length;
                             string genericPlaceholder = "<" + new string(',', paramCount - 1) + ">";
-                            implementationTypeName = Regex.Replace(implementationTypeName, @"<[^>]+>", genericPlaceholder);
+                            implementationTypeName = Regex.Replace(
+                                implementationTypeName,
+                                @"<[^>]+>",
+                                genericPlaceholder
+                            );
                         }
 
                         serviceInfos.Add(
@@ -85,9 +114,17 @@ internal static class DependencyInjectionGeneratorPart
             );
     }
 
-    private static T GetParameter<T>(AttributeData attribute, int constructorArgIndex, string namedArgKey, T defaultValue)
+    private static T? GetParameter<T>(
+        AttributeData attribute,
+        int constructorArgIndex,
+        string namedArgKey,
+        T? defaultValue
+    )
     {
-        if (constructorArgIndex < attribute.ConstructorArguments.Length && !attribute.ConstructorArguments[constructorArgIndex].IsNull)
+        if (
+            constructorArgIndex < attribute.ConstructorArguments.Length
+            && !attribute.ConstructorArguments[constructorArgIndex].IsNull
+        )
         {
             var value = attribute.ConstructorArguments[constructorArgIndex].Value;
             if (value is T typedValue)
@@ -105,8 +142,5 @@ internal static class DependencyInjectionGeneratorPart
         return defaultValue;
     }
 
-    public static void Initialize(IncrementalGeneratorInitializationContext context)
-    {
-    }
+    public static void Initialize(IncrementalGeneratorInitializationContext context) { }
 }
-

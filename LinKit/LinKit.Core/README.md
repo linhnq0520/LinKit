@@ -63,7 +63,7 @@ public class GetUserQuery : IQuery<UserDto>
 [CqrsHandler]
 public class GetUserHandler : IQueryHandler<GetUserQuery, UserDto>
 {
-    public Task<UserDto> Handle(GetUserQuery query, CancellationToken ct) { ... }
+    public Task<UserDto> Handle(GetUserQuery query, CancellationToken cancellationToken) { ... }
 }
 ```
 

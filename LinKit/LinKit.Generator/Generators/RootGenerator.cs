@@ -51,7 +51,10 @@ public class RootGenerator : IIncrementalGenerator
                         "AddLinKitCqrs",
                         "CQRS Services (Mediator, Handlers, Behaviors)"
                     );
-                    spc.AddSource($"Cqrs.DependencyInjection.g.cs", SourceText.From(src, Encoding.UTF8));
+                    spc.AddSource(
+                        $"Cqrs.DependencyInjection.g.cs",
+                        SourceText.From(src, Encoding.UTF8)
+                    );
                 }
 
                 //// --- gRPC Client ---
@@ -85,8 +88,12 @@ public class RootGenerator : IIncrementalGenerator
                         services.DIServices.Select(s =>
                         {
                             // Remove global:: prefix for cleaner type names
-                            var serviceType = s.ServiceType.StartsWith("global::") ? s.ServiceType.Substring(8) : s.ServiceType;
-                            var implType = s.ImplementationType.StartsWith("global::") ? s.ImplementationType.Substring(8) : s.ImplementationType;
+                            var serviceType = s.ServiceType.StartsWith("global::")
+                                ? s.ServiceType.Substring(8)
+                                : s.ServiceType;
+                            var implType = s.ImplementationType.StartsWith("global::")
+                                ? s.ImplementationType.Substring(8)
+                                : s.ImplementationType;
 
                             var lifetime = ((Lifetime)s.Lifetime) switch
                             {
@@ -132,7 +139,10 @@ public class RootGenerator : IIncrementalGenerator
                         "AddLinKitDependency",
                         "Custom Registered Services via [RegisterService]"
                     );
-                    spc.AddSource($"CustomDI.DependencyInjection.g.cs", SourceText.From(src, Encoding.UTF8));
+                    spc.AddSource(
+                        $"CustomDI.DependencyInjection.g.cs",
+                        SourceText.From(src, Encoding.UTF8)
+                    );
                 }
 
                 // --- Messaging ---
@@ -144,13 +154,21 @@ public class RootGenerator : IIncrementalGenerator
                         "AddLinKitMessaging",
                         "Messaging Services (Publisher, Consumers)"
                     );
-                    spc.AddSource($"Messaging.DependencyInjection.g.cs", SourceText.From(src, Encoding.UTF8));
+                    spc.AddSource(
+                        $"Messaging.DependencyInjection.g.cs",
+                        SourceText.From(src, Encoding.UTF8)
+                    );
                 }
             }
         );
     }
 
-    private static string GeneratePartialDI(IEnumerable<string> registrations, string @namespace, string methodName, string comment)
+    private static string GeneratePartialDI(
+        IEnumerable<string> registrations,
+        string @namespace,
+        string methodName,
+        string comment
+    )
     {
         var sb = new StringBuilder();
         sb.AppendLine(
@@ -161,10 +179,14 @@ using LinKit.Core.Abstractions;"
         );
 
         sb.AppendLine($"namespace {@namespace}");
-        sb.AppendLine(@"{
+        sb.AppendLine(
+            @"{
     public static partial class ServicesExtensions
-    {");
-        sb.AppendLine($"        public static IServiceCollection {methodName}(this IServiceCollection services)");
+    {"
+        );
+        sb.AppendLine(
+            $"        public static IServiceCollection {methodName}(this IServiceCollection services)"
+        );
         sb.AppendLine("        {");
         sb.AppendLine($"            // --- {comment} ---");
 
@@ -174,7 +196,7 @@ using LinKit.Core.Abstractions;"
         }
 
         sb.AppendLine(
-    @"            return services;
+            @"            return services;
         }
     }
 }"
@@ -186,13 +208,17 @@ using LinKit.Core.Abstractions;"
 internal record AllServicesInfo
 {
     public IReadOnlyList<CqrsServiceInfo> CqrsServices { get; init; } = new List<CqrsServiceInfo>();
+
     //public IReadOnlyList<GrpcClientServiceInfo> GrpcClientServices { get; init; } = new List<GrpcClientServiceInfo>();
     public IReadOnlyList<ServiceInfo> DIServices { get; init; } = new List<ServiceInfo>();
+
     //public IReadOnlyList<GrpcServiceInfo> GrpcServices { get; init; } = new List<GrpcServiceInfo>();
-    public IReadOnlyList<MessagingServiceInfo> MessagingServices { get; init; } = new List<MessagingServiceInfo>();
+    public IReadOnlyList<MessagingServiceInfo> MessagingServices { get; init; } =
+        new List<MessagingServiceInfo>();
 }
 
 internal record CqrsServiceInfo(string RegistrationCode);
+
 //internal record GrpcClientServiceInfo(string RegistrationCode);
 //internal record GrpcServiceInfo(string RegistrationCode);
 internal record MessagingServiceInfo(string RegistrationCode);

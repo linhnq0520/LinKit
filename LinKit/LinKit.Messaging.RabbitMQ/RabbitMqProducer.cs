@@ -1,15 +1,23 @@
-﻿using LinKit.Core.Messaging;
+﻿using System.Text.Json;
+using LinKit.Core.Messaging;
 using RabbitMQ.Client;
-using System.Text.Json;
 
 namespace LinKit.Messaging.RabbitMQ;
 
 internal sealed class RabbitMqProducer : IBrokerProducer
 {
     private readonly RabbitMqConnectionFactory _connectionFactory;
-    public RabbitMqProducer(RabbitMqConnectionFactory connectionFactory) => _connectionFactory = connectionFactory;
 
-    public Task ProduceAsync(string topicOrExchange, string routingKey, object message, MessageHeaders? headers, CancellationToken ct)
+    public RabbitMqProducer(RabbitMqConnectionFactory connectionFactory) =>
+        _connectionFactory = connectionFactory;
+
+    public Task ProduceAsync(
+        string topicOrExchange,
+        string routingKey,
+        object message,
+        MessageHeaders? headers,
+        CancellationToken cancellationToken
+    )
     {
         using var connection = _connectionFactory.GetConnection();
         using var channel = connection.CreateModel();
@@ -29,7 +37,12 @@ internal sealed class RabbitMqProducer : IBrokerProducer
             }
         }
 
-        channel.BasicPublish(exchange: topicOrExchange, routingKey: routingKey, basicProperties: properties, body: body);
+        channel.BasicPublish(
+            exchange: topicOrExchange,
+            routingKey: routingKey,
+            basicProperties: properties,
+            body: body
+        );
         return Task.CompletedTask;
     }
 }

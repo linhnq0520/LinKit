@@ -11,5 +11,5 @@ public interface IMetadataProvider
     /// Gets the metadata to be attached to the gRPC call.
     /// This is called for every request.
     /// </summary>
-    Metadata GetMetadata();
+    Metadata? GetMetadata();
 }

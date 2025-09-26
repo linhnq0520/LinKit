@@ -34,6 +34,12 @@ internal record ListPropertyMap(
     IReadOnlyList<PropertyMap> ItemPropertyMaps
 );
 
+internal record ServerTransformationResult
+{
+    public GrpcEndpointInfo? EndpointInfo { get; init; }
+    public Diagnostic? Diagnostic { get; init; }
+}
+
 internal static class GrpcGeneratorPart
 {
     private const string GrpcEndpointAttributeName = "LinKit.Grpc.GrpcEndpointAttribute";
@@ -42,87 +48,144 @@ internal static class GrpcGeneratorPart
 
     public static void Initialize(IncrementalGeneratorInitializationContext context)
     {
-        IncrementalValuesProvider<GrpcEndpointInfo?> grpcDeclarations = context
-            .SyntaxProvider.ForAttributeWithMetadataName(
+        IncrementalValuesProvider<ServerTransformationResult> grpcDeclarations =
+            context.SyntaxProvider.ForAttributeWithMetadataName(
                 GrpcEndpointAttributeName,
                 predicate: (node, _) => node is ClassDeclarationSyntax or RecordDeclarationSyntax,
                 transform: (ctx, _) => GetGrpcEndpointInfo(ctx)
-            )
-            .Where(info => info is not null);
+            );
+
+        // Luồng lỗi
+        var diagnostics = grpcDeclarations
+            .Where(x => x.Diagnostic is not null)
+            .Select((x, _) => x.Diagnostic!);
 
         context.RegisterSourceOutput(
-            grpcDeclarations.Collect(),
+            diagnostics,
+            (spc, diagnostic) => spc.ReportDiagnostic(diagnostic)
+        );
+
+        // Luồng hợp lệ
+        var validEndpoints = grpcDeclarations
+            .Where(x => x.EndpointInfo is not null)
+            .Select((x, _) => x.EndpointInfo!);
+
+        context.RegisterSourceOutput(
+            validEndpoints.Collect(),
             (spc, endpoints) =>
             {
-                var validEndpoints = endpoints.OfType<GrpcEndpointInfo>().ToList();
-                if (!validEndpoints.Any())
+                if (endpoints.IsEmpty)
                 {
                     return;
                 }
-
-                var source = GenerateGrpcServices(validEndpoints);
+                var source = GenerateGrpcServices(endpoints);
                 spc.AddSource("Grpc.Services.g.cs", SourceText.From(source, Encoding.UTF8));
             }
         );
     }
 
-    private static GrpcEndpointInfo? GetGrpcEndpointInfo(GeneratorAttributeSyntaxContext context)
+    private static ServerTransformationResult GetGrpcEndpointInfo(
+        GeneratorAttributeSyntaxContext context
+    )
     {
         if (context.TargetSymbol is not INamedTypeSymbol cqrsRequestSymbol)
         {
-            return null;
+            return new ServerTransformationResult(); // Rỗng, không phải null
         }
 
         var attributeData = context.Attributes[0];
+        var attributeLocation =
+            attributeData.ApplicationSyntaxReference?.GetSyntax().GetLocation() ?? Location.None;
+
         if (
             attributeData.ConstructorArguments.Length < 2
             || attributeData.ConstructorArguments[0].Value is not INamedTypeSymbol serviceBaseSymbol
             || attributeData.ConstructorArguments[1].Value is not string methodName
         )
         {
-            return null;
+            var diag = Diagnostic.Create(
+                ServerDiagnostics.LKG104_InvalidAttributeUsage,
+                attributeLocation
+            );
+            return new ServerTransformationResult { Diagnostic = diag };
         }
 
         var rpcMethod = serviceBaseSymbol
             .GetMembers(methodName)
             .OfType<IMethodSymbol>()
-            .FirstOrDefault(m => m.Parameters.Length == 2 && m.Name == methodName && !m.IsStatic);
+            .FirstOrDefault(m =>
+                m.Name == methodName
+                && !m.IsStatic
+                && m.Parameters.Length == 2
+                && m.ReturnType.Name == "Task"
+            ); // Chữ ký của gRPC service method là Task<TResponse>
+
         if (rpcMethod is null)
         {
-            return null;
+            var diag = Diagnostic.Create(
+                ServerDiagnostics.LKG101_MethodNotFound,
+                attributeLocation,
+                methodName,
+                serviceBaseSymbol.Name
+            );
+            return new ServerTransformationResult { Diagnostic = diag };
         }
 
         var grpcRequestSymbol = rpcMethod.Parameters[0].Type as INamedTypeSymbol;
         var grpcResponseSymbol =
             (rpcMethod.ReturnType as INamedTypeSymbol)?.TypeArguments.FirstOrDefault()
             as INamedTypeSymbol;
-        if (grpcRequestSymbol is null || grpcResponseSymbol is null)
+
+        if (
+            grpcRequestSymbol is null
+            || grpcResponseSymbol is null
+            || rpcMethod.Parameters[1].Type.Name != "ServerCallContext"
+        )
         {
-            return null;
+            var diag = Diagnostic.Create(
+                ServerDiagnostics.LKG102_InvalidMethodSignature,
+                attributeLocation,
+                methodName
+            );
+            return new ServerTransformationResult { Diagnostic = diag };
         }
 
         var cqrsInterface = cqrsRequestSymbol.AllInterfaces.FirstOrDefault(i =>
-            i.ToDisplayString().Contains("LinKit.Core.Cqrs.ICommand") ||
-            i.ToDisplayString().Contains("LinKit.Core.Cqrs.IQuery")
+            i.ToDisplayString().StartsWith(ICommandInterfaceName)
+            || // ICommand...
+            i.ToDisplayString().StartsWith(IQueryInterfaceName) // IQuery...
         );
+
         if (cqrsInterface is null)
         {
-            return null;
+            var diag = Diagnostic.Create(
+                ServerDiagnostics.LKG103_MissingCqrsInterface,
+                context.TargetNode.GetLocation(),
+                cqrsRequestSymbol.Name
+            );
+            return new ServerTransformationResult { Diagnostic = diag };
         }
 
         string cqrsResponseType;
         bool isCommandWithoutResult = false;
-
         INamedTypeSymbol? cqrsResponseSymbol = null;
+
         if (cqrsInterface.TypeArguments.Length > 0)
         {
             cqrsResponseSymbol = cqrsInterface.TypeArguments[0] as INamedTypeSymbol;
             if (cqrsResponseSymbol is null)
             {
-                return null;
+                // Không thể phân giải kiểu generic T từ ICommand<T>
+                var diag = Diagnostic.Create(
+                    ServerDiagnostics.LKG105_UnresolvedResponseType,
+                    context.TargetNode.GetLocation(),
+                    cqrsRequestSymbol.Name
+                );
+                return new ServerTransformationResult { Diagnostic = diag };
             }
-
-            cqrsResponseType = cqrsResponseSymbol.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
+            cqrsResponseType = cqrsResponseSymbol.ToDisplayString(
+                SymbolDisplayFormat.FullyQualifiedFormat
+            );
         }
         else
         {
@@ -130,27 +193,34 @@ internal static class GrpcGeneratorPart
             isCommandWithoutResult = true;
         }
 
-        var requestMaps = GetPropertyMaps(grpcRequestSymbol, cqrsRequestSymbol);
+        // Logic còn lại của bạn giữ nguyên...
+        var requestMaps = GetPropertyMaps(cqrsRequestSymbol, grpcRequestSymbol); // Sửa lại thứ tự tham số
         var (responseMaps, responseListMaps) = GetResponseMaps(
-               cqrsResponseSymbol,
-               grpcResponseSymbol
-           );
-
+            cqrsResponseSymbol,
+            grpcResponseSymbol
+        );
         var grpcResponseDtoType = grpcResponseSymbol.ToDisplayString(
             SymbolDisplayFormat.FullyQualifiedFormat
         );
-
         bool isQuery = cqrsInterface
             .OriginalDefinition.ToDisplayString()
             .StartsWith(IQueryInterfaceName);
 
-        return new GrpcEndpointInfo(
-            CqrsRequestType: cqrsRequestSymbol.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat),
+        var endpointInfo = new GrpcEndpointInfo(
+            CqrsRequestType: cqrsRequestSymbol.ToDisplayString(
+                SymbolDisplayFormat.FullyQualifiedFormat
+            ),
             CqrsResponseType: cqrsResponseType,
-            ServiceBaseType: serviceBaseSymbol.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat),
+            ServiceBaseType: serviceBaseSymbol.ToDisplayString(
+                SymbolDisplayFormat.FullyQualifiedFormat
+            ),
             GrpcMethodName: methodName,
-            GrpcRequestType: grpcRequestSymbol.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat),
-            GrpcResponseType: grpcResponseSymbol.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat),
+            GrpcRequestType: grpcRequestSymbol.ToDisplayString(
+                SymbolDisplayFormat.FullyQualifiedFormat
+            ),
+            GrpcResponseType: grpcResponseSymbol.ToDisplayString(
+                SymbolDisplayFormat.FullyQualifiedFormat
+            ),
             RequestPropertyMaps: requestMaps,
             ResponsePropertyMaps: responseMaps,
             ResponseListPropertyMaps: responseListMaps,
@@ -159,6 +229,8 @@ internal static class GrpcGeneratorPart
             IsCqrsQuery: isQuery,
             IsCommandWithoutResult: isCommandWithoutResult
         );
+
+        return new ServerTransformationResult { EndpointInfo = endpointInfo };
     }
 
     private static (List<PropertyMap>, List<ListPropertyMap>) GetResponseMaps(
@@ -354,10 +426,14 @@ internal static class GrpcGeneratorPart
             sb.AppendLine($"        private readonly ILogger<{generatedClassName}>? _logger;");
             sb.AppendLine();
 
-            sb.AppendLine($"        public {generatedClassName}(IMediator mediator, IServiceProvider serviceProvider)");
+            sb.AppendLine(
+                $"        public {generatedClassName}(IMediator mediator, IServiceProvider serviceProvider)"
+            );
             sb.AppendLine("        {");
             sb.AppendLine("            _mediator = mediator;");
-            sb.AppendLine($"            _logger = serviceProvider.GetService<ILogger<{generatedClassName}>>();");
+            sb.AppendLine(
+                $"            _logger = serviceProvider.GetService<ILogger<{generatedClassName}>>();"
+            );
             sb.AppendLine("        }");
             sb.AppendLine();
 
@@ -365,30 +441,39 @@ internal static class GrpcGeneratorPart
             {
                 var requestMappings = endpoint.RequestPropertyMaps.Any()
                     ? $" {{ {string.Join(", ", endpoint.RequestPropertyMaps.Select(m => $"{m.DestProperty} = request.{m.SourceProperty}"))} }}"
-                    : "()"; 
+                    : "()";
                 var mediatorMethod = endpoint.IsCqrsQuery ? "QueryAsync" : "SendAsync";
                 var cqrsResponseIsNullable = endpoint.CqrsResponseType.EndsWith("?");
 
-                sb.AppendLine($"        public override async Task<{endpoint.GrpcResponseType}> {endpoint.GrpcMethodName}({endpoint.GrpcRequestType} request, ServerCallContext context)");
+                sb.AppendLine(
+                    $"        public override async Task<{endpoint.GrpcResponseType}> {endpoint.GrpcMethodName}({endpoint.GrpcRequestType} request, ServerCallContext context)"
+                );
                 sb.AppendLine("        {");
                 sb.AppendLine("            GrpcContextAccessor.Current = context;");
                 sb.AppendLine("            try");
                 sb.AppendLine("            {");
-                sb.AppendLine($"                var cqrsRequest = new {endpoint.CqrsRequestType}{requestMappings};");
-                sb.AppendLine(endpoint.IsCommandWithoutResult
-                    ? $"                await _mediator.SendAsync(cqrsRequest, context.CancellationToken);"
-                    : $"                var cqrsResult = await _mediator.{mediatorMethod}<{endpoint.CqrsRequestType}, {endpoint.CqrsResponseType.TrimEnd('?')}>(cqrsRequest, context.CancellationToken);"
+                sb.AppendLine(
+                    $"                var cqrsRequest = new {endpoint.CqrsRequestType}{requestMappings};"
+                );
+                sb.AppendLine(
+                    endpoint.IsCommandWithoutResult
+                        ? $"                await _mediator.SendAsync(cqrsRequest, context.CancellationToken);"
+                        : $"                var cqrsResult = await _mediator.{mediatorMethod}<{endpoint.CqrsRequestType}, {endpoint.CqrsResponseType.TrimEnd('?')}>(cqrsRequest, context.CancellationToken);"
                 );
                 if (cqrsResponseIsNullable)
                 {
                     sb.AppendLine("                if (cqrsResult is null)");
                     sb.AppendLine("                {");
-                    sb.AppendLine("                    throw new RpcException(new Status(StatusCode.NotFound, \"Resource not found.\"));");
+                    sb.AppendLine(
+                        "                    throw new RpcException(new Status(StatusCode.NotFound, \"Resource not found.\"));"
+                    );
                     sb.AppendLine("                }");
                 }
                 if (!endpoint.IsCommandWithoutResult)
                 {
-                    sb.AppendLine($"                var grpcResponse = new {endpoint.GrpcResponseType}();");
+                    sb.AppendLine(
+                        $"                var grpcResponse = new {endpoint.GrpcResponseType}();"
+                    );
 
                     if (endpoint.ResponsePropertyMaps.Any())
                     {
@@ -425,6 +510,7 @@ internal static class GrpcGeneratorPart
                 }
                 else
                 {
+                    sb.AppendLine($"                return new {endpoint.GrpcResponseType}();");
                 }
 
                 sb.AppendLine("            }");
@@ -459,20 +545,20 @@ internal static class GrpcGeneratorPart
         IncrementalGeneratorInitializationContext context
     )
     {
-        IncrementalValuesProvider<GrpcEndpointInfo?> grpcDeclarations = context
+        IncrementalValuesProvider<GrpcEndpointInfo> grpcDeclarations = context
             .SyntaxProvider.ForAttributeWithMetadataName(
                 GrpcEndpointAttributeName,
                 predicate: (node, _) => node is ClassDeclarationSyntax or RecordDeclarationSyntax,
                 transform: (ctx, _) => GetGrpcEndpointInfo(ctx)
             )
-            .Where(info => info is not null);
+            .Where(info => info is not null)
+            .Select((x, _) => x!.EndpointInfo!);
 
         return grpcDeclarations
             .Collect()
             .Select(
                 (endpoints, _) =>
                 {
-
                     var services = new List<GrpcServiceInfo>();
 
                     return (IReadOnlyList<GrpcServiceInfo>)services;

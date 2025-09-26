@@ -1,10 +1,10 @@
-﻿using Microsoft.CodeAnalysis;
-using Microsoft.CodeAnalysis.CSharp.Syntax;
-using Microsoft.CodeAnalysis.Text;
-using System.Collections.Generic;
+﻿using System.Collections.Generic;
 using System.Collections.Immutable;
 using System.Linq;
 using System.Text;
+using Microsoft.CodeAnalysis;
+using Microsoft.CodeAnalysis.CSharp.Syntax;
+using Microsoft.CodeAnalysis.Text;
 
 namespace LinKit.Generator.Generators;
 
@@ -18,69 +18,90 @@ internal record MessageInfo(
 internal static class MessagingGeneratorPart
 {
     private const string MessageAttributeName = "LinKit.Core.Messaging.MessageAttribute";
+
     public static IncrementalValueProvider<IReadOnlyList<MessagingServiceInfo>> GetServices(
-        IncrementalGeneratorInitializationContext context)
+        IncrementalGeneratorInitializationContext context
+    )
     {
-        IncrementalValueProvider<ImmutableArray<MessageInfo?>> collectedMessages = context.SyntaxProvider
-            .ForAttributeWithMetadataName(
+        IncrementalValueProvider<ImmutableArray<MessageInfo?>> collectedMessages = context
+            .SyntaxProvider.ForAttributeWithMetadataName(
                 MessageAttributeName,
                 predicate: (node, _) => node is ClassDeclarationSyntax or RecordDeclarationSyntax,
-                transform: (ctx, _) => GetMessageInfo(ctx))
+                transform: (ctx, _) => GetMessageInfo(ctx)
+            )
             .Where(info => info is not null)!
             .Collect();
 
-        return collectedMessages.Select((messages, _) =>
-        {
-            var services = new List<MessagingServiceInfo>();
-            if (!messages.Any())
+        return collectedMessages.Select(
+            (messages, _) =>
             {
-                return (IReadOnlyList<MessagingServiceInfo>)services;
+                var services = new List<MessagingServiceInfo>();
+                if (!messages.Any())
+                {
+                    return (IReadOnlyList<MessagingServiceInfo>)services;
+                }
+
+                services.Add(
+                    new MessagingServiceInfo(
+                        "services.AddSingleton<LinKit.Core.Messaging.IMessagePublisher, LinKit.Generated.Messaging.GeneratedMessagePublisher>();"
+                    )
+                );
+
+                var messagesByQueue = messages
+                    .Where(m => !string.IsNullOrEmpty(m?.QueueName))
+                    .GroupBy(m => m?.QueueName);
+
+                foreach (var queueGroup in messagesByQueue)
+                {
+                    var queueName = queueGroup.Key!;
+                    var className =
+                        $"LinKit.Generated.Messaging.{new string(queueName.Select(c => char.IsLetterOrDigit(c) ? c : '_').ToArray())}ConsumerService";
+
+                    services.Add(
+                        new MessagingServiceInfo(
+                            $"services.AddSingleton<Microsoft.Extensions.Hosting.IHostedService, {className}>();"
+                        )
+                    );
+                }
+
+                return services;
             }
-
-            services.Add(new MessagingServiceInfo(
-                "services.AddSingleton<LinKit.Core.Messaging.IMessagePublisher, LinKit.Generated.Messaging.GeneratedMessagePublisher>();"
-            ));
-
-            var messagesByQueue = messages
-                .Where(m => !string.IsNullOrEmpty(m?.QueueName))
-                .GroupBy(m => m?.QueueName);
-
-            foreach (var queueGroup in messagesByQueue)
-            {
-                var queueName = queueGroup.Key!;
-                var className = $"LinKit.Generated.Messaging.{new string(queueName.Select(c => char.IsLetterOrDigit(c) ? c : '_').ToArray())}ConsumerService";
-
-                services.Add(new MessagingServiceInfo(
-                    $"services.AddSingleton<Microsoft.Extensions.Hosting.IHostedService, {className}>();"
-                ));
-            }
-
-            return services;
-        });
+        );
     }
+
     public static void Initialize(IncrementalGeneratorInitializationContext context)
     {
-        IncrementalValuesProvider<MessageInfo?> messageDeclarations = context.SyntaxProvider
-            .ForAttributeWithMetadataName(
+        IncrementalValuesProvider<MessageInfo?> messageDeclarations = context
+            .SyntaxProvider.ForAttributeWithMetadataName(
                 MessageAttributeName,
                 predicate: (node, _) => node is ClassDeclarationSyntax or RecordDeclarationSyntax,
-                transform: (ctx, _) => GetMessageInfo(ctx))
+                transform: (ctx, _) => GetMessageInfo(ctx)
+            )
             .Where(info => info is not null);
 
-        context.RegisterSourceOutput(messageDeclarations.Collect(), (spc, messages) =>
-        {
-            var validMessages = messages.OfType<MessageInfo>().ToList();
-            if (!validMessages.Any())
+        context.RegisterSourceOutput(
+            messageDeclarations.Collect(),
+            (spc, messages) =>
             {
-                return;
+                var validMessages = messages.OfType<MessageInfo>().ToList();
+                if (!validMessages.Any())
+                {
+                    return;
+                }
+
+                var publisherSource = GeneratePublisher(validMessages);
+                spc.AddSource(
+                    "Messaging.Publisher.g.cs",
+                    SourceText.From(publisherSource, Encoding.UTF8)
+                );
+
+                var consumerSource = GenerateConsumers(validMessages);
+                spc.AddSource(
+                    "Messaging.Consumers.g.cs",
+                    SourceText.From(consumerSource, Encoding.UTF8)
+                );
             }
-
-            var publisherSource = GeneratePublisher(validMessages);
-            spc.AddSource("Messaging.Publisher.g.cs", SourceText.From(publisherSource, Encoding.UTF8));
-
-            var consumerSource = GenerateConsumers(validMessages);
-            spc.AddSource("Messaging.Consumers.g.cs", SourceText.From(consumerSource, Encoding.UTF8));
-        });
+        );
     }
 
     private static MessageInfo? GetMessageInfo(GeneratorAttributeSyntaxContext context)
@@ -92,9 +113,13 @@ internal static class MessagingGeneratorPart
 
         var attributeData = context.Attributes[0];
         var topic = attributeData.ConstructorArguments[0].Value as string ?? string.Empty;
-        var routingKey = attributeData.NamedArguments.FirstOrDefault(kvp => kvp.Key == "RoutingKey").Value.Value as string
+        var routingKey =
+            attributeData.NamedArguments.FirstOrDefault(kvp => kvp.Key == "RoutingKey").Value.Value
+                as string
             ?? messageSymbol.Name;
-        var queueName = attributeData.NamedArguments.FirstOrDefault(kvp => kvp.Key == "QueueName").Value.Value as string;
+        var queueName =
+            attributeData.NamedArguments.FirstOrDefault(kvp => kvp.Key == "QueueName").Value.Value
+            as string;
 
         return new MessageInfo(
             MessageType: messageSymbol.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat),
@@ -107,7 +132,8 @@ internal static class MessagingGeneratorPart
     private static string GeneratePublisher(IReadOnlyList<MessageInfo> messages)
     {
         var sb = new StringBuilder();
-        sb.AppendLine(@"// <auto-generated> by LinKit.Generator
+        sb.AppendLine(
+            @"// <auto-generated> by LinKit.Generator
 #nullable enable
 using LinKit.Core.Abstractions;
 using LinKit.Core.Messaging;
@@ -129,33 +155,39 @@ namespace LinKit.Generated.Messaging
             _metadataProvider = serviceProvider.GetService<IMessageMetadataProvider>();
         }
 
-        public Task PublishAsync<TMessage>(TMessage message, CancellationToken ct = default)
+        public Task PublishAsync<TMessage>(TMessage message, CancellationToken cancellationToken = default)
         {
             if (message is null) return Task.CompletedTask;
             var headers = _metadataProvider?.GetHeaders(message);
 
             return (object)message switch
-            {");
+            {"
+        );
 
         foreach (var msg in messages)
         {
-            sb.AppendLine($@"
-                {msg.MessageType} m => _producer.ProduceAsync(""{msg.TopicOrExchange}"", ""{msg.RoutingKey}"", m, headers, ct),");
+            sb.AppendLine(
+                $@"
+                {msg.MessageType} m => _producer.ProduceAsync(""{msg.TopicOrExchange}"", ""{msg.RoutingKey}"", m, headers, cancellationToken),"
+            );
         }
 
-        sb.AppendLine(@"
+        sb.AppendLine(
+            @"
                 _ => throw new System.InvalidOperationException($""Message type {typeof(TMessage).FullName} is not decorated with [Message] attribute."")
             };
         }
     }
-}");
+}"
+        );
         return sb.ToString();
     }
 
     private static string GenerateConsumers(IReadOnlyList<MessageInfo> messages)
     {
         var sb = new StringBuilder();
-        sb.AppendLine(@"// Auto-generated by LinKit.Generator
+        sb.AppendLine(
+            @"// Auto-generated by LinKit.Generator
 #nullable enable
 using LinKit.Core.Abstractions;
 using LinKit.Core.Cqrs;
@@ -169,7 +201,8 @@ using System.Threading;
 using System.Threading.Tasks;
 
 namespace LinKit.Generated.Messaging
-{");
+{"
+        );
 
         var messagesByQueue = messages
             .Where(m => !string.IsNullOrEmpty(m.QueueName))
@@ -178,9 +211,11 @@ namespace LinKit.Generated.Messaging
         foreach (var queueGroup in messagesByQueue)
         {
             var queueName = queueGroup.Key!;
-            var className = $"{new string(queueName.Select(c => char.IsLetterOrDigit(c) ? c : '_').ToArray())}ConsumerService";
+            var className =
+                $"{new string(queueName.Select(c => char.IsLetterOrDigit(c) ? c : '_').ToArray())}ConsumerService";
 
-            sb.AppendLine($@"
+            sb.AppendLine(
+                $@"
     public sealed class {className} : BackgroundService
     {{
         private readonly IServiceProvider _serviceProvider;
@@ -202,23 +237,26 @@ namespace LinKit.Generated.Messaging
                 try
                 {{
                     switch(routingKey)
-                    {{");
+                    {{"
+            );
 
             foreach (var msg in queueGroup)
             {
                 var varName = msg.MessageType.Split('.').Last().ToLowerInvariant();
-                sb.AppendLine($@"
+                sb.AppendLine(
+                    $@"
                         case ""{msg.RoutingKey}"":
                             var {varName} = JsonSerializer.Deserialize<{msg.MessageType}>(body);
                             if ({varName} is not null)
                             {{
-                                // TODO: Add logic to pass headers into Cqrs Context if needed
                                 await mediator.SendAsync({varName}, stoppingToken);
                             }}
-                            break;");
+                            break;"
+                );
             }
 
-            sb.AppendLine(@"
+            sb.AppendLine(
+                @"
                         default:
                             break;
                     }
@@ -229,7 +267,8 @@ namespace LinKit.Generated.Messaging
                 }
             }, stoppingToken);
         }
-    }");
+    }"
+            );
         }
 
         sb.AppendLine(@"}");

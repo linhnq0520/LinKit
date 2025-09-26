@@ -5,11 +5,17 @@ namespace SampleWebApp.Behaviors;
 
 [CqrsBehavior(typeof(IAuditable), -10)]
 public class AuditBehavior<TRequest, TResponse> : IPipelineBehavior<TRequest, TResponse>
-where TRequest : IAuditable
+    where TRequest : IAuditable
 {
-    public async Task<TResponse> HandleAsync(TRequest request, RequestHandlerDelegate<TResponse> next, CancellationToken ct)
+    public async Task<TResponse> HandleAsync(
+        TRequest request,
+        RequestHandlerDelegate<TResponse> next,
+        CancellationToken cancellationToken
+    )
     {
-        Console.WriteLine($"[AUDIT] User 'system' is attempting to execute {typeof(TRequest).Name}");
+        Console.WriteLine(
+            $"[AUDIT] User 'system' is attempting to execute {typeof(TRequest).Name}"
+        );
         return await next();
     }
 }

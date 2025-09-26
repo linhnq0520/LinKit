@@ -28,7 +28,7 @@ internal sealed record MapConfig(
 internal sealed record MapConfigWithDiags(MapConfig Config, ImmutableArray<Diagnostic> Diagnostics);
 
 internal sealed record MapperInfo(
-    string Namespace, // Thêm namespace của class context
+    string Namespace,
     string SourceType,
     string DestType,
     string DestShortName,
@@ -49,7 +49,6 @@ public static class MapperGeneratorPart
 
     public static void Initialize(IncrementalGeneratorInitializationContext context)
     {
-        // Tìm class có [MapperContext] và partial
         var mapperContexts = context.SyntaxProvider.ForAttributeWithMetadataName(
             MapperContextAttr,
             static (node, _) =>
@@ -58,11 +57,10 @@ public static class MapperGeneratorPart
             static (ctx, _) => (ClassDeclarationSyntax)ctx.TargetNode
         );
 
-        // Phân tích mỗi class để lấy danh sách MapConfig + diagnostics
         var mapConfigsPerClass = mapperContexts
             .Combine(context.CompilationProvider)
             .Select(
-                static (tuple, ct) =>
+                static (tuple, cancellationToken) =>
                 {
                     var (classSyntax, compilation) = tuple;
                     var model = compilation.GetSemanticModel(classSyntax.SyntaxTree);
@@ -70,11 +68,9 @@ public static class MapperGeneratorPart
                     {
                         return (Namespace: "", Configs: ImmutableArray<MapConfigWithDiags>.Empty);
                     }
-                    // Lấy namespace của class context
                     string classNamespace = classSymbol.ContainingNamespace.IsGlobalNamespace
                         ? ""
                         : classSymbol.ContainingNamespace.ToDisplayString();
-
                     var configureMethodSyntax = classSymbol
                         .DeclaringSyntaxReferences.Select(r => r.GetSyntax())
                         .OfType<ClassDeclarationSyntax>()
@@ -83,8 +79,6 @@ public static class MapperGeneratorPart
                             m.Identifier.Text == "Configure"
                             && m.ParameterList.Parameters.Count == 1
                         );
-
-                    // fallback: try the original classSyntax members
                     if (configureMethodSyntax is null)
                     {
                         configureMethodSyntax = classSyntax
@@ -94,7 +88,6 @@ public static class MapperGeneratorPart
                                 && m.ParameterList.Parameters.Count == 1
                             );
                     }
-
                     if (configureMethodSyntax is null)
                     {
                         return (
@@ -102,9 +95,7 @@ public static class MapperGeneratorPart
                             Configs: ImmutableArray<MapConfigWithDiags>.Empty
                         );
                     }
-
                     var configsWithDiags = new List<MapConfigWithDiags>();
-                    // Tìm tất cả lời gọi builder.CreateMap<TSrc, TDest>() trong Configure
                     foreach (
                         var inv in configureMethodSyntax
                             .DescendantNodes()
@@ -130,7 +121,6 @@ public static class MapperGeneratorPart
                             {
                                 continue;
                             }
-                            // Thu thập các ForMember chain phía sau, kèm diagnostics
                             var (rules, diags) = CollectForMemberChain(inv, model, srcType);
                             var cfg = new MapConfig(srcType, dstType, rules);
                             configsWithDiags.Add(
@@ -145,22 +135,16 @@ public static class MapperGeneratorPart
                 }
             );
 
-        // Gom tất cả map từ mọi class
         var allMapConfigs = mapConfigsPerClass.Collect();
-
-        // Build MapperInfo + Generate + Report diagnostics
         context.RegisterSourceOutput(
             allMapConfigs,
             static (spc, allConfigsBatch) =>
             {
-                // allConfigsBatch: IEnumerable<(string Namespace, ImmutableArray<MapConfigWithDiags>)>
                 var allConfigsWithDiags = allConfigsBatch
                     .SelectMany(tuple =>
                         tuple.Configs.Select(cfg => (tuple.Namespace, Config: cfg))
                     )
                     .ToList();
-
-                // Report diagnostics first
                 foreach (var item in allConfigsWithDiags)
                 {
                     foreach (var d in item.Config.Diagnostics)
@@ -168,7 +152,6 @@ public static class MapperGeneratorPart
                         spc.ReportDiagnostic(d);
                     }
                 }
-
                 var allConfigs = allConfigsWithDiags
                     .Select(x => (x.Namespace, x.Config.Config))
                     .ToList();
@@ -176,20 +159,16 @@ public static class MapperGeneratorPart
                 {
                     return;
                 }
-
-                // Chuẩn bị tra cứu để hỗ trợ Rule #4 (nested)
                 var mapPairs = allConfigs
                     .Select(c => (Src: c.Config.SourceSymbol, Dst: c.Config.DestSymbol))
                     .ToList();
-
-                // Convert sang MapperInfo với các assignment (áp 4 rule)
                 var mapperInfos = new List<MapperInfo>();
                 foreach (var cfg in allConfigs)
                 {
                     var assignments = BuildAssignments(cfg.Config, mapPairs);
                     mapperInfos.Add(
                         new MapperInfo(
-                            Namespace: cfg.Namespace, // Lưu namespace của class context
+                            Namespace: cfg.Namespace,
                             SourceType: cfg.Config.SourceSymbol.ToDisplayString(
                                 SymbolDisplayFormat.FullyQualifiedFormat
                             ),
@@ -201,14 +180,12 @@ public static class MapperGeneratorPart
                         )
                     );
                 }
-
                 var code = GenerateCode(mapperInfos);
                 spc.AddSource("Mappers.g.cs", SourceText.From(code, Encoding.UTF8));
             }
         );
     }
 
-    // ---- Collect ForMember chain, but also produce diagnostics when source member not found ----
     private static (List<ForMemberRule> Rules, List<Diagnostic> Diagnostics) CollectForMemberChain(
         InvocationExpressionSyntax createMapCall,
         SemanticModel model,
@@ -250,7 +227,6 @@ public static class MapperGeneratorPart
         return (rules, diagnostics);
     }
 
-    // Parse a single ForMember invocation
     private static ForMemberRule? ParseForMemberInvocation(
         InvocationExpressionSyntax invocation,
         SemanticModel model,
@@ -264,25 +240,21 @@ public static class MapperGeneratorPart
         {
             return null;
         }
-        // parse destination
         var dest = ParseDestinationMember(args[0].Expression);
         if (string.IsNullOrEmpty(dest))
         {
             return null;
         }
-        // If only 1 arg -> nothing to do
         if (args.Count == 1)
         {
             return new ForMemberRule(dest, null, null, null);
         }
-        // Try parse converter style: ForMember(dest, typeof(Conv), "Method", "Source")
         var second = args[1].Expression;
         if (second is TypeOfExpressionSyntax)
         {
             var conv = ParseConverterStyle(args, model);
             if (conv is not null)
             {
-                // If conv.SourceMember is specified, check existence -> emit diagnostic if missing
                 if (!string.IsNullOrEmpty(conv?.SourceMember))
                 {
                     if (!SourceHasMember(sourceTypeSymbol, conv?.SourceMember))
@@ -304,11 +276,9 @@ public static class MapperGeneratorPart
             }
             return null;
         }
-        // Otherwise direct string or nameof / identifier
         var src = ParseSourceMemberSimple(second);
         if (!string.IsNullOrEmpty(src))
         {
-            // check special Ignore token
             if (
                 string.Equals(src, MappingRules.Ignore, StringComparison.OrdinalIgnoreCase)
                 || string.Equals(src, "Ignore", StringComparison.OrdinalIgnoreCase)
@@ -316,7 +286,6 @@ public static class MapperGeneratorPart
             {
                 return new ForMemberRule(dest, null, null, null, true);
             }
-            // validate source member exists
             if (!SourceHasMember(sourceTypeSymbol, src))
             {
                 diagnostic = CreateMissingMemberDiagnostic(
@@ -336,7 +305,6 @@ public static class MapperGeneratorPart
         {
             return false;
         }
-        // check properties/fields (we care about properties primarily)
         var prop = sourceTypeSymbol
             .GetMembers()
             .OfType<IPropertySymbol>()
@@ -345,7 +313,6 @@ public static class MapperGeneratorPart
         {
             return true;
         }
-        // also accept fields
         var field = sourceTypeSymbol
             .GetMembers()
             .OfType<IFieldSymbol>()
@@ -491,7 +458,6 @@ public static class MapperGeneratorPart
         var dstProps = GetSettableProps(cfg.DestSymbol).ToList();
         var result = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         var ignoredProps = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-
         foreach (var r in cfg.Rules)
         {
             if (
@@ -528,7 +494,7 @@ public static class MapperGeneratorPart
                     result[r.DestinationMember] = $"source.{r.SourceMember}";
                     continue;
                 }
-                if (SymbolEqualityComparer.Default.Equals(sp.Type, dp.Type))
+                if (AreValueTypesCompatible(sp.Type, dp.Type))
                 {
                     result[r.DestinationMember] = BuildNullableAwareExpression(
                         sp,
@@ -562,7 +528,6 @@ public static class MapperGeneratorPart
                 }
             }
         }
-
         foreach (var dp in dstProps)
         {
             if (ignoredProps.Contains(dp.Name) || result.ContainsKey(dp.Name))
@@ -615,6 +580,41 @@ public static class MapperGeneratorPart
         return result.Select(kv => (kv.Key, kv.Value)).ToList();
     }
 
+    private static bool AreValueTypesCompatible(ITypeSymbol src, ITypeSymbol dst)
+    {
+        // Get underlying types for nullable value types
+        ITypeSymbol srcUnderlying = src;
+        ITypeSymbol dstUnderlying = dst;
+
+        bool srcIsNullable =
+            src is INamedTypeSymbol ns
+            && ns.ConstructedFrom.SpecialType == SpecialType.System_Nullable_T;
+        bool dstIsNullable =
+            dst is INamedTypeSymbol nd
+            && nd.ConstructedFrom.SpecialType == SpecialType.System_Nullable_T;
+
+        if (srcIsNullable)
+            srcUnderlying = ((INamedTypeSymbol)src).TypeArguments[0];
+        if (dstIsNullable)
+            dstUnderlying = ((INamedTypeSymbol)dst).TypeArguments[0];
+
+        // Check if both are value types or nullable value types
+        bool srcIsValueType =
+            srcUnderlying.TypeKind == TypeKind.Struct
+            || srcUnderlying.SpecialType != SpecialType.None;
+        bool dstIsValueType =
+            dstUnderlying.TypeKind == TypeKind.Struct
+            || dstUnderlying.SpecialType != SpecialType.None;
+
+        if (!srcIsValueType || !dstIsValueType)
+        {
+            return false;
+        }
+
+        // Compare underlying types
+        return SymbolEqualityComparer.Default.Equals(srcUnderlying, dstUnderlying);
+    }
+
     private static bool TryBuildAssignmentExpression(
         IPropertySymbol sp,
         IPropertySymbol dp,
@@ -623,7 +623,7 @@ public static class MapperGeneratorPart
     )
     {
         expr = "";
-        if (SymbolEqualityComparer.Default.Equals(sp.Type, dp.Type))
+        if (AreValueTypesCompatible(sp.Type, dp.Type))
         {
             expr = BuildNullableAwareExpression(sp, dp, $"source.{sp.Name}");
             return true;
@@ -650,13 +650,28 @@ public static class MapperGeneratorPart
         bool isProjection = false
     )
     {
-        bool sourceNullable = sourceProp.NullableAnnotation == NullableAnnotation.Annotated;
-        bool destNotNullable = destProp.NullableAnnotation == NullableAnnotation.NotAnnotated;
-        if (sourceNullable && destNotNullable)
+        bool sourceIsNullable =
+            sourceProp.Type is INamedTypeSymbol ns
+            && ns.ConstructedFrom.SpecialType == SpecialType.System_Nullable_T;
+        bool destIsNullable =
+            destProp.Type is INamedTypeSymbol nd
+            && nd.ConstructedFrom.SpecialType == SpecialType.System_Nullable_T;
+
+        if (sourceIsNullable && !destIsNullable)
         {
+            // Map from nullable to non-nullable: use default if null
             return $"{expr} ?? default";
         }
-        return expr;
+        else if (!sourceIsNullable && destIsNullable)
+        {
+            // Map from non-nullable to nullable: wrap the value
+            return expr;
+        }
+        else
+        {
+            // Both nullable or both non-nullable
+            return expr;
+        }
     }
 
     private static bool TryBuildCollectionMappingExpr(
@@ -834,12 +849,10 @@ public static class MapperGeneratorPart
         }
     }
 
-    // ---- Sinh code extension với namespace từ class context ----
     private static string GenerateCode(List<MapperInfo> infos)
     {
         var sb = new StringBuilder();
         int indent = 0;
-
         void AppendLine(string text = "")
         {
             if (text.Length == 0)
@@ -851,15 +864,12 @@ public static class MapperGeneratorPart
                 sb.AppendLine(new string(' ', indent * 4) + text);
             }
         }
-
         sb.AppendLine("// <auto-generated> by LinKit.Generator");
         sb.AppendLine("#nullable enable");
         sb.AppendLine("using System.Collections.Generic;");
         sb.AppendLine("using System.Linq;");
         sb.AppendLine();
-
         var groupedByNamespace = infos.GroupBy(m => m.Namespace);
-
         foreach (var nsGroup in groupedByNamespace)
         {
             var ns = nsGroup.Key;
@@ -869,14 +879,11 @@ public static class MapperGeneratorPart
                 AppendLine("{");
                 indent++;
             }
-
             AppendLine("public static partial class MappingExtensions");
             AppendLine("{");
             indent++;
-
             foreach (var m in nsGroup)
             {
-                // Object mapper
                 AppendLine(
                     $"public static {m.DestType}? To{m.DestShortName}(this {m.SourceType}? source)"
                 );
@@ -892,8 +899,6 @@ public static class MapperGeneratorPart
                 indent--;
                 AppendLine("}");
                 AppendLine();
-
-                // Enumerable mapper
                 AppendLine(
                     $"public static List<{m.DestType}> To{m.DestShortName}List(this IEnumerable<{m.SourceType}>? source)"
                 );
@@ -913,17 +918,14 @@ public static class MapperGeneratorPart
                 AppendLine("}");
                 AppendLine();
             }
-
             indent--;
             AppendLine("}");
-
             if (!string.IsNullOrEmpty(ns))
             {
                 indent--;
                 AppendLine("}");
             }
         }
-
         return sb.ToString();
     }
 }

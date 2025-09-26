@@ -1,33 +1,29 @@
-﻿namespace LinKit.Core.Mapping
+﻿namespace LinKit.Core.Mapping;
+
+[AttributeUsage(AttributeTargets.Class, Inherited = false, AllowMultiple = false)]
+public sealed class MapperContextAttribute : Attribute { }
+
+public interface IMappingConfigurator
 {
-    /// <summary>Đánh dấu class cấu hình mapping (phải partial)</summary>
-    [AttributeUsage(AttributeTargets.Class, Inherited = false, AllowMultiple = false)]
-    public sealed class MapperContextAttribute : Attribute { }
+    void Configure(IMapperConfigurationBuilder builder);
+}
 
-    public interface IMappingConfigurator
-    {
-        void Configure(IMapperConfigurationBuilder builder);
-    }
+public interface IMapperConfigurationBuilder
+{
+    IMappingExpression<TSource, TDestination> CreateMap<TSource, TDestination>();
+}
 
-    /// <summary>Builder chỉ là “API ảo” để generator phân tích syntax.</summary>
-    public interface IMapperConfigurationBuilder
-    {
-        IMappingExpression<TSource, TDestination> CreateMap<TSource, TDestination>();
-    }
+public interface IMappingExpression<TSource, TDestination>
+{
+    IMappingExpression<TSource, TDestination> ForMember(
+        string destinationMember,
+        string sourceMember
+    );
 
-    /// <summary>Chaining .ForMember(...) để mô tả rule cho generator.</summary>
-    public interface IMappingExpression<TSource, TDestination>
-    {
-        // Rule #2: map khác tên
-        IMappingExpression<TSource, TDestination> ForMember(string destinationMember, string sourceMember);
-
-        // Rule #3: map bằng converter
-        // Nếu sourceMember null ⇒ coi converter nhận cả object source (ít dùng), còn lại là nhận source.property
-        IMappingExpression<TSource, TDestination> ForMember(
-            string destinationMember,
-            Type converterType,
-            string converterMethodName,
-            string? sourceMember = null
-        );
-    }
+    IMappingExpression<TSource, TDestination> ForMember(
+        string destinationMember,
+        Type converterType,
+        string converterMethodName,
+        string? sourceMember = null
+    );
 }

@@ -30,7 +30,10 @@ public record GetUsersQuery : IQuery<UsersDto>, IValidator, IAuditable { };
 [CqrsHandler]
 public class GetUserQueryHandler : IQueryHandler<GetUserQuery, UserDto>
 {
-    public Task<UserDto> HandleAsync(GetUserQuery query, CancellationToken ct = default)
+    public Task<UserDto> HandleAsync(
+        GetUserQuery query,
+        CancellationToken cancellationToken = default
+    )
     {
         var user = new UserDto(query.Id, "Awesome AOT User");
         return Task.FromResult(user);
@@ -40,7 +43,10 @@ public class GetUserQueryHandler : IQueryHandler<GetUserQuery, UserDto>
 [CqrsHandler]
 public class GetUsersQueryHandler : IQueryHandler<GetUsersQuery, UsersDto>
 {
-    public Task<UsersDto> HandleAsync(GetUsersQuery query, CancellationToken ct = default)
+    public Task<UsersDto> HandleAsync(
+        GetUsersQuery query,
+        CancellationToken cancellationToken = default
+    )
     {
         var headerUser = GrpcUtils.GetHeaderValue<UserDto>("key1", AppJsonContext.Default);
         //Console.WriteLine(JsonSerializer.Serialize(header, AppJsonContext.Default.Metadata));

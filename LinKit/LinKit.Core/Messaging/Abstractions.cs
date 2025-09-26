@@ -2,7 +2,8 @@
 
 public class MessageHeaders : Dictionary<string, object>
 {
-    public MessageHeaders() : base(StringComparer.OrdinalIgnoreCase) { }
+    public MessageHeaders()
+        : base(StringComparer.OrdinalIgnoreCase) { }
 }
 
 public interface IMessageMetadataProvider
@@ -17,7 +18,8 @@ public interface IBrokerProducer
         string routingKey,
         object message,
         MessageHeaders? headers,
-        CancellationToken ct);
+        CancellationToken cancellationToken
+    );
 }
 
 public interface IBrokerConnection
@@ -25,5 +27,6 @@ public interface IBrokerConnection
     Task StartConsumingAsync(
         string queueName,
         Func<string, byte[], IReadOnlyDictionary<string, object>, Task> onMessageReceived,
-        CancellationToken stoppingToken);
+        CancellationToken stoppingToken
+    );
 }

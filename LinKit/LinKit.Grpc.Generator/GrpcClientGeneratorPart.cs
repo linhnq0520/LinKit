@@ -38,7 +38,7 @@ internal static class GrpcClientGeneratorPart
 {
     private const string GrpcClientAttributeName = "LinKit.Grpc.GrpcClientAttribute";
     private const string IQueryInterfaceName = "LinKit.Core.Cqrs.IQuery";
-    private const string ICommandInterfaceName = "LinKit.Cqrs.ICommand";
+    private const string ICommandInterfaceName = "LinKit.Core.Cqrs.ICommand";
 
     public static IncrementalValueProvider<IReadOnlyList<GrpcClientServiceInfo>> GetServices(
         IncrementalGeneratorInitializationContext context
@@ -176,7 +176,7 @@ internal static class GrpcClientGeneratorPart
 
         var cqrsInterface = cqrsRequestSymbol.AllInterfaces.FirstOrDefault(i =>
             i.ToDisplayString().StartsWith("LinKit.Core.Cqrs.IQuery")
-            || i.ToDisplayString().StartsWith("LinKit.Cqrs.ICommand")
+            || i.ToDisplayString().StartsWith("LinKit.Core.Cqrs.ICommand")
         );
 
         if (cqrsInterface is null)

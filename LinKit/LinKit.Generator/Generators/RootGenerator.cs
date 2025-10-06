@@ -13,14 +13,10 @@ public class RootGenerator : IIncrementalGenerator
     public void Initialize(IncrementalGeneratorInitializationContext context)
     {
         var cqrsServices = CqrsGeneratorPart.GetServices(context);
-        //var grpcClientServices = GrpcClientGeneratorPart.GetServices(context);
         var diServices = DependencyInjectionGeneratorPart.GetServices(context);
-        //var grpcServices = GrpcGeneratorPart.GetServices(context);
         var messagingServices = MessagingGeneratorPart.GetServices(context);
 
         CqrsGeneratorPart.Initialize(context);
-        //GrpcClientGeneratorPart.Initialize(context);
-        //GrpcGeneratorPart.Initialize(context);
         EndpointsGeneratorPart.Initialize(context);
         MessagingGeneratorPart.Initialize(context);
         MapperGeneratorPart.Initialize(context);
@@ -42,9 +38,12 @@ public class RootGenerator : IIncrementalGenerator
             allServices,
             (spc, services) =>
             {
+                bool hasGeneratedAnyFile = false;
+
                 // --- CQRS ---
                 if (services.CqrsServices.Any())
                 {
+                    hasGeneratedAnyFile = true;
                     var src = GeneratePartialDI(
                         services.CqrsServices.Select(s => s.RegistrationCode),
                         "LinKit.Core",
@@ -57,33 +56,10 @@ public class RootGenerator : IIncrementalGenerator
                     );
                 }
 
-                //// --- gRPC Client ---
-                //if (services.GrpcClientServices.Any())
-                //{
-                //    var src = GeneratePartialDI(
-                //        services.GrpcClientServices.Select(s => s.RegistrationCode),
-                //        "LinKit.Core",
-                //        "AddLinKitGrpcClient",
-                //        "gRPC Client Mediator"
-                //    );
-                //    spc.AddSource($"GrpcClient.DependencyInjection.g.cs", SourceText.From(src, Encoding.UTF8));
-                //}
-
-                //// --- gRPC Server ---
-                //if (services.GrpcServices.Any())
-                //{
-                //    var src = GeneratePartialDI(
-                //        services.GrpcServices.Select(s => s.RegistrationCode),
-                //        "LinKit.Core",
-                //        "AddLinKitGrpcServer",
-                //        "gRPC Server Services (Generated Implementations)"
-                //    );
-                //    spc.AddSource($"GrpcServer.DependencyInjection.g.cs", SourceText.From(src, Encoding.UTF8));
-                //}
-
                 // --- Custom DI Services ---
                 if (services.DIServices.Any())
                 {
+                    hasGeneratedAnyFile = true;
                     var src = GeneratePartialDI(
                         services.DIServices.Select(s =>
                         {
@@ -104,7 +80,6 @@ public class RootGenerator : IIncrementalGenerator
 
                             if (s.IsGeneric && !string.IsNullOrWhiteSpace(s.Key))
                             {
-                                // Handle keyed generic registration (e.g., services.AddKeyedScoped(typeof(IRepository<>), "key", typeof(BaseRepository<>)))
                                 lifetime = ((Lifetime)s.Lifetime) switch
                                 {
                                     Lifetime.Scoped => "AddKeyedScoped",
@@ -115,12 +90,10 @@ public class RootGenerator : IIncrementalGenerator
                             }
                             else if (s.IsGeneric)
                             {
-                                // Handle generic registration (e.g., services.AddScoped(typeof(IABC<>), typeof(CreateUserValidator<>)))
                                 return $"services.{lifetime}(typeof({serviceType}), typeof({implType}));";
                             }
                             else if (!string.IsNullOrWhiteSpace(s.Key))
                             {
-                                // Handle keyed non-generic registration (e.g., services.AddKeyedScoped<IValidator, Validator>("key"))
                                 lifetime = ((Lifetime)s.Lifetime) switch
                                 {
                                     Lifetime.Scoped => "AddKeyedScoped",
@@ -131,7 +104,6 @@ public class RootGenerator : IIncrementalGenerator
                             }
                             else
                             {
-                                // Handle standard non-generic registration (e.g., services.AddScoped<IValidator, Validator>())
                                 return $"services.{lifetime}<{serviceType}, {implType}>();";
                             }
                         }),
@@ -148,6 +120,7 @@ public class RootGenerator : IIncrementalGenerator
                 // --- Messaging ---
                 if (services.MessagingServices.Any())
                 {
+                    hasGeneratedAnyFile = true;
                     var src = GeneratePartialDI(
                         services.MessagingServices.Select(s => s.RegistrationCode),
                         "LinKit.Core",
@@ -157,6 +130,24 @@ public class RootGenerator : IIncrementalGenerator
                     spc.AddSource(
                         $"Messaging.DependencyInjection.g.cs",
                         SourceText.From(src, Encoding.UTF8)
+                    );
+                }
+
+                if (hasGeneratedAnyFile)
+                {
+                    var usings = new HashSet<string> { "LinKit.Core" };
+
+                    var globalUsingsSource = new StringBuilder();
+                    globalUsingsSource.AppendLine("// <auto-generated/> by LinKit.Generator");
+                    globalUsingsSource.AppendLine();
+                    foreach (var u in usings)
+                    {
+                        globalUsingsSource.AppendLine($"global using {u};");
+                    }
+
+                    spc.AddSource(
+                        "GlobalUsings.g.cs",
+                        SourceText.From(globalUsingsSource.ToString(), Encoding.UTF8)
                     );
                 }
             }
@@ -205,20 +196,14 @@ using LinKit.Core.Abstractions;"
     }
 }
 
+// Các record class giữ nguyên không đổi
 internal record AllServicesInfo
 {
-    public IReadOnlyList<CqrsServiceInfo> CqrsServices { get; init; } = new List<CqrsServiceInfo>();
-
-    //public IReadOnlyList<GrpcClientServiceInfo> GrpcClientServices { get; init; } = new List<GrpcClientServiceInfo>();
-    public IReadOnlyList<ServiceInfo> DIServices { get; init; } = new List<ServiceInfo>();
-
-    //public IReadOnlyList<GrpcServiceInfo> GrpcServices { get; init; } = new List<GrpcServiceInfo>();
-    public IReadOnlyList<MessagingServiceInfo> MessagingServices { get; init; } =
-        new List<MessagingServiceInfo>();
+    public IReadOnlyList<CqrsServiceInfo> CqrsServices { get; init; } = [];
+    public IReadOnlyList<ServiceInfo> DIServices { get; init; } = [];
+    public IReadOnlyList<MessagingServiceInfo> MessagingServices { get; init; } = [];
 }
 
 internal record CqrsServiceInfo(string RegistrationCode);
 
-//internal record GrpcClientServiceInfo(string RegistrationCode);
-//internal record GrpcServiceInfo(string RegistrationCode);
 internal record MessagingServiceInfo(string RegistrationCode);

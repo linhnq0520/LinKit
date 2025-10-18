@@ -4,7 +4,7 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <PackageId>LinKit.Grpc</PackageId>
-    <Version>1.0.4</Version>
+    <Version>1.0.5</Version>
     <Authors>Linh Nguyen</Authors>
     <Description>gRPC server/client code generation for CQRS requests in LinKit. High-performance, source-generated, AOT/Trimming safe.</Description>
     <PackageTags>source-generator;grpc;performance;aot;cqrs;mediator</PackageTags>

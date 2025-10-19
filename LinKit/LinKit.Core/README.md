@@ -3,7 +3,7 @@
 [![NuGet Version](https://img.shields.io/nuget/v/LinKit.Core.svg)](https://www.nuget.org/packages/LinKit.Core/)
 [![NuGet Downloads](https://img.shields.io/nuget/dt/LinKit.Core.svg)](https://www.nuget.org/packages/LinKit.Core/)
 
-**LinKit.Core** is a high-performance, modular toolkit for .NET, providing source-generated helpers for CQRS, Dependency Injection, Minimal API Endpoints, Mapping, Messaging, and gRPC. LinKit eliminates boilerplate, maximizes runtime performance, and is fully compatible with NativeAOT and trimming.
+**LinKit.Core** is a high-performance, modular toolkit for .NET, providing source-generated helpers for CQRS, Dependency Injection, Minimal API Endpoints, Background Jobs, Mapping, Messaging, and gRPC. LinKit eliminates boilerplate, maximizes runtime performance, and is fully compatible with NativeAOT and trimming.
 
 ---
 
@@ -12,35 +12,35 @@
 Most .NET libraries rely on runtime reflection, which is slow, memory-intensive, and incompatible with NativeAOT. LinKit uses C# Source Generators to analyze your code and generate optimized, boilerplate-free C# at compile time, linking your application's components together.
 
 **Key Benefits:**
+
 - 🚀 **Zero Reflection:** No runtime scanning or reflection.
 - ⚡ **Fast Startup:** No assembly scanning.
 - 🗑️ **AOT & Trimming Safe:** Works with Blazor, MAUI, NativeAOT.
 - ✍️ **Clean API:** Intent-driven, explicit, and easy to use.
-- 🤖 **Automated Boilerplate:** For DI, API endpoints, gRPC, messaging, and mapping.
+- 🤖 **Automated Boilerplate:** For DI, API endpoints, background jobs, gRPC, messaging, and mapping.
 
 ---
 
 ## LinKit Ecosystem
 
-| Package | Description | NuGet |
-| ------- | ----------- | ----- |
-| `LinKit.Core` | **Required.** Interfaces, attributes, and source generator. | [NuGet](https://www.nuget.org/packages/LinKit.Core/) |
-| `LinKit.Grpc` | gRPC server/client codegen for CQRS requests. | [NuGet](https://www.nuget.org/packages/LinKit.Grpc/) |
-| `LinKit.Messaging.RabbitMQ` | RabbitMQ implementation for Messaging Kit. | [NuGet](https://www.nuget.org/packages/LinKit.Messaging.RabbitMQ/) |
-| `LinKit.Messaging.Kafka` | Kafka implementation for Messaging Kit. | [NuGet](https://www.nuget.org/packages/LinKit.Messaging.Kafka/) |
+| Package                     | Description                                                 | NuGet                                                              |
+| --------------------------- | ----------------------------------------------------------- | ------------------------------------------------------------------ |
+| `LinKit.Core`               | **Required.** Interfaces, attributes, and source generator. | [NuGet](https://www.nuget.org/packages/LinKit.Core/)               |
+| `LinKit.Grpc`               | gRPC server/client codegen for CQRS requests.               | [NuGet](https://www.nuget.org/packages/LinKit.Grpc/)               |
+| `LinKit.Messaging.RabbitMQ` | RabbitMQ implementation for Messaging Kit.                  | [NuGet](https://www.nuget.org/packages/LinKit.Messaging.RabbitMQ/) |
+| `LinKit.Messaging.Kafka`    | Kafka implementation for Messaging Kit.                     | [NuGet](https://www.nuget.org/packages/LinKit.Messaging.Kafka/)    |
 
 ---
 
 ## Installation
 
-```shell
+````shell
 dotnet add package LinKit.Core
-```
-Add other packages as needed:
+```Add other packages as needed:
 ```shell
 dotnet add package LinKit.Grpc
 dotnet add package LinKit.Messaging.RabbitMQ
-```
+````
 
 ---
 
@@ -68,6 +68,7 @@ public class GetUserHandler : IQueryHandler<GetUserQuery, UserDto>
 ```
 
 **Usage:**
+
 ```csharp
 builder.Services.AddLinKitCqrs();
 var user = await mediator.QueryAsync(new GetUserQuery { Id = 1 });
@@ -88,6 +89,7 @@ public class MyService : IMyService { ... }
 ```
 
 **Usage:**
+
 ```csharp
 builder.Services.AddLinKitDependency();
 ```
@@ -111,13 +113,60 @@ public class GetUserQuery : IQuery<UserDto>
 ```
 
 **Usage:**
+
 ```csharp
 app.MapGeneratedEndpoints();
 ```
 
 ---
 
-### 4. Mapping Kit
+### 4. Background Job Kit
+
+Source-generates a robust, configuration-driven system for running CQRS commands and queries as background jobs.
+
+- **Decorate CQRS Requests:** Use `[BackgroundJob("MyUniqueJobName")]`.
+- **Configure Jobs:** Create a JSON configuration file (e.g., `BackgroundJobsConfig.json`).
+- **Register:** `builder.AddBackgroundJobs();`
+
+**Request:**
+
+```csharp
+[BackgroundJob("ProcessDailySalesReport")]
+public class ProcessDailySalesReportCommand : ICommand
+{
+    // This command will be created via DI, so its dependencies are resolved.
+}
+```
+
+**Configuration (`BackgroundJobsConfig.json`):**
+
+```json
+{
+  "BackgroundJobConfig": {
+    "Jobs": [
+      {
+        "Name": "ProcessDailySalesReport",
+        "TimeIntervalSeconds": 10,
+        "MaxParallel": 1,
+        "CorrelationId": "AutoCreateUser",
+        "IsActive": true
+      }
+    ]
+  }
+}
+```
+
+**Usage:**
+
+````csharp
+// In Program.cs
+builder.AddBackgroundJobs();
+// builder.AddBackgroundJobs(<path to config file>);
+```This registers a hosted service (`BackgroundJobManager`) that uses the configuration to schedule and execute jobs via the Mediator, with full support for dependency injection.
+
+---
+
+### 5. Mapping Kit
 
 A reflection-free, source-generated object mapper.
 
@@ -135,22 +184,24 @@ public partial class AppMapperContext : IMappingConfigurator
             .ForMember(dest => dest.Name, src => src.UserName);
     }
 }
-```
+````
 
 **Usage:**
+
 ```csharp
 var dto = userEntity.ToUserDto();
 var dtos = userEntities.ToUserDtoList();
 ```
 
 **Mapping Conventions:**
+
 1. Explicit `.ForMember()` config
 2. Name matching (case-insensitive)
 3. `[JsonPropertyName]`/`[JsonProperty]` attribute matching
 
 ---
 
-### 5. Messaging Kit
+### 6. Messaging Kit
 
 Source-generated publisher/consumer for message brokers (RabbitMQ, Kafka).
 
@@ -167,6 +218,7 @@ public class UserCreatedHandler : ICommandHandler<UserCreatedEvent> { ... }
 ```
 
 **Publisher:**
+
 ```csharp
 builder.Services.AddLinKitMessaging();
 builder.Services.AddLinKitRabbitMQ(configuration);
@@ -174,15 +226,15 @@ builder.Services.AddLinKitRabbitMQ(configuration);
 ```
 
 **Consumer:**
-```csharp
+
+````csharp
 builder.Services.AddLinKitCqrs();
 builder.Services.AddLinKitMessaging();
-builder.Services.AddLinKitRabbitMQ(configuration);
-```
+builder.Services.AddLinKitRabbitMQ(configuration);```
 
 ---
 
-### 6. gRPC Kit (via LinKit.Grpc)
+### 7. gRPC Kit (via LinKit.Grpc)
 
 Source-generates gRPC server and client code for CQRS requests.
 
@@ -194,9 +246,10 @@ Source-generates gRPC server and client code for CQRS requests.
 ```csharp
 [GrpcEndpoint(typeof(UserService.UserServiceBase), "GetUserById")]
 public class GetUserQuery : IQuery<UserDto> { ... }
-```
+````
 
 **Client:**
+
 - `[GrpcClient(typeof(MyServiceClient), "MethodNameAsync")]` on CQRS request.
 - Register: `builder.Services.AddLinKitGrpcClient();` and `IGrpcChannelProvider`.
 
@@ -206,6 +259,7 @@ public class GetUserQuery : IQuery<UserDto> { ... }
 ```
 
 **Usage:**
+
 ```csharp
 var user = await mediator.QueryAsync(new GetUserQuery { Id = 1 });
 ```

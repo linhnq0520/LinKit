@@ -1,5 +1,3 @@
-using LinKit.Core;
-using LinKit.Messaging.RabbitMQ;
 using SampleWebApp;
 
 WebApplicationBuilder builder = WebApplication.CreateBuilder(args);
@@ -13,8 +11,11 @@ builder.Services.ConfigureHttpJsonOptions(options =>
 });
 builder.Services.AddGrpc();
 builder.Services.AddLinKitCqrs();
-builder.Services.AddLinKitMessaging();
-builder.Services.AddLinKitRabbitMQ(builder.Configuration);
+
+//builder.Services.AddLinKitMessaging();
+//builder.Services.AddLinKitRabbitMQ(builder.Configuration);
+builder.Services.AddLogging();
+builder.AddBackgroundJobs();
 WebApplication app = builder.Build();
 
 app.UseHttpsRedirection();

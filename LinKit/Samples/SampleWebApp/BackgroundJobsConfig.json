@@ -1,0 +1,15 @@
+{
+  "BackgroundJobConfig": {
+    "BackgroundJobs": [
+      {
+        "Name": "AutoCreateUser",
+        "Type": "SampleWebApp.Features.Users.CreateUserCommand",
+        "TimeIntervalSeconds": 10,
+        "MaxParallel": 1,
+        "CorrelationId": "AutoCreateUser",
+        "IsActive": true
+      }
+    ]
+  }
+  
+}

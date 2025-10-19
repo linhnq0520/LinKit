@@ -1,5 +1,6 @@
 ﻿using System.Text.Json;
 using System.Text.Json.Serialization;
+using LinKit.Core.BackgroundJobs;
 using LinKit.Core.Cqrs;
 using LinKit.Grpc;
 using SampleWebApp.Grpc.Users;
@@ -14,6 +15,7 @@ public class UsersDto
 }
 
 [GrpcClient(typeof(UserGrpcService.UserGrpcServiceClient), "GetUserAsync")]
+[BackgroundJob("AutoGetUser")]
 public partial class GetUserById : IQuery<UserDto>
 {
     public int Id { get; set; }

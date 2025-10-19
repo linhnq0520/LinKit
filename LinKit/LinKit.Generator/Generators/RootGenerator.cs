@@ -20,6 +20,7 @@ public class RootGenerator : IIncrementalGenerator
         EndpointsGeneratorPart.Initialize(context);
         MessagingGeneratorPart.Initialize(context);
         MapperGeneratorPart.Initialize(context);
+        BackgroundJobGeneratorPart.Initialize(context);
 
         var allServices = cqrsServices
             .Combine(diServices)

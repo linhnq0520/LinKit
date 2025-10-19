@@ -1,4 +1,5 @@
 ﻿using Contract.Models;
+using LinKit.Core.BackgroundJobs;
 using LinKit.Core.Cqrs;
 using LinKit.Core.Endpoints;
 using SampleWebApp.Contracts.Behaviors;
@@ -6,19 +7,24 @@ using SampleWebApp.Contracts.Behaviors;
 namespace SampleWebApp.Features.Users;
 
 [ApiEndpoint(ApiMethod.Post, "create-user")]
-public record CreateUserCommand(string Name) : ICommand<UserDto>, IAuditable;
+[BackgroundJob("AutoCreateUser")]
+public class CreateUserCommand : ICommand
+{
+    public string Name { get; set; }
+};
 
 public record UpdateUserCommand(int Id, string Name) : ICommand, IAuditable;
 
 [CqrsHandler]
-public class CreateUser : ICommandHandler<CreateUserCommand, UserDto>
+public class CreateUser : ICommandHandler<CreateUserCommand>
 {
-    Task<UserDto> ICommandHandler<CreateUserCommand, UserDto>.HandleAsync(
+    Task ICommandHandler<CreateUserCommand>.HandleAsync(
         CreateUserCommand command,
         CancellationToken cancellationToken
     )
     {
-        var user = new UserDto(1, command.Name);
+        UserDto user = new UserDto(1, command.Name);
+        Console.WriteLine("Executed create user");
         return Task.FromResult(user);
     }
 }

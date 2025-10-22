@@ -189,7 +189,7 @@ internal static class EndpointsGeneratorPart
         sb.AppendLine();
         sb.AppendLine("namespace LinKit.Core");
         sb.AppendLine("{");
-        sb.AppendLine("    public static partial class GeneratedEndpointsExtensions");
+        sb.AppendLine("    internal static partial class GeneratedEndpointsExtensions");
         sb.AppendLine("    {");
         sb.AppendLine(
             "        public static IEndpointRouteBuilder MapGeneratedEndpoints(this IEndpointRouteBuilder app)"

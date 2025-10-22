@@ -3,13 +3,12 @@
     "BackgroundJobs": [
       {
         "Name": "AutoCreateUser",
-        "Type": "SampleWebApp.Features.Users.CreateUserCommand",
-        "TimeIntervalSeconds": 10,
-        "MaxParallel": 1,
-        "CorrelationId": "AutoCreateUser",
-        "IsActive": true
+        "IsActive": true,
+        "TimeIntervalSeconds": 5,
+        "RunOnStart": true,
+        "AssemblyName": "SampleWebApp",
+        "EmbeddedData": "hello Linh nè"
       }
     ]
   }
-  
 }

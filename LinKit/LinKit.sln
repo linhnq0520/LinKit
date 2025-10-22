@@ -21,6 +21,8 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "LinKit.Grpc", "LinKit.Grpc\
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "LinKit.Grpc.Generator", "LinKit.Grpc.Generator\LinKit.Grpc.Generator.csproj", "{0E8328CF-725D-4171-BA52-CD24B47C529B}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "SamepleApp2", "Samples\SamepleApp2\SamepleApp2.csproj", "{76C8F5FE-DC1C-4E42-8161-0AE3B95FF11C}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -63,6 +65,10 @@ Global
 		{0E8328CF-725D-4171-BA52-CD24B47C529B}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{0E8328CF-725D-4171-BA52-CD24B47C529B}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{0E8328CF-725D-4171-BA52-CD24B47C529B}.Release|Any CPU.Build.0 = Release|Any CPU
+		{76C8F5FE-DC1C-4E42-8161-0AE3B95FF11C}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{76C8F5FE-DC1C-4E42-8161-0AE3B95FF11C}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{76C8F5FE-DC1C-4E42-8161-0AE3B95FF11C}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{76C8F5FE-DC1C-4E42-8161-0AE3B95FF11C}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE

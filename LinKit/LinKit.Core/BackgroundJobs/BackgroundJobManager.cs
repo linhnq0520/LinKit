@@ -10,7 +10,8 @@ public class BackgroundJobManager : IHostedService
     private readonly IOptionsMonitor<BackgroundJobConfig> _monitor;
     private readonly IServiceProvider _sp;
     private readonly ILogger<BackgroundJobManager>? _logger;
-    private readonly Dictionary<string, JobRunner> _jobs = new();
+    private readonly Dictionary<string, JobRunner> _jobs = [];
+    private readonly object _lock = new();
 
     public BackgroundJobManager(IOptionsMonitor<BackgroundJobConfig> monitor, IServiceProvider sp)
     {
@@ -22,65 +23,100 @@ public class BackgroundJobManager : IHostedService
 
     public Task StartAsync(CancellationToken cancellationToken)
     {
-        LoadJobs(_monitor.CurrentValue.BackgroundJobs);
+        _logger?.LogInformation("BackgroundJobManager is starting.");
+        LoadOrUpdateJobs(_monitor.CurrentValue);
         return Task.CompletedTask;
     }
 
     public Task StopAsync(CancellationToken cancellationToken)
     {
-        foreach (JobRunner job in _jobs.Values)
-            job.Stop();
-        return Task.CompletedTask;
-    }
-
-    private void LoadJobs(IEnumerable<JobConfig> configs)
-    {
-        foreach (JobConfig? config in configs.Where(c => c.IsActive))
+        _logger?.LogInformation("BackgroundJobManager is stopping. Stopping all running jobs.");
+        lock (_lock)
         {
-            if (!_jobs.ContainsKey(config.Name))
+            foreach (JobRunner job in _jobs.Values.ToList())
             {
-                JobRunner runner = new JobRunner(config.Name, _sp, _monitor);
-                _jobs[config.Name] = runner;
-                runner.Start();
+                job.Stop();
             }
+            _jobs.Clear();
         }
+        return Task.CompletedTask;
     }
 
     private void OnConfigChanged(BackgroundJobConfig newConfig)
     {
-        List<JobConfig> newJobs = newConfig.BackgroundJobs;
+        _logger?.LogInformation("Configuration changed. Reloading background jobs.");
+        LoadOrUpdateJobs(newConfig);
+    }
 
-        // Remove old jobs
-        foreach (string? old in _jobs.Keys.Except(newJobs.Select(j => j.Name)).ToList())
+    private void LoadOrUpdateJobs(BackgroundJobConfig config)
+    {
+        lock (_lock)
         {
-            _logger?.LogInformation("Stopping removed job {Job}", old);
-            _jobs[old].Stop();
-            _jobs.Remove(old);
-        }
-
-        // Restart changed jobs
-        foreach (JobConfig config in newJobs)
-        {
-            if (_jobs.TryGetValue(config.Name, out JobRunner? runner))
+            _logger?.LogInformation(
+                "Loaded {Count} jobs from configuration.",
+                config.BackgroundJobs.Count
+            );
+            foreach (var job in config.BackgroundJobs)
             {
-                JobConfig? old = _monitor.CurrentValue.BackgroundJobs.FirstOrDefault(j =>
-                    j.Name == config.Name
+                _logger?.LogInformation(
+                    "Job config: {JobName}, Active={IsActive}",
+                    job.Name,
+                    job.IsActive
                 );
-                if (old != null && !old.Equals(config))
+            }
+
+            var activeJobsFromConfig = new Dictionary<string, JobConfig>(
+                StringComparer.OrdinalIgnoreCase
+            );
+            foreach (var job in config.BackgroundJobs.Where(j => j.IsActive))
+            {
+                activeJobsFromConfig[job.Name] = job;
+            }
+
+            var runningJobNames = _jobs.Keys.ToList();
+            foreach (var jobName in runningJobNames)
+            {
+                if (!activeJobsFromConfig.ContainsKey(jobName))
                 {
-                    _logger?.LogInformation("Restarting changed job {Job}", config.Name);
-                    runner.Stop();
-                    runner = new JobRunner(config.Name, _sp, _monitor);
-                    _jobs[config.Name] = runner;
-                    runner.Start();
+                    _logger?.LogInformation(
+                        "Stopping job {Job} because it was removed or deactivated.",
+                        jobName
+                    );
+                    if (_jobs.TryGetValue(jobName, out var runnerToStop))
+                    {
+                        runnerToStop.Stop();
+                        _jobs.Remove(jobName);
+                    }
                 }
             }
-            else if (config.IsActive)
+
+            foreach (var newJobConfig in activeJobsFromConfig.Values)
             {
-                _logger?.LogInformation("Starting new job {Job}", config.Name);
-                JobRunner runner1 = new JobRunner(config.Name, _sp, _monitor);
-                _jobs[config.Name] = runner1;
-                runner1.Start();
+                if (_jobs.TryGetValue(newJobConfig.Name, out var existingRunner))
+                {
+                    if (!existingRunner.CurrentConfig.Equals(newJobConfig))
+                    {
+                        _logger?.LogInformation(
+                            "Restarting job {Job} due to configuration change.",
+                            newJobConfig.Name
+                        );
+                        existingRunner.Stop();
+
+                        var newRunner = new JobRunner(newJobConfig, _sp);
+                        _jobs[newJobConfig.Name] = newRunner;
+                        newRunner.Start();
+                    }
+                }
+                else
+                {
+                    _logger?.LogInformation(
+                        "Starting new or reactivated job {Job}.",
+                        newJobConfig.Name
+                    );
+                    var newRunner = new JobRunner(newJobConfig, _sp);
+                    _jobs[newJobConfig.Name] = newRunner;
+                    newRunner.Start();
+                }
             }
         }
     }

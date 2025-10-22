@@ -8,7 +8,7 @@ namespace SampleWebApp.Features.Users;
 
 [ApiEndpoint(ApiMethod.Post, "create-user")]
 [BackgroundJob("AutoCreateUser")]
-public class CreateUserCommand : ICommand
+public class CreateUserCommand : BackgroundJobCommand
 {
     public string Name { get; set; }
 };
@@ -24,7 +24,11 @@ public class CreateUser : ICommandHandler<CreateUserCommand>
     )
     {
         UserDto user = new UserDto(1, command.Name);
+        var embededData = command.EmbededData;
+        Console.ForegroundColor = ConsoleColor.Green;
         Console.WriteLine("Executed create user");
+        Console.WriteLine($"embededData == {embededData}");
+        Console.ForegroundColor = ConsoleColor.White;
         return Task.FromResult(user);
     }
 }

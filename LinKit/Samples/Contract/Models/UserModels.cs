@@ -15,7 +15,6 @@ public class UsersDto
 }
 
 [GrpcClient(typeof(UserGrpcService.UserGrpcServiceClient), "GetUserAsync")]
-[BackgroundJob("AutoGetUser")]
 public partial class GetUserById : IQuery<UserDto>
 {
     public int Id { get; set; }

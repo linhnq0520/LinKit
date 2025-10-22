@@ -173,7 +173,7 @@ using LinKit.Core.Abstractions;"
         sb.AppendLine($"namespace {@namespace}");
         sb.AppendLine(
             @"{
-    public static partial class ServicesExtensions
+    internal static partial class ServicesExtensions
     {"
         );
         sb.AppendLine(

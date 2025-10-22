@@ -4,10 +4,10 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <PackageId>LinKit.Core</PackageId>
-    <Version>1.1.2</Version>
+    <Version>1.2.0</Version>
     <Authors>Linh Nguyen</Authors>
     <Description>A toolkit of high-performance, source-generated helpers for modern .NET. Boosts performance and provides AOT/Trimming safety.</Description>
-    <PackageTags>source-generator;performance;aot;cqrs;mediator;di</PackageTags>
+    <PackageTags>source-generator;performance;aot;cqrs;mediator;di;background;job</PackageTags>
     <PackageLicenseExpression>MIT</PackageLicenseExpression>
     <PackageReadmeFile>README.md</PackageReadmeFile>
     <RepositoryUrl>https://github.com/linhnq0520/LinKit</RepositoryUrl>
@@ -22,10 +22,19 @@
     <PackageReference
       Include="Microsoft.Extensions.DependencyInjection.Abstractions"
       Version="8.0.0"
+      PrivateAssets="all"
     />
-    <PackageReference Include="Microsoft.Extensions.Hosting.Abstractions" Version="8.0.0" />
-    <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="8.0.0" />
-    <PackageReference Include="Microsoft.Extensions.Options" Version="8.0.0" />
+    <PackageReference
+      Include="Microsoft.Extensions.Hosting.Abstractions"
+      Version="8.0.0"
+      PrivateAssets="all"
+    />
+    <PackageReference
+      Include="Microsoft.Extensions.Logging.Abstractions"
+      Version="8.0.0"
+      PrivateAssets="all"
+    />
+    <PackageReference Include="Microsoft.Extensions.Options" Version="8.0.0" PrivateAssets="all" />
   </ItemGroup>
   <ItemGroup>
     <None

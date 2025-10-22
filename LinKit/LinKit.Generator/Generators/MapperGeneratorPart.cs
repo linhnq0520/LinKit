@@ -513,7 +513,10 @@ public static class MapperGeneratorPart
                     d.Name.Equals(r.DestinationMember, StringComparison.OrdinalIgnoreCase)
                 );
                 if (dp is null)
+                {
                     continue;
+                }
+
                 if (sp is null)
                 {
                     result[r.DestinationMember] = $"source.{r.SourceMember}";
@@ -619,9 +622,14 @@ public static class MapperGeneratorPart
             && nd.ConstructedFrom.SpecialType == SpecialType.System_Nullable_T;
 
         if (srcIsNullable)
+        {
             srcUnderlying = ((INamedTypeSymbol)src).TypeArguments[0];
+        }
+
         if (dstIsNullable)
+        {
             dstUnderlying = ((INamedTypeSymbol)dst).TypeArguments[0];
+        }
 
         // Check if both are value types or nullable value types
         bool srcIsValueType =

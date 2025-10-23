@@ -12,8 +12,12 @@ public class JobInfo
 
     public JobInfo() { }
 
-    public JobInfo(Type jobType, bool isCommand, object instance,
-        Func<IMediator, object, CancellationToken, Task> executor)
+    public JobInfo(
+        Type jobType,
+        bool isCommand,
+        object instance,
+        Func<IMediator, object, CancellationToken, Task> executor
+    )
     {
         JobType = jobType;
         IsCommand = isCommand;

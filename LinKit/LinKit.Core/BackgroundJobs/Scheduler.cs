@@ -18,7 +18,7 @@ public static class Scheduler
                 ScheduleType.Daily => GetNextDailyDelay(config),
                 ScheduleType.Weekly => GetNextWeeklyDelay(config),
                 ScheduleType.Monthly => GetNextMonthlyDelay(config),
-                _ => TimeSpan.FromSeconds(config.TimeIntervalSeconds), // Mặc định là Interval
+                _ => TimeSpan.FromSeconds(config.TimeIntervalSeconds),
             };
         }
         catch (Exception) // Bắt lỗi nếu cấu hình không hợp lệ (ví dụ: TimeOfDay sai định dạng)
@@ -37,9 +37,8 @@ public static class Scheduler
         var now = DateTime.UtcNow;
         var todayScheduledTime = now.Date + timeOfDay;
 
-        DateTime nextRunTime = now >= todayScheduledTime
-            ? todayScheduledTime.AddDays(1)
-            : todayScheduledTime;
+        DateTime nextRunTime =
+            now >= todayScheduledTime ? todayScheduledTime.AddDays(1) : todayScheduledTime;
 
         return nextRunTime - now;
     }
@@ -92,7 +91,11 @@ public static class Scheduler
         return nextRunTime - now;
     }
 
-    private static DateTime GetNextMonthlyOccurrence(DateTime startTime, int dayOfMonth, TimeSpan timeOfDay)
+    private static DateTime GetNextMonthlyOccurrence(
+        DateTime startTime,
+        int dayOfMonth,
+        TimeSpan timeOfDay
+    )
     {
         int targetDay = dayOfMonth;
 
@@ -107,6 +110,7 @@ public static class Scheduler
             targetDay = Math.Min(targetDay, DateTime.DaysInMonth(startTime.Year, startTime.Month));
         }
 
-        return new DateTime(startTime.Year, startTime.Month, targetDay, 0, 0, 0, DateTimeKind.Utc) + timeOfDay;
+        return new DateTime(startTime.Year, startTime.Month, targetDay, 0, 0, 0, DateTimeKind.Utc)
+            + timeOfDay;
     }
 }

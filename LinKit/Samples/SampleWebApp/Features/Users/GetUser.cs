@@ -35,7 +35,7 @@ public class GetUserQueryHandler : IQueryHandler<GetUserQuery, UserDto>
         CancellationToken cancellationToken = default
     )
     {
-        var user = new UserDto(query.Id, "Awesome AOT User");
+        UserDto user = new UserDto(query.Id, "Awesome AOT User");
         return Task.FromResult(user);
     }
 }
@@ -48,12 +48,12 @@ public class GetUsersQueryHandler : IQueryHandler<GetUsersQuery, UsersDto>
         CancellationToken cancellationToken = default
     )
     {
-        var headerUser = GrpcUtils.GetHeaderValue<UserDto>("key1", AppJsonContext.Default);
+        UserDto headerUser = GrpcUtils.GetHeaderValue<UserDto>("key1");
         //Console.WriteLine(JsonSerializer.Serialize(header, AppJsonContext.Default.Metadata));
-        var user1 = new UserDto(1, "Awesome AOT User");
-        var user2 = new UserDto(2, "Awesome AOT User");
-        var list = new List<UserDto>() { user1, user2, headerUser };
-        var res = new UsersDto { Users = list };
+        UserDto user1 = new UserDto(1, "Awesome AOT User");
+        UserDto user2 = new UserDto(2, "Awesome AOT User");
+        List<UserDto> list = new List<UserDto>() { user1, user2, headerUser };
+        UsersDto res = new UsersDto { Users = list };
 
         return Task.FromResult(res);
     }

@@ -52,19 +52,6 @@ public class BackgroundJobManager : IHostedService
     {
         lock (_lock)
         {
-            _logger?.LogInformation(
-                "Loaded {Count} jobs from configuration.",
-                config.BackgroundJobs.Count
-            );
-            foreach (var job in config.BackgroundJobs)
-            {
-                _logger?.LogInformation(
-                    "Job config: {JobName}, Active={IsActive}",
-                    job.Name,
-                    job.IsActive
-                );
-            }
-
             var activeJobsFromConfig = new Dictionary<string, JobConfig>(
                 StringComparer.OrdinalIgnoreCase
             );

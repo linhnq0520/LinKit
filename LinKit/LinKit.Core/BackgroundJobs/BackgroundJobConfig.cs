@@ -83,17 +83,17 @@ public class JobConfig : IEquatable<JobConfig>
             return true;
         }
 
-        return Name == other.Name &&
-               IsActive == other.IsActive &&
-               ScheduleType == other.ScheduleType &&
-               TimeIntervalSeconds == other.TimeIntervalSeconds &&
-               TimeOfDay == other.TimeOfDay &&
-               DayOfWeek == other.DayOfWeek &&
-               DayOfMonth == other.DayOfMonth &&
-               RunOnStart == other.RunOnStart &&
-               MaxParallel == other.MaxParallel &&
-               AssemblyName == other.AssemblyName &&
-               EmbeddedData == other.EmbeddedData;
+        return Name == other.Name
+            && IsActive == other.IsActive
+            && ScheduleType == other.ScheduleType
+            && TimeIntervalSeconds == other.TimeIntervalSeconds
+            && TimeOfDay == other.TimeOfDay
+            && DayOfWeek == other.DayOfWeek
+            && DayOfMonth == other.DayOfMonth
+            && RunOnStart == other.RunOnStart
+            && MaxParallel == other.MaxParallel
+            && AssemblyName == other.AssemblyName
+            && EmbeddedData == other.EmbeddedData;
     }
 
     public override bool Equals(object? obj)
@@ -126,5 +126,5 @@ public enum ScheduleType
     Interval,
     Daily,
     Weekly,
-    Monthly
+    Monthly,
 }

@@ -24,7 +24,7 @@ public class CreateUser : ICommandHandler<CreateUserCommand>
     )
     {
         UserDto user = new UserDto(1, command.Name);
-        var embededData = command.EmbededData;
+        string embededData = command.EmbeddedData;
         Console.ForegroundColor = ConsoleColor.Green;
         Console.WriteLine("Executed create user");
         Console.WriteLine($"embededData == {embededData}");

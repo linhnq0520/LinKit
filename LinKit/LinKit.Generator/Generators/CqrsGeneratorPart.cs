@@ -391,11 +391,13 @@ namespace LinKit.Generated.Cqrs
 
         foreach (var handler in handlers.Where(h => h.ResponseType != "System.ValueTuple"))
         {
-            sb.AppendLine($@"
+            sb.AppendLine(
+                $@"
         private Task<{handler.ResponseType}> HandleResultRequest({handler.RequestType} request, CancellationToken cancellationToken)
         {{
             RequestHandlerDelegate<{handler.ResponseType}> next = () => _serviceProvider.GetRequiredService<{handler.HandlerInterface}>().HandleAsync(request, cancellationToken);
-");
+"
+            );
 
             #region Pipeline Logic
             var applicableContractBehaviors = availableBehaviors
@@ -443,26 +445,34 @@ namespace LinKit.Generated.Cqrs
 
         foreach (var handler in handlers.Where(h => h.ResponseType == "System.ValueTuple"))
         {
-            sb.AppendLine($@"
+            sb.AppendLine(
+                $@"
         private async Task HandleVoidRequest({handler.RequestType} request, CancellationToken cancellationToken)
         {{
             Func<Task> next = () => _serviceProvider.GetRequiredService<{handler.HandlerInterface}>().HandleAsync(request, cancellationToken);
-");
+"
+            );
 
             // === Pipeline Logic ===
             var applicableContractBehaviors = availableBehaviors
-                .Where(b => b.TargetInterface is null || handler.MarkerInterfaces.Contains(b.TargetInterface))
+                .Where(b =>
+                    b.TargetInterface is null
+                    || handler.MarkerInterfaces.Contains(b.TargetInterface)
+                )
                 .OrderBy(b => b.Order)
                 .ToList();
 
             // specific behaviors
             foreach (var specificBehaviorType in handler.SpecificBehaviors.AsEnumerable().Reverse())
             {
-                var closedBehaviorType = $"{specificBehaviorType.Split('<')[0]}<{handler.RequestType}, {handler.ResponseType}>";
+                var closedBehaviorType =
+                    $"{specificBehaviorType.Split('<')[0]}<{handler.RequestType}, {handler.ResponseType}>";
 
                 sb.AppendLine("            {");
                 sb.AppendLine("                var capturedNext = next;");
-                sb.AppendLine($"                next = async () => _serviceProvider.GetRequiredService<{closedBehaviorType}>().HandleAsync(request, async () =>");
+                sb.AppendLine(
+                    $"                next = async () => _serviceProvider.GetRequiredService<{closedBehaviorType}>().HandleAsync(request, async () =>"
+                );
                 sb.AppendLine("                {");
                 sb.AppendLine("                    await capturedNext();");
                 sb.AppendLine("                    return default;");
@@ -474,11 +484,14 @@ namespace LinKit.Generated.Cqrs
             // contract behaviors
             foreach (var behavior in applicableContractBehaviors.AsEnumerable().Reverse())
             {
-                var closedBehaviorType = $"{behavior.UnboundBehaviorType}<{handler.RequestType}, {handler.ResponseType}>";
+                var closedBehaviorType =
+                    $"{behavior.UnboundBehaviorType}<{handler.RequestType}, {handler.ResponseType}>";
 
                 sb.AppendLine("            {");
                 sb.AppendLine("                var capturedNext = next;");
-                sb.AppendLine($"                next = async () => _serviceProvider.GetRequiredService<{closedBehaviorType}>().HandleAsync(request, async () =>");
+                sb.AppendLine(
+                    $"                next = async () => _serviceProvider.GetRequiredService<{closedBehaviorType}>().HandleAsync(request, async () =>"
+                );
                 sb.AppendLine("                {");
                 sb.AppendLine("                    await capturedNext();");
                 sb.AppendLine("                    return default;");

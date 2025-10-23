@@ -138,9 +138,6 @@ Mark any `BackgroundJobCommand` that you want to be available as a background jo
 [BackgroundJob("ProcessEndOfDayReport")]
 public class ProcessEndOfDayReportCommand : BackgroundJobCommand
 {
-    // For jobs with parameters, use EmbeddedData in the config.
-    // Dependencies will be resolved from the DI container.
-    public string ReportType { get; set; }
 }
 
 [CqrsHandler]
@@ -240,7 +237,7 @@ Below is a detailed description of each property available in the job configurat
 | `DayOfWeek`           | `string`          | Used only when `ScheduleType` is `Weekly`. The day of the week to run the job. Examples: `"Monday"`, `"Tuesday"`, etc.                                                                                  |
 | `DayOfMonth`          | `int`             | Used only when `ScheduleType` is `Monthly`. The day of the month to run (1-31). **Special Value:** Use a large number (e.g., `99`) to signify the **last day** of the current month.                   |
 | `MaxParallel`         | `int`             | The maximum number of instances of this job that can run concurrently. Defaults to `1`. Useful for long-running jobs to prevent overlap.                                                              |
-| `EmbeddedData`        | `string` (JSON)   | An optional JSON string that will be deserialized onto the CQRS request object before it is handled. This allows you to parameterize jobs directly from your configuration.                               |
+| `EmbeddedData`        | `string` (JSON)   | An optional string value that is passed directly to the EmbeddedData property of your command. This can be a simple string, a JSON object, or any other format you wish to parse in your handler.      |
 
 ### 5. Mapping Kit
 

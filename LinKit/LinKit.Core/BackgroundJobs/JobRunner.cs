@@ -1,5 +1,4 @@
-﻿using System.Text.Json;
-using LinKit.Core.Cqrs;
+﻿using LinKit.Core.Cqrs;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 
@@ -46,28 +45,22 @@ public class JobRunner(JobConfig config, IServiceProvider sp)
                 scope.ServiceProvider.GetKeyedService<IBackgroundJobMapper>(
                     CurrentConfig.AssemblyName
                 );
-            JobInfo? jobInfo = backgroundJobMapper?.GetJobInfoByName(CurrentConfig.Name);
-            if (jobInfo == null)
+
+            var executor = backgroundJobMapper?.GetExecutor(
+                CurrentConfig.Name,
+                CurrentConfig.EmbeddedData
+            );
+            if (executor == null)
             {
-                _logger?.LogWarning("Job info not found for job: {Job}", CurrentConfig.Name);
+                _logger?.LogWarning("Job executor not found for job: {Job}", CurrentConfig.Name);
                 return;
             }
-            BackgroundJobCommand instance = (BackgroundJobCommand)jobInfo.Instance!;
-            if (!string.IsNullOrWhiteSpace(CurrentConfig.EmbeddedData))
-            {
-                instance.EmbededData = CurrentConfig.EmbeddedData;
-            }
+
             IMediator mediator = scope.ServiceProvider.GetRequiredKeyedService<IMediator>(
                 CurrentConfig.AssemblyName
             );
-            if (jobInfo.Executor is null)
-            {
-                _logger?.LogWarning("Job {Job} Executor is null", CurrentConfig.Name);
-            }
-            else
-            {
-                await jobInfo.Executor(mediator, jobInfo.Instance!, _cts.Token);
-            }
+            await executor(mediator, _cts.Token);
+
             _logger?.LogDebug("Finished job instance for [{Job}].", CurrentConfig.Name);
         }
         catch (Exception ex)
@@ -76,7 +69,7 @@ public class JobRunner(JobConfig config, IServiceProvider sp)
         }
         finally
         {
-            _parallelLimiter?.Release(); // Đảm bảo release semaphore
+            _parallelLimiter?.Release();
         }
     }
 
@@ -89,7 +82,6 @@ public class JobRunner(JobConfig config, IServiceProvider sp)
         );
         _parallelLimiter = new SemaphoreSlim(CurrentConfig.MaxParallel);
 
-        // --- Logic RunOnStart mới ---
         if (CurrentConfig.RunOnStart)
         {
             _logger?.LogInformation(
@@ -98,9 +90,8 @@ public class JobRunner(JobConfig config, IServiceProvider sp)
             );
             try
             {
-                await _parallelLimiter.WaitAsync(_cts.Token); // Lấy một slot
-                _ = Task.Run(ExecuteJobLogicAsync, _cts.Token); // Chạy job
-                // Không đợi tác vụ hoàn thành, chỉ chạy và tiếp tục
+                await _parallelLimiter.WaitAsync(_cts.Token);
+                _ = Task.Run(ExecuteJobLogicAsync, _cts.Token);
             }
             catch (OperationCanceledException) { }
             catch (Exception ex)
@@ -112,7 +103,6 @@ public class JobRunner(JobConfig config, IServiceProvider sp)
                 );
             }
         }
-        // --- Kết thúc Logic RunOnStart mới ---
 
         while (!_cts.Token.IsCancellationRequested)
         {
@@ -121,7 +111,10 @@ public class JobRunner(JobConfig config, IServiceProvider sp)
                 TimeSpan delay = Scheduler.GetNextDelay(CurrentConfig);
 
                 if (delay.TotalMilliseconds < 0)
+                {
                     delay = TimeSpan.Zero;
+                }
+
                 if (delay > TimeSpan.FromDays(40))
                 {
                     _logger?.LogWarning(
@@ -145,12 +138,14 @@ public class JobRunner(JobConfig config, IServiceProvider sp)
             }
 
             if (_cts.Token.IsCancellationRequested)
+            {
                 break;
+            }
 
             try
             {
                 await _parallelLimiter.WaitAsync(_cts.Token);
-                _ = Task.Run(ExecuteJobLogicAsync, _cts.Token); // Chạy job
+                _ = Task.Run(ExecuteJobLogicAsync, _cts.Token);
             }
             catch (OperationCanceledException)
             {

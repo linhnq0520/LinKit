@@ -1,6 +1,10 @@
-﻿namespace LinKit.Core.BackgroundJobs;
+﻿using LinKit.Core.Cqrs;
+
+namespace LinKit.Core.BackgroundJobs;
 
 public interface IBackgroundJobMapper
 {
-    public JobInfo GetJobInfoByName(string jobName);
+    JobInfo GetJobInfoByName(string jobName);
+
+    Func<IMediator, CancellationToken, Task>? GetExecutor(string jobName, string embededData);
 }

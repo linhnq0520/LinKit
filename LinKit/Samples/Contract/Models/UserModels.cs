@@ -30,6 +30,8 @@ public partial class UpdateUser : ICommand
     public string UserName { get; set; }
     public string? Name { get; set; }
     public ExtraInfo ExtraInfo { get; set; }
+    public Model1 Model { get; set; }
+    public List<Model1> Models { get; set; }
 }
 
 public class ExtraInfo
@@ -45,6 +47,20 @@ public partial class UserModel
     public string? Name { get; set; }
 
     public string ExtraInfo { get; set; }
+    public Model2 Model { get; set; }
+    public List<Model2> Models { get; set; }
+}
+
+public class Model1
+{
+    public int Id { get; set; }
+    public string Prop1 { get; set; }
+}
+
+public class Model2
+{
+    public int Id { get; set; }
+    public string Prop1 { get; set; }
 }
 
 public static class Utils

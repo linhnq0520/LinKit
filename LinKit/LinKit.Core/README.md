@@ -241,36 +241,88 @@ Below is a detailed description of each property available in the job configurat
 
 ### 5. Mapping Kit
 
-A reflection-free, source-generated object mapper.
+A high-performance, reflection-free, source-generated object mapper. The Mapping Kit provides a fluent and type-safe API to configure mappings, which are then transformed into highly optimized, direct-assignment code at compile time.
 
-- **Create Mapper Context:** `[MapperContext]` partial class implementing `IMappingConfigurator`.
-- **Configure Mappings:** Use `builder.CreateMap<TSrc, TDest>()` and `.ForMember(...)`.
-- **No DI Required:** Just use the generated extension methods.
+- **Type-Safe API:** Uses lambda expressions (`dest => dest.Property`) to eliminate magic strings and catch errors at compile time.
+- **Fluent Configuration:** Chain `.ForMember()` calls to create readable and maintainable mapping rules.
+- **Convention-Based:** Automatically maps properties with matching names or `[JsonPropertyName]` attributes.
+- **No DI Required:** Generates extension methods (`.ToUserDto()`) that can be used anywhere.
+
+#### Usage
+
+**Step 1: Create a Mapper Context**
+
+Create a `partial` class marked with the `[MapperContext]` attribute. This class will contain your mapping configurations.
 
 ```csharp
+using LinKit.Core.Mapping;
+using YourApp.Models.Entities;
+using YourApp.Models.Dtos;
+
 [MapperContext]
-public partial class AppMapperContext : IMappingConfigurator
+public partial class ApplicationMapperContext : IMappingConfigurator
 {
-    public void Configure(IMappingBuilder builder)
+    public void Configure(IMapperConfigurationBuilder builder)
     {
+        // Define all your application's mappings here
         builder.CreateMap<User, UserDto>()
-            .ForMember(dest => dest.Name, src => src.UserName);
+            // Examples of detailed configuration below
+            ;
+
+        builder.CreateMap<Order, OrderSummaryDto>();
     }
 }
-````
-
-**Usage:**
-
-```csharp
-var dto = userEntity.ToUserDto();
-var dtos = userEntities.ToUserDtoList();
 ```
 
-**Mapping Conventions:**
+**Step 2: Configure Mappings with the Fluent API**
 
-1. Explicit `.ForMember()` config
-2. Name matching (case-insensitive)
-3. `[JsonPropertyName]`/`[JsonProperty]` attribute matching
+Use the `CreateMap<TSource, TDestination>()` method and chain `.ForMember()` calls to define custom mapping rules.
+
+```csharp
+// Inside the Configure method from Step 1
+
+builder.CreateMap<User, UserDto>()
+    // 1. Map from a differently named property (type-safe)
+    .ForMember(dest => dest.FullName, opt => opt.MapFrom(src => src.UserName))
+    
+    // 2. Ignore a property
+    .ForMember(dest => dest.PasswordHash, opt => opt.Ignore())
+    
+    // 3. Perform complex transformations
+    .ForMember(dest => dest.Initials, opt => opt.MapFrom(src => $"{src.FirstName[0]}{src.LastName[0]}"))
+    
+    // 4. Use a custom converter method (e.g., from a static helper class)
+    .ForMember(
+        dest => dest.AddressString, 
+        opt => opt.ConvertWith(
+            typeof(AddressFormatter), 
+            nameof(AddressFormatter.Format), 
+            src => src.Address
+        )
+    );
+```
+
+**Step 3: Use the Generated Extension Methods**
+
+The source generator automatically creates `.To...()` and `.To...List()` extension methods. Just use them directly on your objects.
+
+```csharp
+// Assuming 'user' is an instance of the User entity
+var userDto = user.ToUserDto();
+
+// For collections
+// Assuming 'users' is an IEnumerable<User>
+var dtoList = users.ToUserDtoList();
+```
+
+#### Mapping Conventions (Order of Precedence)
+
+The mapper automatically maps properties that are not explicitly configured. It follows these rules in order:
+
+1.  **Explicit Configuration:** Rules defined with `.ForMember()` are always applied first.
+2.  **`[JsonPropertyName]` / `[JsonProperty]` Matching:** If a destination property has a `[JsonPropertyName]` or `[JsonProperty]` attribute, the mapper looks for a source property with the same attribute and name. This is useful for mapping between C# naming conventions and JSON/API conventions (e.g., `FullName` to `full_name`).
+3.  **Name Matching:** If no attribute match is found, the mapper maps properties with the same name (case-insensitive). This includes nested objects and collections of the same type.
+4.  **Nested Object Mapping:** If a property is a complex type (e.g., `Address`), and a map has been defined for it (`CreateMap<Address, AddressDto>()`), the mapper will automatically generate the call to `.ToAddressDto()`.
 
 ---
 

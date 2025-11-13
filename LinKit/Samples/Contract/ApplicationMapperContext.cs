@@ -8,14 +8,18 @@ public partial class ApplicationMapperContext : IMappingConfigurator
 {
     public void Configure(IMapperConfigurationBuilder builder)
     {
-        builder
-            .CreateMap<UpdateUser, UserModel>() // Rule #2
+        builder.CreateMap<UpdateUser, UserModel>()
+            .ForMember(dest => dest.Name, opt => opt.Ignore())
+            .ForMember(dest => dest.Name, opt => opt.MapFrom(src => src.UserName + " " + src.UserName))
             .ForMember(
-                "ExtraInfo",
-                typeof(Utils),
-                "SerializeExtraInfo",
-                nameof(UpdateUser.ExtraInfo)
+                dest => dest.ExtraInfo,
+                opt => opt.ConvertWith(
+                    typeof(Utils),
+                    nameof(Utils.SerializeExtraInfo),
+                    src => src.ExtraInfo
+                )
             );
-        //.ForMember(nameof(UserModel.Id), MappingRules.Ignore);
+
+        builder.CreateMap<Model1, Model2>();
     }
 }

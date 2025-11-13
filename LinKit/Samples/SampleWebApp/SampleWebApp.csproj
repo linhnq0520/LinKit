@@ -9,8 +9,8 @@
     <LangVersion>preview</LangVersion>
   </PropertyGroup>
   <ItemGroup>
-    <!--<ProjectReference Include="..\..\LinKit.Core\LinKit.Core.csproj" />-->
-    <!--<ProjectReference Include="..\..\LinKit.Generator\LinKit.Generator.csproj" OutputItemType="Analyzer" ReferenceOutputAssembly="false" />-->
+    <ProjectReference Include="..\..\LinKit.Core\LinKit.Core.csproj" />
+    <ProjectReference Include="..\..\LinKit.Generator\LinKit.Generator.csproj" OutputItemType="Analyzer" ReferenceOutputAssembly="false" />
     <!--<ProjectReference Include="..\..\LinKit.Messaging.RabbitMQ\LinKit.Messaging.RabbitMQ.csproj" />-->
     <ProjectReference Include="..\Contract\Contract.csproj" />
     <!--<ProjectReference Include="..\..\LinKit.Grpc.Generator\LinKit.Grpc.Generator.csproj" OutputItemType="Analyzer" ReferenceOutputAssembly="false" />
@@ -22,6 +22,6 @@
   </ItemGroup>
   <ItemGroup>
     <PackageReference Include="Grpc.AspNetCore" Version="2.71.0" />
-    <PackageReference Include="LinKit.Core" Version="1.2.5" />
+    <!--<PackageReference Include="LinKit.Core" Version="1.2.5" />-->
   </ItemGroup>
 </Project>

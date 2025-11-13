@@ -22,7 +22,7 @@ public class JobConfig : IEquatable<JobConfig>
     /// (Dùng cho ScheduleType.Interval)
     /// Khoảng thời gian giữa các lần chạy, tính bằng giây.
     /// </summary>
-    public int TimeIntervalSeconds { get; set; } = 60;
+    public double TimeIntervalSeconds { get; set; } = 60;
 
     /// <summary>
     /// (Dùng cho ScheduleType.Daily, Weekly, Monthly)

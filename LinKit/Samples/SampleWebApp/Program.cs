@@ -1,4 +1,5 @@
 using LinKit.Core.Endpoints;
+using SampleWebApp;
 
 WebApplicationBuilder builder = WebApplication.CreateBuilder(args);
 

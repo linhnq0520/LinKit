@@ -9,7 +9,7 @@ namespace SampleWebApp.Features.Users;
 
 [ApiEndpoint(ApiMethod.Get, "get-user/{id}")]
 [GrpcEndpoint(typeof(UserGrpcService.UserGrpcServiceBase), "GetUser")]
-public record GetUserQuery : IQuery<UserDto>, IValidator, IAuditable
+public record GetUserQuery : IQuery<UserDto>, IValidator
 {
     public GetUserQuery() { }
 
@@ -25,7 +25,7 @@ public record GetUserQuery : IQuery<UserDto>, IValidator, IAuditable
 
 [ApiEndpoint(ApiMethod.Get, "get-users")]
 [GrpcEndpoint(typeof(UserGrpcService.UserGrpcServiceBase), "GetUsers")]
-public record GetUsersQuery : IQuery<UsersDto>, IValidator, IAuditable { };
+public record GetUsersQuery : IQuery<UsersDto>, IValidator { };
 
 [CqrsHandler]
 public class GetUserQueryHandler : IQueryHandler<GetUserQuery, UserDto>

@@ -10,15 +10,33 @@ public class DefaultGrpcChannelProvider(string baseAddress) : IGrpcChannelProvid
     private readonly string _baseAddress = baseAddress;
 
     public GrpcChannel GetChannelFor<TClient>()
-        where TClient : ClientBase =>
-        _channels.GetOrAdd(typeof(TClient), _ => GrpcChannel.ForAddress(_baseAddress));
+        where TClient : ClientBase
+    {
+        var clientType = typeof(TClient);
+
+        return _channels.AddOrUpdate(
+            clientType,
+            (type) => GrpcChannel.ForAddress(_baseAddress),
+            (type, existingChannel) =>
+            {
+                if (existingChannel.State == ConnectivityState.Shutdown)
+                {
+                    existingChannel.Dispose();
+                    return GrpcChannel.ForAddress(_baseAddress);
+                }
+
+                return existingChannel;
+            }
+        );
+    }
 
     public void Dispose()
     {
         foreach (var channel in _channels.Values)
         {
-            channel.Dispose();
+            channel?.Dispose();
         }
+        _channels.Clear();
         GC.SuppressFinalize(this);
     }
 }

@@ -4,10 +4,10 @@ using SampleWebApp.Contracts.Behaviors;
 
 namespace SampleWebApp.Behaviors;
 
-[CqrsBehavior(typeof(IValidator), -10)]
+[CqrsBehavior(typeof(IValidator), 1)]
 public class ValidationBehavior<TRequest, TResponse>(IServiceProvider serviceProvider)
     : IPipelineBehavior<TRequest, TResponse>
-    where TRequest : IQuery<TResponse>, IValidator
+    where TRequest : IQuery<TResponse>
 {
     private readonly IServiceProvider _serviceProvider = serviceProvider;
 

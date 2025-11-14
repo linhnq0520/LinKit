@@ -13,8 +13,8 @@
     <ProjectReference Include="..\..\LinKit.Generator\LinKit.Generator.csproj" OutputItemType="Analyzer" ReferenceOutputAssembly="false" />
     <!--<ProjectReference Include="..\..\LinKit.Messaging.RabbitMQ\LinKit.Messaging.RabbitMQ.csproj" />-->
     <ProjectReference Include="..\Contract\Contract.csproj" />
-    <!--<ProjectReference Include="..\..\LinKit.Grpc.Generator\LinKit.Grpc.Generator.csproj" OutputItemType="Analyzer" ReferenceOutputAssembly="false" />
-    <ProjectReference Include="..\..\LinKit.Grpc\LinKit.Grpc.csproj" />-->
+    <ProjectReference Include="..\..\LinKit.Grpc.Generator\LinKit.Grpc.Generator.csproj" OutputItemType="Analyzer" ReferenceOutputAssembly="false" />
+    <ProjectReference Include="..\..\LinKit.Grpc\LinKit.Grpc.csproj" />
   </ItemGroup>
   <ItemGroup>
     <!-- Giữ lại rd.xml vì nó vẫn là chỉ thị quan trọng cho runtime -->
@@ -22,6 +22,7 @@
   </ItemGroup>
   <ItemGroup>
     <PackageReference Include="Grpc.AspNetCore" Version="2.71.0" />
+    <PackageReference Include="Swashbuckle.AspNetCore" Version="8.0.0" />
     <!--<PackageReference Include="LinKit.Core" Version="1.2.5" />-->
   </ItemGroup>
 </Project>

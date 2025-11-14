@@ -4,16 +4,15 @@ namespace LinKit.Grpc;
 
 public interface IGrpcMediator
 {
-    Task SendAsync<TCommand>(TCommand command, CancellationToken cancellationToken = default)
-        where TCommand : ICommand;
-    Task<TResult> SendAsync<TCommand, TResult>(
-        TCommand command,
+    Task SendAsync(ICommand command, CancellationToken cancellationToken = default);
+
+    Task<TResponse> SendAsync<TResponse>(
+        ICommand<TResponse> command,
         CancellationToken cancellationToken = default
-    )
-        where TCommand : ICommand<TResult>;
-    Task<TResult> QueryAsync<TQuery, TResult>(
-        TQuery query,
+    );
+
+    Task<TResponse> QueryAsync<TResponse>(
+        IQuery<TResponse> query,
         CancellationToken cancellationToken = default
-    )
-        where TQuery : IQuery<TResult>;
+    );
 }

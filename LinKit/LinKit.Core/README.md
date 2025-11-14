@@ -48,31 +48,347 @@ dotnet add package LinKit.Messaging.RabbitMQ
 
 ### 1. CQRS Kit
 
-A source-generated Mediator for the CQRS pattern.
+A high-performance, source-generated Mediator for implementing the CQRS (Command Query Responsibility Segregation) pattern with zero reflection.
 
-- **Define Requests:** Implement `ICommand`, `ICommand<TResult>`, or `IQuery<TResult>`.
-- **Create Handlers:** Implement the handler and mark with `[CqrsHandler]`.
-- **Register:** `builder.Services.AddLinKitCqrs();`
+The LinKit CQRS Kit provides a clean, type-safe API for sending commands and queries. The source generator analyzes your request and handler classes, then creates a highly optimized `Mediator` implementation that wires everything together at compile time. This approach guarantees the best possible runtime performance and is fully compatible with NativeAOT.
+
+#### Core Concepts
+
+LinKit defines a clear set of interfaces for your requests:
+
+-   `ICommand`: Represents an operation that changes the state of the system but does not return a value (a "fire-and-forget" action).
+-   `ICommand<TResponse>`: Represents an operation that changes state and returns a value (e.g., creating an entity and returning its new ID).
+-   `IQuery<TResponse>`: Represents an operation that retrieves data and does not change the state of the system.
+
+#### How It Works
+
+1.  **Define Requests:** Create classes that implement one of the core request interfaces (`ICommand`, `ICommand<TResponse>`, or `IQuery<TResponse>`).
+2.  **Create Handlers:** For each request, create a handler class that implements the corresponding handler interface (`ICommandHandler` or `IQueryHandler`). Mark the handler with the `[CqrsHandler]` attribute for discovery.
+3.  **Register Services:** In your `Program.cs`, call the `builder.Services.AddLinKitCqrs()` extension method. This single call registers the generated `IMediator`, all your handlers, and any pipeline behaviors.
+4.  **Inject and Use:** Inject `IMediator` into your controllers, services, or other handlers and use its simple, intentional API to send requests.
+
+---
+
+#### Step-by-Step Usage
+
+**Step 1: Define Your Requests**
+
+Create classes for each command and query. The interface you implement determines which `IMediator` method you will use.
+
+**Example 1: A Query that returns data**
+This query will fetch a `UserDto` object.
 
 ```csharp
+// In: Features/Users/GetUserQuery.cs
 public class GetUserQuery : IQuery<UserDto>
 {
-    public int Id { get; set; }
+    public int UserId { get; set; }
 }
+```
+
+**Example 2: A Command that does not return a value**
+This command creates a new user. It implements `ICommand`, signifying a "void" operation.
+
+```csharp
+// In: Features/Users/CreateUserCommand.cs
+public class CreateUserCommand : ICommand
+{
+    public string UserName { get; set; }
+    public string Email { get; set; }
+}
+```
+
+**Example 3: A Command that returns a value**
+This command creates an order and returns the `Guid` of the newly created entity.
+
+```csharp
+// In: Features/Orders/CreateOrderCommand.cs
+public class CreateOrderCommand : ICommand<Guid>
+{
+    public Guid CustomerId { get; set; }
+    public List<OrderItemDto> Items { get; set; }
+}
+```
+
+**Step 2: Create Handlers**
+
+For each request, create a corresponding handler and mark it with `[CqrsHandler]`.
+
+**Handler for the Query:**
+
+```csharp
+// In: Features/Users/GetUserHandler.cs
+using LinKit.Core.Cqrs;
 
 [CqrsHandler]
 public class GetUserHandler : IQueryHandler<GetUserQuery, UserDto>
 {
-    public Task<UserDto> Handle(GetUserQuery query, CancellationToken cancellationToken) { ... }
+    private readonly IUserRepository _userRepository;
+
+    public GetUserHandler(IUserRepository userRepository)
+    {
+        _userRepository = userRepository;
+    }
+
+    public async Task<UserDto> HandleAsync(GetUserQuery query, CancellationToken cancellationToken)
+    {
+        var user = await _userRepository.GetByIdAsync(query.UserId);
+        // Map user entity to UserDto and return...
+        return user.ToUserDto();
+    }
 }
 ```
 
-**Usage:**
+**Handler for the "void" Command:**
+For commands that don't return a value (`ICommand`), the handler must return `Task<Unit>` and end with `return Unit.Value;`. The `Unit` type is a special struct provided by LinKit to represent a `void` result in a generic context.
 
 ```csharp
-builder.Services.AddLinKitCqrs();
-var user = await mediator.QueryAsync(new GetUserQuery { Id = 1 });
+// In: Features/Users/CreateUserHandler.cs
+using LinKit.Core.Cqrs;
+
+[CqrsHandler]
+public class CreateUserHandler : ICommandHandler<CreateUserCommand>
+{
+    private readonly AppDbContext _context;
+
+    public CreateUserHandler(AppDbContext context)
+    {
+        _context = context;
+    }
+
+    public async Task<Unit> HandleAsync(CreateUserCommand command, CancellationToken cancellationToken)
+    {
+        var user = new User { UserName = command.UserName, Email = command.Email };
+        _context.Users.Add(user);
+        await _context.SaveChangesAsync(cancellationToken);
+        
+        // Always return Unit.Value for ICommand handlers
+        return Unit.Value;
+    }
+}
 ```
+
+**Step 3: Register the CQRS Kit**
+
+In your application's entry point (`Program.cs`), add the LinKit CQRS services.
+
+```csharp
+var builder = WebApplication.CreateBuilder(args);
+
+// This extension method finds the source generator and registers
+// the generated Mediator, all handlers, and all behaviors.
+builder.Services.AddLinKitCqrs();
+
+// Add other services like DbContext, repositories, etc.
+builder.Services.AddDbContext<AppDbContext>(...);
+builder.Services.AddScoped<IUserRepository, UserRepository>();
+
+var app = builder.Build();
+```
+
+**Step 4: Use the Mediator**
+
+Inject `IMediator` and call the appropriate method based on your request type. The API is clean, explicit, and type-safe.
+
+```csharp
+using LinKit.Core.Cqrs;
+using Microsoft.AspNetCore.Mvc;
+
+[ApiController]
+[Route("api/[controller]")]
+public class UsersController : ControllerBase
+{
+    private readonly IMediator _mediator;
+
+    public UsersController(IMediator mediator)
+    {
+        _mediator = mediator;
+    }
+
+    [HttpGet("{id}")]
+    public async Task<IActionResult> GetUserById(int id)
+    {
+        var query = new GetUserQuery { UserId = id };
+        
+        // Use QueryAsync for IQuery<TResponse>
+        var userDto = await _mediator.QueryAsync(query);
+        
+        return Ok(userDto);
+    }
+
+    [HttpPost]
+    public async Task<IActionResult> CreateUser([FromBody] CreateUserCommand command)
+    {
+        // Use SendAsync for ICommand
+        await _mediator.SendAsync(command);
+
+        return Created();
+    }
+
+    [HttpPost("orders")]
+    public async Task<IActionResult> CreateOrder([FromBody] CreateOrderCommand command)
+    {
+        // Use the SendAsync<TResponse> overload for ICommand<TResponse>
+        Guid newOrderId = await _mediator.SendAsync(command);
+        
+        return CreatedAtAction(nameof(GetOrderById), new { id = newOrderId }, newOrderId);
+    }
+}
+```
+---
+
+### Advanced: Pipeline Behaviors for Cross-Cutting Concerns
+
+The true power of the Mediator pattern comes from its ability to create a pipeline of behaviors to handle cross-cutting concerns like validation, logging, caching, and transactions in a clean and reusable way. The LinKit CQRS Kit has built-in, source-generated support for a flexible and powerful behavior pipeline.
+
+There are two ways to apply behaviors in LinKit:
+
+1.  **Contract Behaviors:** Applied automatically to any request that implements a specific "marker" interface. Ideal for broad, rule-based concerns.
+2.  **Specific Behaviors:** Applied explicitly to a single request class using an attribute. Ideal for unique, ad-hoc logic.
+
+#### How to Create a Behavior
+
+A behavior is a generic class that implements the `IPipelineBehavior<TRequest, TResponse>` interface. It receives the current request and a `next` delegate. Calling `await next()` passes control to the next behavior in the pipeline, or to the final handler. This allows you to execute code **before** and **after** the core business logic runs.
+
+**Example: A Simple Logging Behavior**
+
+```csharp
+// In: Behaviors/LoggingBehavior.cs
+using LinKit.Core.Cqrs;
+
+public class LoggingBehavior<TRequest, TResponse> : IPipelineBehavior<TRequest, TResponse>
+    where TRequest : IRequest<TResponse>
+{
+    private readonly ILogger<LoggingBehavior<TRequest, TResponse>> _logger;
+
+    public LoggingBehavior(ILogger<LoggingBehavior<TRequest, TResponse>> logger)
+    {
+        _logger = logger;
+    }
+
+    public async Task<TResponse> HandleAsync(
+        TRequest request,
+        RequestHandlerDelegate<TResponse> next,
+        CancellationToken cancellationToken)
+    {
+        var requestName = typeof(TRequest).Name;
+        _logger.LogInformation("--> Handling request: {RequestName}", requestName);
+
+        // Call the next item in the pipeline
+        var response = await next();
+
+        _logger.LogInformation("<-- Finished request: {RequestName}", requestName);
+        return response;
+    }
+}
+```
+
+---
+
+#### 1. Contract Behaviors
+
+Use Contract Behaviors to apply logic to entire categories of requests.
+
+**Step 1: Create a "Marker" Interface**
+
+This is a simple, empty interface used to "tag" your requests.
+
+```csharp
+// In: Contracts/IAuditable.cs
+public interface IAuditable { }
+
+// In: Contracts/IValidatable.cs
+public interface IValidatable { }
+```
+
+**Step 2: Create a Behavior and Register it with `[CqrsBehavior]`**
+
+The `[CqrsBehavior]` attribute tells the source generator that this class is a behavior and specifies which marker interface (`TargetInterface`) it should apply to. You can also control the execution order with the `Order` property (lower numbers run first).
+
+```csharp
+// In: Behaviors/AuditBehavior.cs
+using LinKit.Core.Cqrs;
+
+// This behavior will run for any request that implements IAuditable.
+// Order = 100 means it runs after behaviors with lower order numbers.
+[CqrsBehavior(typeof(IAuditable), Order = 100)]
+public class AuditBehavior<TRequest, TResponse> : IPipelineBehavior<TRequest, TResponse>
+    where TRequest : IRequest<TResponse>, IAuditable
+{
+    // ... your auditing logic ...
+    public async Task<TResponse> HandleAsync(TRequest request, RequestHandlerDelegate<TResponse> next, CancellationToken ct)
+    {
+        // Code before handler
+        var result = await next();
+        // Code after handler
+        return result;
+    }
+}
+```
+
+**Step 3: Apply the Marker Interface to Your Requests**
+
+Simply implement the marker interface on any command or query you want the behavior to apply to.
+
+```csharp
+public class CreateUserCommand : ICommand, IAuditable, IValidatable
+{
+    public string UserName { get; set; }
+    public string Email { get; set; }
+}
+
+public class UpdateUserCommand : ICommand, IAuditable
+{
+    public int UserId { get; set; }
+    public string UserName { get; set; }
+}
+```
+
+**That's it!** No further registration is needed. The source generator will automatically detect the `[CqrsBehavior]` attribute and wire up the pipeline correctly during compilation. When you send a `CreateUserCommand`, it will pass through both the `AuditBehavior` and any `ValidationBehavior` you've defined. When you send `UpdateUserCommand`, it will only pass through the `AuditBehavior`.
+
+---
+
+#### 2. Specific Behaviors
+
+Use Specific Behaviors when you have logic that applies only to one particular request and creating a marker interface would be overkill.
+
+**Step 1: Create the Behavior (No Attribute Needed)**
+
+Create a standard `IPipelineBehavior` class. It does not need the `[CqrsBehavior]` attribute.
+
+```csharp
+// In: Behaviors/IdempotencyCheckBehavior.cs
+public class IdempotencyCheckBehavior<TRequest, TResponse> : IPipelineBehavior<TRequest, TResponse>
+    where TRequest : IRequest<TResponse>
+{
+    // ... logic to check for duplicate requests using a key ...
+    public async Task<TResponse> HandleAsync(TRequest request, RequestHandlerDelegate<TResponse> next, CancellationToken ct)
+    {
+        // Check idempotency key before calling next()
+        var result = await next();
+        return result;
+    }
+}
+```
+
+**Step 2: Apply the Behavior with `[ApplyBehavior]`**
+
+Decorate the specific command or query class directly with the `[ApplyBehavior]` attribute, passing the type of the behavior to apply.
+
+```csharp
+using LinKit.Core.Cqrs;
+
+// This specific behavior will ONLY run for the ProcessPaymentCommand.
+[ApplyBehavior(typeof(IdempotencyCheckBehavior<,>))]
+public class ProcessPaymentCommand : ICommand<PaymentResult>
+{
+    public Guid IdempotencyKey { get; set; }
+    public decimal Amount { get; set; }
+}
+```
+**Note:** When passing the behavior type to the attribute, use the unbound generic form (e.g., `typeof(MyBehavior<,>)`). The source generator will automatically fill in the correct generic arguments.
+
+The `IdempotencyCheckBehavior` will now be part of the pipeline for `ProcessPaymentCommand` but no other request in the system.
 
 ---
 
@@ -245,7 +561,7 @@ A high-performance, reflection-free, source-generated object mapper. The Mapping
 
 - **Type-Safe API:** Uses lambda expressions (`dest => dest.Property`) to eliminate magic strings and catch errors at compile time.
 - **Fluent Configuration:** Chain `.ForMember()` calls to create readable and maintainable mapping rules.
-- **Convention-Based:** Automatically maps properties with matching names or `[JsonPropertyName]` attributes.
+- **Convention-Based:** Automatically maps properties with matching names or `[JsonPropertyName]` / `[JsonProperty]` attributes.
 - **No DI Required:** Generates extension methods (`.ToUserDto()`) that can be used anywhere.
 
 #### Usage
@@ -352,43 +668,257 @@ builder.Services.AddLinKitRabbitMQ(configuration);
 
 **Consumer:**
 
-````csharp
+```csharp
 builder.Services.AddLinKitCqrs();
 builder.Services.AddLinKitMessaging();
-builder.Services.AddLinKitRabbitMQ(configuration);```
+builder.Services.AddLinKitRabbitMQ(configuration);
+```
 
 ---
 
-### 7. gRPC Kit (via LinKit.Grpc)
+### 7. gRPC Kit (via `LinKit.Grpc`)
 
-Source-generates gRPC server and client code for CQRS requests.
+The gRPC Kit transforms your existing CQRS requests into fully functional, high-performance gRPC services with minimal effort. It completely automates the tedious process of writing gRPC service implementations, including request/response mapping, error handling, and CQRS mediator invocation.
 
-**Server:**
-- `[GrpcEndpoint(typeof(MyServiceBase), "MethodName")]` on CQRS request.
-- Handler: `[CqrsHandler]`
-- Register: `builder.Services.AddLinKitGrpcServer();` and `app.MapGrpcService<LinKitMyService>();`
+-   **Zero Boilerplate:** No need to manually write gRPC service classes. Just decorate your CQRS requests.
+-   **Automatic Mapping:** Intelligently maps properties between your Protobuf-generated classes and your C# CQRS request/response DTOs.
+-   **Built-in Error Handling:** Automatically translates common exceptions (like `ValidationException`) into appropriate gRPC status codes.
+-   **Seamless Integration:** Works perfectly with the local `IMediator` to execute your existing handlers.
 
+#### How It Works
+
+The gRPC Kit consists of two parts: a **Server Generator** and a **Client Generator**.
+
+1.  **Server-Side:** You decorate a CQRS request class with the `[GrpcEndpoint]` attribute. You specify which gRPC service (from your `.proto` file) and method this request corresponds to. The source generator then creates a complete gRPC service class implementation (`LinKit...Service`) that:
+    *   Inherits from your Protobuf-generated service base class (e.g., `UserServiceBase`).
+    *   Overrides the specified method.
+    *   Receives the gRPC request, maps it to your CQRS request.
+    *   Calls the local `IMediator` to execute the corresponding handler.
+    *   Maps the CQRS response back to the gRPC response.
+    *   Handles exceptions gracefully.
+
+2.  **Client-Side:** (See next section for details) You decorate the same CQRS request with `[GrpcClient]`. This generates an `IGrpcMediator` implementation that allows you to send the CQRS request from a client application, which then makes the gRPC call transparently.
+
+---
+
+#### Server-Side Usage
+
+**Step 1: Define your `.proto` file**
+
+First, define your gRPC service and messages as you normally would.
+
+**Example `users.proto`:**
+```protobuf
+syntax = "proto3";
+
+option csharp_namespace = "MyCompany.Grpc.Contracts";
+
+package users;
+
+service UserService {
+  rpc GetUserById (GetUserByIdRequest) returns (GetUserByIdResponse);
+  rpc CreateUser (CreateUserRequest) returns (CreateUserResponse);
+}
+
+message GetUserByIdRequest {
+  int32 user_id = 1;
+}
+
+message UserDtoMessage {
+    int32 id = 1;
+    string user_name = 2;
+    string email = 3;
+}
+
+message GetUserByIdResponse {
+  UserDtoMessage user = 1;
+}
+
+message CreateUserRequest {
+    string user_name = 1;
+    string email = 2;
+}
+
+message CreateUserResponse {
+    int32 new_user_id = 1;
+}
+```
+
+**Step 2: Create Corresponding CQRS Requests and Handlers**
+
+Create your CQRS queries, commands, and handlers as usual. Ensure the properties match the fields in your `.proto` messages for automatic mapping.
+
+**The Query:**
 ```csharp
+// Features/Users/GetUserQuery.cs
+public class GetUserQuery : IQuery<UserDto> 
+{
+    // Property "UserId" will be mapped from "user_id" in the proto
+    public int UserId { get; set; } 
+}
+```
+
+**The Command:**
+```csharp
+// Features/Users/CreateUserCommand.cs
+// This command returns the new user's ID
+public class CreateUserCommand : ICommand<int>
+{
+    public string UserName { get; set; }
+    public string Email { get; set; }
+}
+```
+
+**The DTO:**
+```csharp
+// Dtos/UserDto.cs
+public class UserDto
+{
+    public int Id { get; set; }
+    public string UserName { get; set; }
+    public string Email { get; set; }
+}
+```
+
+*(You would also have `GetUserHandler` and `CreateUserHandler` marked with `[CqrsHandler]`)*
+
+**Step 3: Decorate CQRS Requests with `[GrpcEndpoint]`**
+
+This is the key step. Add the `[GrpcEndpoint]` attribute to your CQRS request classes to link them to the gRPC methods defined in your `.proto` file.
+
+**Linking the Query:**
+```csharp
+using LinKit.Grpc;
+using MyCompany.Grpc.Contracts; // Namespace from your .proto file
+
 [GrpcEndpoint(typeof(UserService.UserServiceBase), "GetUserById")]
-public class GetUserQuery : IQuery<UserDto> { ... }
-````
+public class GetUserQuery : IQuery<UserDto> 
+{
+    public int UserId { get; set; } 
+}
+```
+*   `typeof(UserService.UserServiceBase)`: The gRPC service base class generated by `protoc`.
+*   `"GetUserById"`: The exact name of the RPC method in your service.
 
-**Client:**
+**Linking the Command:**
+```csharp
+using LinKit.Grpc;
+using MyCompany.Grpc.Contracts;
 
-- `[GrpcClient(typeof(MyServiceClient), "MethodNameAsync")]` on CQRS request.
-- Register: `builder.Services.AddLinKitGrpcClient();` and `IGrpcChannelProvider`.
+[GrpcEndpoint(typeof(UserService.UserServiceBase), "CreateUser")]
+public class CreateUserCommand : ICommand<int>
+{
+    public string UserName { get; set; }
+    public string Email { get; set; }
+}
+```
+
+**Step 4: Register and Map the gRPC Service**
+
+In your server's `Program.cs`, register the necessary LinKit services and map the generated gRPC service.
 
 ```csharp
+var builder = WebApplication.CreateBuilder(args);
+
+// 1. Register standard LinKit CQRS and your handlers
+builder.Services.AddLinKitCqrs();
+
+// 2. Add gRPC core services
+builder.Services.AddGrpc();
+
+var app = builder.Build();
+
+// 3. Map the source-generated gRPC service
+//    The name is always "LinKit" + [YourServiceName]
+app.MapGrpcService<LinKitUserService>();
+
+app.Run();
+```
+
+**That's it!** You now have a fully functional gRPC service. When a client calls the `GetUserById` method, the generated `LinKitUserService` will:
+1.  Instantiate a `GetUserQuery`.
+2.  Map `GetUserByIdRequest.UserId` to `GetUserQuery.UserId`.
+3.  Call `_mediator.QueryAsync(theQuery)`.
+4.  Receive the `UserDto` from your `GetUserHandler`.
+5.  Map the `UserDto` to a `GetUserByIdResponse`.
+6.  Return the response to the client.
+
+#### Automatic Mapping Conventions
+
+LinKit automatically maps properties between your CQRS objects and Protobuf messages. It follows a simple, case-insensitive name matching rule. For Protobuf's `snake_case` convention, LinKit will correctly map `user_id` to a C# property named `UserId`.
+
+This includes:
+-   **Request Mapping:** `GrpcRequest` -> `CqrsRequest`
+-   **Response Mapping:** `CqrsResponse` -> `GrpcResponse`
+-   **Nested Lists:** It can even map collections, like a `List<ProductDto>` in C# to a `repeated ProductMessage` in Protobuf, as long as the item types have matching properties.
+
+---
+
+#### Client-Side Usage
+
+*(This section can be updated with the new `IGrpcMediator` logic once you've finalized it)*
+
+To call the gRPC service from another .NET application, you use the **Client-Side** generator.
+
+**Step 1: Decorate the SAME CQRS Request with `[GrpcClient]`**
+
+In your client project, reference the shared CQRS request classes and decorate them again, this time with `[GrpcClient]`.
+
+```csharp
+// In the Client Application project
+using LinKit.Grpc;
+using MyCompany.Grpc.Contracts;
+
 [GrpcClient(typeof(UserService.UserClient), "GetUserByIdAsync")]
-public class GetUserQuery : IQuery<UserDto> { ... }
+public class GetUserQuery : IQuery<UserDto> 
+{
+    public int UserId { get; set; } 
+}
 ```
+*   `typeof(UserService.UserClient)`: The gRPC **client** class generated by `protoc`.
+*   `"GetUserByIdAsync"`: The name of the asynchronous client method.
 
-**Usage:**
+**Step 2: Register the gRPC Client Kit**
+
+In your client's `Program.cs`, configure the `IGrpcMediator` and provide a channel to the server.
 
 ```csharp
-var user = await mediator.QueryAsync(new GetUserQuery { Id = 1 });
+var builder = WebApplication.CreateBuilder(args);
+
+// 1. Register the generated IGrpcMediator
+builder.Services.AddLinKitGrpcClient();
+
+// 2. Register a way to get the gRPC channel
+//    This is a simple example. You can implement IGrpcChannelProvider
+//    for more complex scenarios (e.g., service discovery).
+builder.Services.AddSingleton<IGrpcChannelProvider>(
+    new DefaultGrpcChannelProvider("https://localhost:7001") // Address of your gRPC server
+);
 ```
 
+**Step 3: Use `IGrpcMediator`**
+
+Inject `IGrpcMediator` and use it just like the local `IMediator`. The API is identical.
+
+```csharp
+public class MyFrontendService
+{
+    private readonly IGrpcMediator _grpcMediator;
+
+    public MyFrontendService(IGrpcMediator grpcMediator)
+    {
+        _grpcMediator = grpcMediator;
+    }
+
+    public async Task<UserDto> GetUserFromRemoteService(int id)
+    {
+        var query = new GetUserQuery { UserId = id };
+        
+        // This looks like a local call, but it's making a gRPC request!
+        return await _grpcMediator.QueryAsync(query);
+    }
+}
+```
 ---
 
 ## AOT & Trimming

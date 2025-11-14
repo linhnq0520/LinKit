@@ -8,37 +8,38 @@ namespace SampleWebApp.Features.Users;
 
 [ApiEndpoint(ApiMethod.Post, "create-user")]
 [BackgroundJob("AutoCreateUser")]
-public class CreateUserCommand : BackgroundJobCommand
+public class CreateUserCommand : BackgroundJobCommand, IAuditable, IValidator
 {
     public string Name { get; set; }
 };
 
+[ApiEndpoint(ApiMethod.Put, "update-user")]
 public record UpdateUserCommand(int Id, string Name) : ICommand, IAuditable;
 
 [CqrsHandler]
 public class CreateUser : ICommandHandler<CreateUserCommand>
 {
-    Task ICommandHandler<CreateUserCommand>.HandleAsync(
-        CreateUserCommand command,
-        CancellationToken cancellationToken
+    public Task<Unit> HandleAsync(
+        CreateUserCommand request,
+        CancellationToken cancellationToken = default
     )
     {
-        UserDto user = new UserDto(1, command.Name);
-        string embededData = command.EmbeddedData;
+        UserDto user = new UserDto(1, request.Name);
+        string embededData = request.EmbeddedData;
         Console.ForegroundColor = ConsoleColor.Green;
         Console.WriteLine("Executed create user");
         Console.WriteLine($"embededData == {embededData}");
         Console.ForegroundColor = ConsoleColor.White;
-        return Task.FromResult(user);
+        return Task.FromResult(Unit.Value);
     }
 }
 
 [CqrsHandler]
 public class UpdateUser : ICommandHandler<UpdateUserCommand>
 {
-    public Task HandleAsync(
-        UpdateUserCommand command,
-        CancellationToken cancellationToken = default
+    Task<Unit> IHandler<UpdateUserCommand, Unit>.HandleAsync(
+        UpdateUserCommand request,
+        CancellationToken cancellationToken
     )
     {
         throw new NotImplementedException();

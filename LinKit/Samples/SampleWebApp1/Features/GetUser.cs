@@ -33,7 +33,7 @@ public class GetUserQueryHandler(IGrpcMediator grpcMediator) : IQueryHandler<Get
         try
         {
             var model = query.ToGetUserById();
-            return await _grpcMediator.QueryAsync<GetUserById, UserDto>(model);
+            return await _grpcMediator.QueryAsync(model);
         }
         catch (Exception ex)
         {

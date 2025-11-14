@@ -3,9 +3,9 @@ using SampleWebApp.Contracts.Behaviors;
 
 namespace SampleWebApp.Behaviors;
 
-[CqrsBehavior(typeof(IAuditable), -10)]
+[CqrsBehavior(typeof(IAuditable), 2)]
 public class AuditBehavior<TRequest, TResponse> : IPipelineBehavior<TRequest, TResponse>
-    where TRequest : IAuditable
+    where TRequest : IRequest<TResponse>, IAuditable
 {
     public async Task<TResponse> HandleAsync(
         TRequest request,

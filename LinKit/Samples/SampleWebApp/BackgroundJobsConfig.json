@@ -4,7 +4,7 @@
       {
         "Name": "AutoCreateUser",
         "IsActive": true,
-        "TimeIntervalSeconds": 0.5,
+        "TimeIntervalSeconds": 5,
         "RunOnStart": true,
         "AssemblyName": "SampleWebApp",
         "EmbeddedData": "hello Linh nè"

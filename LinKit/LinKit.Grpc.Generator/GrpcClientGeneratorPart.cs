@@ -199,7 +199,7 @@ internal static class GrpcClientGeneratorPart
         }
         else
         {
-            cqrsResponseType = "System.ValueTuple";
+            cqrsResponseType = "LinKit.Core.Cqrs.Unit";
             isVoidCommand = true;
         }
 
@@ -304,19 +304,12 @@ internal static class GrpcClientGeneratorPart
 using Grpc.Core;
 using Grpc.Net.Client;
 using LinKit.Core.Cqrs;
-using LinKit.Core.Abstractions;
 using LinKit.Grpc;
-using Microsoft.Extensions.DependencyInjection;
-using System;
 using System.Threading;
 using System.Threading.Tasks;
 using Grpc.Core.Interceptors;
 "
         );
-
-        var queries = endpoints.Where(e => e.IsCqrsQuery).ToList();
-        var commandsWithResult = endpoints.Where(e => !e.IsCqrsQuery && !e.IsVoidCommand).ToList();
-        var voidCommands = endpoints.Where(e => e.IsVoidCommand).ToList();
 
         sb.AppendLine(
             @"
@@ -333,104 +326,104 @@ namespace LinKit.Generated.Grpc
 "
         );
 
-        // SendAsync void commands
+        var voidCommands = endpoints.Where(e => e.IsVoidCommand).ToList();
         sb.AppendLine(
-            @"        public Task SendAsync<TCommand>(TCommand command, CancellationToken cancellationToken = default) where TCommand : ICommand
-        {"
+            @"
+        public Task SendAsync(ICommand command, CancellationToken cancellationToken = default)
+        {
+            return (object)command switch
+            {"
         );
-        if (voidCommands.Any())
-        {
-            sb.AppendLine("            return command switch {");
-            foreach (var cmd in voidCommands)
-            {
-                sb.AppendLine(
-                    $"                {cmd.CqrsRequestType} c => (Task)Handle{cmd.GrpcMethodName}(c, cancellationToken),"
-                );
-            }
-            sb.AppendLine(
-                "                _ => throw new InvalidOperationException($\"No gRPC client endpoint is configured for command type {typeof(TCommand).FullName}.\")"
-            );
-            sb.AppendLine("            };");
-        }
-        else
+        foreach (var cmd in voidCommands)
         {
             sb.AppendLine(
-                "            throw new InvalidOperationException(\"No void-returning gRPC client commands are configured.\");"
+                $"                {cmd.CqrsRequestType} c => Handle{cmd.GrpcMethodName}AsVoid(c, cancellationToken),"
             );
         }
+        sb.AppendLine(
+            "                _ => throw new System.InvalidOperationException($\"No gRPC client endpoint is configured for command type {command.GetType().FullName}.\")"
+        );
+        sb.AppendLine("            };");
         sb.AppendLine("        }");
 
-        // SendAsync with result
+        var commandsWithResult = endpoints.Where(e => !e.IsCqrsQuery && !e.IsVoidCommand).ToList();
         sb.AppendLine(
-            @"        public Task<TResult> SendAsync<TCommand, TResult>(TCommand command, CancellationToken cancellationToken = default) where TCommand : ICommand<TResult>
-        {"
+            @"
+        public Task<TResponse> SendAsync<TResponse>(ICommand<TResponse> command, CancellationToken cancellationToken = default)
+        {
+            return (object)command switch
+            {"
         );
-        if (commandsWithResult.Any())
-        {
-            sb.AppendLine("            return command switch {");
-            foreach (var cmd in commandsWithResult)
-            {
-                sb.AppendLine(
-                    $"                {cmd.CqrsRequestType} c => (Task<TResult>)(object)Handle{cmd.GrpcMethodName}(c, cancellationToken),"
-                );
-            }
-            sb.AppendLine(
-                "                _ => throw new InvalidOperationException($\"No result-returning gRPC client command is configured for type {typeof(TCommand).FullName}.\")"
-            );
-            sb.AppendLine("            };");
-        }
-        else
+        foreach (var cmd in commandsWithResult)
         {
             sb.AppendLine(
-                "            throw new InvalidOperationException(\"No result-returning gRPC client commands are configured.\");"
+                $"                {cmd.CqrsRequestType} c => (Task<TResponse>)(object)Handle{cmd.GrpcMethodName}(c, cancellationToken),"
             );
         }
+        sb.AppendLine(
+            "                _ => throw new System.InvalidOperationException($\"No result-returning gRPC client command is configured for type {command.GetType().FullName}.\")"
+        );
+        sb.AppendLine("            };");
         sb.AppendLine("        }");
 
-        // QueryAsync
+        var queries = endpoints.Where(e => e.IsCqrsQuery).ToList();
         sb.AppendLine(
-            @"        public Task<TResult> QueryAsync<TQuery, TResult>(TQuery query, CancellationToken cancellationToken = default) where TQuery : IQuery<TResult>
-        {"
+            @"
+        public Task<TResponse> QueryAsync<TResponse>(IQuery<TResponse> query, CancellationToken cancellationToken = default)
+        {
+            return (object)query switch
+            {"
         );
-        if (queries.Any())
-        {
-            sb.AppendLine("            return query switch {");
-            foreach (var q in queries)
-            {
-                sb.AppendLine(
-                    $"                {q.CqrsRequestType} q => (Task<TResult>)(object)Handle{q.GrpcMethodName}(q, cancellationToken),"
-                );
-            }
-            sb.AppendLine(
-                "                _ => throw new InvalidOperationException($\"No gRPC client query is configured for type {typeof(TQuery).FullName}.\")"
-            );
-            sb.AppendLine("            };");
-        }
-        else
+        foreach (var q in queries)
         {
             sb.AppendLine(
-                "            throw new InvalidOperationException(\"No gRPC client queries are configured.\");"
+                $"                {q.CqrsRequestType} q => (Task<TResponse>)(object)Handle{q.GrpcMethodName}(q, cancellationToken),"
             );
         }
+        sb.AppendLine(
+            "                _ => throw new System.InvalidOperationException($\"No gRPC client query is configured for type {query.GetType().FullName}.\")"
+        );
+        sb.AppendLine("            };");
         sb.AppendLine("        }");
 
-        // Generate handlers
         foreach (var endpoint in endpoints)
         {
-            var requestMappings = endpoint.RequestPropertyMaps.Any()
-                ? $" {{ {string.Join(", ", endpoint.RequestPropertyMaps.Select(m => $"{m.DestProperty} = request.{m.SourceProperty}"))} }}"
-                : "";
+            string requestMappings;
+            if (endpoint.RequestPropertyMaps.Any())
+            {
+                var assignments = string.Join(
+                    ", ",
+                    endpoint.RequestPropertyMaps.Select(m =>
+                        $"{m.DestProperty} = request.{m.SourceProperty}"
+                    )
+                );
+                requestMappings = $" {{ {assignments} }}";
+            }
+            else
+            {
+                requestMappings = "";
+            }
 
             string responseInitialization;
             if (endpoint.ResponseConstructorParameters.Any())
             {
-                responseInitialization =
-                    $"({string.Join(", ", endpoint.ResponseConstructorParameters.Select(p => $"grpcResponse.{p.SourceProperty}"))})";
+                var constructorArgs = string.Join(
+                    ", ",
+                    endpoint.ResponseConstructorParameters.Select(p =>
+                        $"grpcResponse.{p.SourceProperty}"
+                    )
+                );
+                responseInitialization = $"({constructorArgs})";
             }
             else if (endpoint.ResponsePropertyMaps.Any())
             {
-                responseInitialization =
-                    $" {{ {string.Join(", ", endpoint.ResponsePropertyMaps.Select(m => $"{m.DestProperty} = grpcResponse.{m.SourceProperty}"))} }}";
+                var assignments = string.Join(
+                    ", ",
+                    endpoint.ResponsePropertyMaps.Select(m =>
+                        $"{m.DestProperty} = grpcResponse.{m.SourceProperty}"
+                    )
+                );
+                responseInitialization = $" {{ {assignments} }}";
             }
             else
             {
@@ -443,7 +436,12 @@ namespace LinKit.Generated.Grpc
         {{
             var channel = _factory.GetChannelFor<{endpoint.GrpcClientType}>();
             var interceptors = _factory.GetInterceptorsFor<{endpoint.GrpcClientType}>();
-            var client = new {endpoint.GrpcClientType}(channel.Intercept(interceptors));
+            var invoker = channel.CreateCallInvoker();
+            if(interceptors.Length > 0)
+            {{
+                invoker = invoker.Intercept(interceptors);
+            }}
+            var client = new {endpoint.GrpcClientType}(invoker);
 
             var grpcRequest = new {endpoint.GrpcRequestType}{requestMappings};
 
@@ -453,21 +451,35 @@ namespace LinKit.Generated.Grpc
             var grpcResponse = await client.{endpoint.GrpcMethodName}(grpcRequest, callOptions);
 "
             );
+
             if (!endpoint.IsVoidCommand)
             {
                 sb.AppendLine(
-                    $@"
+                    @"
             if (grpcResponse == null)
-                throw new RpcException(new Status(StatusCode.NotFound, ""Response data not found.""));
-
-            return new {endpoint.CqrsResponseType.TrimEnd('?')}{responseInitialization};"
+                throw new RpcException(new Status(StatusCode.NotFound, ""gRPC call returned a null response.""));
+"
+                );
+                sb.AppendLine(
+                    $"            return new {endpoint.CqrsResponseType.TrimEnd('?')}{responseInitialization};"
                 );
             }
             else
             {
-                sb.AppendLine("            return default;");
+                sb.AppendLine("            return LinKit.Core.Cqrs.Unit.Value;");
             }
             sb.AppendLine("        }");
+
+            if (endpoint.IsVoidCommand)
+            {
+                sb.AppendLine(
+                    $@"
+        private async Task Handle{endpoint.GrpcMethodName}AsVoid({endpoint.CqrsRequestType} request, CancellationToken cancellationToken)
+        {{
+            await Handle{endpoint.GrpcMethodName}(request, cancellationToken);
+        }}"
+                );
+            }
         }
 
         sb.AppendLine(

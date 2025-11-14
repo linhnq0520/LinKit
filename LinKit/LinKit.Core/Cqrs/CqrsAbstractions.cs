@@ -1,32 +1,40 @@
 ﻿namespace LinKit.Core.Cqrs;
 
-public interface ICommand { }
+public interface IRequest { }
 
-public interface ICommand<TResult> : ICommand { }
+public interface IRequest<out TResponse> : IRequest { }
 
-public interface IQuery<TResult> { }
+public interface ICommand : IRequest<Unit> { }
 
-public interface ICommandHandler<in TCommand>
-    where TCommand : ICommand
+public interface ICommand<out TResponse> : IRequest<TResponse> { }
+
+public interface IQuery<out TResponse> : IRequest<TResponse> { }
+
+public readonly struct Unit
 {
-    Task HandleAsync(TCommand command, CancellationToken cancellationToken = default);
+    public static readonly Unit Value = new();
 }
 
-public interface ICommandHandler<in TCommand, TResult>
-    where TCommand : ICommand<TResult>
+/// <summary>
+public interface IHandler<in TRequest, TResponse>
+    where TRequest : IRequest<TResponse>
 {
-    Task<TResult> HandleAsync(TCommand command, CancellationToken cancellationToken = default);
+    Task<TResponse> HandleAsync(TRequest request, CancellationToken cancellationToken = default);
 }
 
-public interface IQueryHandler<in TQuery, TResult>
-    where TQuery : IQuery<TResult>
-{
-    Task<TResult> HandleAsync(TQuery query, CancellationToken cancellationToken = default);
-}
+public interface ICommandHandler<in TCommand> : IHandler<TCommand, Unit>
+    where TCommand : ICommand { }
+
+public interface ICommandHandler<in TCommand, TResponse> : IHandler<TCommand, TResponse>
+    where TCommand : ICommand<TResponse> { }
+
+public interface IQueryHandler<in TQuery, TResponse> : IHandler<TQuery, TResponse>
+    where TQuery : IQuery<TResponse> { }
 
 public delegate Task<TResponse> RequestHandlerDelegate<TResponse>();
 
 public interface IPipelineBehavior<in TRequest, TResponse>
+    where TRequest : IRequest<TResponse>
 {
     Task<TResponse> HandleAsync(
         TRequest request,

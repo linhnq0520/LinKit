@@ -458,7 +458,7 @@ internal static class GrpcGeneratorPart
                 sb.AppendLine(
                     endpoint.IsCommandWithoutResult
                         ? $"                await _mediator.SendAsync(cqrsRequest, context.CancellationToken);"
-                        : $"                var cqrsResult = await _mediator.{mediatorMethod}<{endpoint.CqrsRequestType}, {endpoint.CqrsResponseType.TrimEnd('?')}>(cqrsRequest, context.CancellationToken);"
+                        : $"                var cqrsResult = await _mediator.{mediatorMethod}<{endpoint.CqrsResponseType.TrimEnd('?')}>(cqrsRequest, context.CancellationToken);"
                 );
                 if (cqrsResponseIsNullable)
                 {

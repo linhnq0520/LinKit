@@ -10,3 +10,6 @@ public sealed class FromQueryAttribute : Attribute { }
 
 [AttributeUsage(AttributeTargets.Property)]
 public sealed class FromHeaderAttribute : Attribute { }
+
+[AttributeUsage(AttributeTargets.Property)]
+public sealed class FromBodyAttribute : Attribute { }

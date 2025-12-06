@@ -3,12 +3,11 @@ using LinKit.Core.Cqrs;
 using LinKit.Core.Endpoints;
 using LinKit.Grpc;
 using SampleWebApp.Contracts.Behaviors;
-using SampleWebApp.Grpc.Users;
 
 namespace SampleWebApp.Features.Users;
 
-[ApiEndpoint(ApiMethod.Get, "get-user/{id}")]
-[GrpcEndpoint(typeof(UserGrpcService.UserGrpcServiceBase), "GetUser")]
+//[ApiEndpoint(ApiMethod.Get, "get-user/{id}")]
+//[GrpcEndpoint(typeof(UserGrpcService.UserGrpcServiceBase), "GetUser")]
 public record GetUserQuery : IQuery<UserDto>, IValidator
 {
     public GetUserQuery() { }
@@ -23,8 +22,8 @@ public record GetUserQuery : IQuery<UserDto>, IValidator
     public int Id { get; set; }
 };
 
-[ApiEndpoint(ApiMethod.Get, "get-users")]
-[GrpcEndpoint(typeof(UserGrpcService.UserGrpcServiceBase), "GetUsers")]
+//[ApiEndpoint(ApiMethod.Get, "get-users")]
+//[GrpcEndpoint(typeof(UserGrpcService.UserGrpcServiceBase), "GetUsers")]
 public record GetUsersQuery : IQuery<UsersDto>, IValidator { };
 
 [CqrsHandler]

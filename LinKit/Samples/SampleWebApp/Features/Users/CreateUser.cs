@@ -1,12 +1,11 @@
 ﻿using Contract.Models;
 using LinKit.Core.BackgroundJobs;
 using LinKit.Core.Cqrs;
-using LinKit.Core.Endpoints;
 using SampleWebApp.Contracts.Behaviors;
 
 namespace SampleWebApp.Features.Users;
 
-[ApiEndpoint(ApiMethod.Post, "create-user")]
+//[ApiEndpoint(ApiMethod.Post, "create-user")]
 [BackgroundJob("AutoCreateUser")]
 public class CreateUserCommand : BackgroundJobCommand, IAuditable, IValidator
 {

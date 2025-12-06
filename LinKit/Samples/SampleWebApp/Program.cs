@@ -1,4 +1,4 @@
-using LinKit.Core.Endpoints;
+using System.Threading.RateLimiting;
 using SampleWebApp;
 
 WebApplicationBuilder builder = WebApplication.CreateBuilder(args);
@@ -19,6 +19,23 @@ builder.AddBackgroundJobs();
 // --- Swagger ---
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
+builder.Services.AddRateLimiter(options =>
+{
+    options.AddPolicy(
+        "HelloLimit",
+        ctx =>
+            RateLimitPartition.GetFixedWindowLimiter(
+                partitionKey: ctx.Connection.RemoteIpAddress?.ToString() ?? "unknown",
+                factory: _ => new FixedWindowRateLimiterOptions
+                {
+                    PermitLimit = 2,
+                    Window = TimeSpan.FromSeconds(10),
+                    QueueProcessingOrder = QueueProcessingOrder.OldestFirst,
+                    QueueLimit = 0,
+                }
+            )
+    );
+});
 
 // ---------------
 
@@ -34,8 +51,9 @@ if (app.Environment.IsDevelopment())
 }
 
 // ------------------
-
+app.UseRateLimiter();
 app.MapGeneratedEndpoints();
-app.MapGrpcService<SampleWebApp.Grpc.Users.LinKitUserGrpcService>();
+
+//app.MapGrpcService<SampleWebApp.Grpc.Users.LinKitUserGrpcService>();
 
 app.Run();

@@ -414,25 +414,131 @@ builder.Services.AddLinKitDependency();
 
 ### 3. Endpoints Kit (Minimal APIs)
 
-Source-generates Minimal API endpoints from CQRS requests.
+The Endpoints Kit transforms your CQRS requests directly into high-performance Minimal API endpoints using Source Generators. It eliminates the need for Controllers, manual route mapping, and reflection-based dispatching.
 
-- **Decorate Requests:** `[ApiEndpoint]` on your command/query.
-- **Property Binding:** Use `[FromRoute]`, `[FromQuery]`, etc.
-- **Register:** `app.MapGeneratedEndpoints();`
+-   **Zero Boilerplate:** The request DTO *is* the API definition.
+-   **Automatic Binding:** Infers `[FromBody]` for command payloads (POST/PUT/PATCH) and `[AsParameters]` for queries (GET/DELETE).
+-   **Metadata & OpenAPI:** Support for Summary, Description, Tags, and Versions for Swagger/OpenAPI generation.
+-   **Security:** Built-in support for Policies, Roles, and CORS.
+-   **Exception Handling:** Map custom exceptions to HTTP status codes automatically.
+
+#### Step 1: Define Endpoints
+
+Decorate your `ICommand` or `IQuery` classes with the `[ApiEndpoint]` attribute.
+
+**Example 1: A GET Query (Automatic Query String Binding)**
 
 ```csharp
-[ApiEndpoint(ApiMethod.GET, "users/{Id}")]
+using LinKit.Core.Endpoints;
+using Microsoft.AspNetCore.Mvc;
+
+// Maps to: GET /users/{Id}
+[ApiEndpoint(ApiMethod.Get, "users/{Id}")]
 public class GetUserQuery : IQuery<UserDto>
 {
+    // Attributes like [FromRoute] are supported by standard Minimal APIs
     [FromRoute] public int Id { get; set; }
 }
 ```
 
-**Usage:**
+**Example 2: A POST Command (Automatic Body Binding)**
 
 ```csharp
-app.MapGeneratedEndpoints();
+using LinKit.Core.Endpoints;
+
+// Maps to: POST /users
+[ApiEndpoint(ApiMethod.Post, "users")]
+public class CreateUserCommand : ICommand<int>
+{
+    public string UserName { get; set; }
+    public string Email { get; set; }
+}
 ```
+
+**Example 3: Rich Metadata & Security**
+
+You can configure detailed endpoint metadata directly on the request.
+
+```csharp
+[ApiEndpoint(ApiMethod.Put, "users/{Id}/email",
+    Name = "UpdateUserEmail",
+    Summary = "Updates a user's email address",
+    Description = "Requires Admin privileges.",
+    Tags = new[] { "UserManagement" }, // (Note: Tagging is handled via Feature groupings usually)
+    Roles = "Admin",
+    Policies = "CanUpdateUsers",
+    RateLimitPolicy = "Strict"
+)]
+public class UpdateEmailCommand : ICommand
+{
+    [FromRoute] public int Id { get; set; }
+    public string NewEmail { get; set; }
+}
+```
+
+#### Step 2: Route Grouping (Optional)
+
+You can define global prefixes and shared security policies for a group of endpoints using the `[ApiRouteGroup]` attribute at the **Assembly** level. This is useful for versioning or feature grouping.
+
+```csharp
+// In Program.cs or AssemblyInfo.cs
+[assembly: ApiRouteGroup("/api/v1", Tag = "V1 API", RequireAuthorization = true)]
+[assembly: ApiRouteGroup("/api/v2", Tag = "V2 API")]
+```
+
+You can then associate an endpoint with a group using the `Group` property:
+
+```csharp
+[ApiEndpoint(ApiMethod.Get, "products", Group = "/api/v1")]
+public class GetProductsQuery : IQuery<List<ProductDto>> { ... }
+```
+
+#### Step 3: Global Exception Handling
+
+LinKit can generate a highly optimized exception handler middleware that maps your custom exceptions to specific HTTP status codes and Problem Details.
+
+1.  **Define Mappings:** Decorate your custom exception classes.
+
+```csharp
+using LinKit.Core.Endpoints;
+
+[ApiExceptionMapping(StatusCodes.Status404NotFound, Title = "Resource Not Found")]
+public class UserNotFoundException : Exception 
+{
+    public UserNotFoundException(int id) : base($"User {id} was not found.") { }
+}
+
+[ApiExceptionMapping(StatusCodes.Status409Conflict, LogLevel = "Warning")]
+public class DuplicateEmailException : Exception { ... }
+```
+
+2.  **Register Middleware:** Use the generated middleware in your app pipeline.
+
+```csharp
+var app = builder.Build();
+
+// Replaces the standard app.UseExceptionHandler()
+app.UseGeneratedExceptionHandler(); 
+```
+
+#### Step 4: Register Endpoints
+
+In your `Program.cs`, simply call `MapGeneratedEndpoints`.
+
+```csharp
+var app = builder.Build();
+
+app.UseGeneratedExceptionHandler(); // Optional: If using exception mappings
+app.UseAuthentication();
+app.UseAuthorization();
+
+// This single line maps all endpoints defined in your assembly
+app.MapGeneratedEndpoints();
+
+app.Run();
+```
+
+---
 
 ### 4. Background Job Kit
 

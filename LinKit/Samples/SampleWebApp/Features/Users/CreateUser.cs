@@ -13,9 +13,6 @@ public class CreateUserCommand : BackgroundJobCommand, IAuditable, IValidator
     public string Name { get; set; }
 };
 
-[ApiEndpoint(ApiMethod.Put, "update-user")]
-public record UpdateUserCommand(int Id, string Name) : ICommand, IAuditable;
-
 [CqrsHandler]
 public class CreateUser : ICommandHandler<CreateUserCommand>
 {
@@ -31,17 +28,5 @@ public class CreateUser : ICommandHandler<CreateUserCommand>
         Console.WriteLine($"embededData == {embededData}");
         Console.ForegroundColor = ConsoleColor.White;
         return Task.FromResult(Unit.Value);
-    }
-}
-
-[CqrsHandler]
-public class UpdateUser : ICommandHandler<UpdateUserCommand>
-{
-    Task<Unit> IHandler<UpdateUserCommand, Unit>.HandleAsync(
-        UpdateUserCommand request,
-        CancellationToken cancellationToken
-    )
-    {
-        throw new NotImplementedException();
     }
 }

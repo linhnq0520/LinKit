@@ -6,6 +6,9 @@ namespace LinKit.Core.Mapping
     [AttributeUsage(AttributeTargets.Class, Inherited = false, AllowMultiple = false)]
     public sealed class MapperContextAttribute : Attribute { }
 
+    [AttributeUsage(AttributeTargets.Class, Inherited = false, AllowMultiple = false)]
+    public sealed class MappingProfileAttribute : Attribute { }
+
     public interface IMappingConfigurator
     {
         void Configure(IMapperConfigurationBuilder builder);

@@ -5,8 +5,8 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <PublishAot>true</PublishAot>
     <IlcGenerateCompleteTypeMetadata>true</IlcGenerateCompleteTypeMetadata>
-    <EmitCompilerGeneratedFiles>true</EmitCompilerGeneratedFiles>
     <LangVersion>preview</LangVersion>
+    <EmitCompilerGeneratedFiles>true</EmitCompilerGeneratedFiles>
   </PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="..\..\LinKit.Core\LinKit.Core.csproj" />

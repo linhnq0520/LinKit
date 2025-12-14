@@ -41,30 +41,26 @@ internal static class CqrsGeneratorPart
         IncrementalGeneratorInitializationContext context
     )
     {
-        var collectedHandlers = GetCollectedHandlers(context);
-        var collectedBehaviors = GetCollectedBehaviors(context);
+        IncrementalValueProvider<IReadOnlyList<HandlerInfo>> collectedHandlers =
+            GetCollectedHandlers(context);
+        IncrementalValueProvider<ImmutableArray<BehaviorInfo?>> collectedBehaviors =
+            GetCollectedBehaviors(context);
 
         return collectedHandlers
             .Combine(collectedBehaviors)
             .Select(
                 (source, _) =>
                 {
-                    var handlers = source.Left;
-                    var behaviors = source.Right;
-                    var services = new List<CqrsServiceInfo>();
+                    IReadOnlyList<HandlerInfo> handlers = source.Left;
+                    ImmutableArray<BehaviorInfo?> behaviors = source.Right;
+                    List<CqrsServiceInfo> services = new List<CqrsServiceInfo>();
 
                     if (!handlers.Any())
                     {
                         return (IReadOnlyList<CqrsServiceInfo>)services;
                     }
 
-                    services.Add(
-                        new CqrsServiceInfo(
-                            "services.AddScoped<LinKit.Core.Cqrs.IMediator, LinKit.Generated.Cqrs.Mediator>();"
-                        )
-                    );
-
-                    foreach (var handler in handlers)
+                    foreach (HandlerInfo? handler in handlers)
                     {
                         services.Add(
                             new CqrsServiceInfo(
@@ -75,36 +71,37 @@ internal static class CqrsGeneratorPart
 
                     if (behaviors.Any())
                     {
-                        var registeredBehaviors = new HashSet<string>();
+                        HashSet<string> registeredBehaviors = new HashSet<string>();
 
-                        foreach (var handler in handlers)
+                        foreach (HandlerInfo? handler in handlers)
                         {
-                            var applicableContractBehaviors = behaviors.Where(b =>
-                            {
-                                bool targetMatch =
-                                    b.TargetInterface is null
-                                    || b.TargetInterface == "global::System.Object"
-                                    || handler.MarkerInterfaces.Contains(b.TargetInterface);
-                                if (!targetMatch)
+                            IEnumerable<BehaviorInfo?> applicableContractBehaviors =
+                                behaviors.Where(b =>
                                 {
-                                    return false;
-                                }
+                                    bool targetMatch =
+                                        b.TargetInterface is null
+                                        || b.TargetInterface == "global::System.Object"
+                                        || handler.MarkerInterfaces.Contains(b.TargetInterface);
+                                    if (!targetMatch)
+                                    {
+                                        return false;
+                                    }
 
-                                bool constraintsMatch = b.GenericConstraints.All(constraint =>
-                                    handler.UnboundMarkerInterfaces.Contains(constraint)
-                                    || handler.MarkerInterfaces.Contains(constraint)
-                                );
-                                return constraintsMatch;
-                            });
+                                    bool constraintsMatch = b.GenericConstraints.All(constraint =>
+                                        handler.UnboundMarkerInterfaces.Contains(constraint)
+                                        || handler.MarkerInterfaces.Contains(constraint)
+                                    );
+                                    return constraintsMatch;
+                                });
 
-                            var allApplicableBehaviors = handler
+                            IEnumerable<string> allApplicableBehaviors = handler
                                 .SpecificBehaviors.Select(sb => sb.Split('<')[0])
                                 .Concat(
                                     applicableContractBehaviors.Select(cb => cb.UnboundBehaviorType)
                                 )
                                 .Distinct();
 
-                            foreach (var unboundBehaviorType in allApplicableBehaviors)
+                            foreach (string? unboundBehaviorType in allApplicableBehaviors)
                             {
                                 string closedBehaviorType =
                                     $"{unboundBehaviorType}<{handler.RequestType}, {handler.ResponseType}>";
@@ -128,23 +125,28 @@ internal static class CqrsGeneratorPart
 
     public static void Initialize(IncrementalGeneratorInitializationContext context)
     {
-        var collectedHandlers = GetCollectedHandlers(context);
-        var collectedBehaviors = GetCollectedBehaviors(context);
+        IncrementalValueProvider<IReadOnlyList<HandlerInfo>> collectedHandlers =
+            GetCollectedHandlers(context);
+        IncrementalValueProvider<ImmutableArray<BehaviorInfo?>> collectedBehaviors =
+            GetCollectedBehaviors(context);
 
-        var combined = collectedHandlers.Combine(collectedBehaviors);
+        IncrementalValueProvider<(
+            IReadOnlyList<HandlerInfo> Left,
+            ImmutableArray<BehaviorInfo?> Right
+        )> combined = collectedHandlers.Combine(collectedBehaviors);
 
         context.RegisterSourceOutput(
             combined,
             (spc, source) =>
             {
-                var handlers = source.Left;
-                var behaviors = source.Right;
+                IReadOnlyList<HandlerInfo> handlers = source.Left;
+                ImmutableArray<BehaviorInfo?> behaviors = source.Right;
                 if (!handlers.Any())
                 {
                     return;
                 }
 
-                var mediatorSource = GenerateMediatorClass(handlers, behaviors);
+                string mediatorSource = GenerateMediatorClass(handlers, behaviors);
                 spc.AddSource("Cqrs.Mediator.g.cs", SourceText.From(mediatorSource, Encoding.UTF8));
             }
         );
@@ -175,9 +177,9 @@ internal static class CqrsGeneratorPart
             .SelectMany(
                 (data, _) =>
                 {
-                    var contextSymbol = (INamedTypeSymbol)data.TargetSymbol;
-                    var handlers = new List<INamedTypeSymbol>();
-                    var attributeData = contextSymbol
+                    INamedTypeSymbol contextSymbol = (INamedTypeSymbol)data.TargetSymbol;
+                    List<INamedTypeSymbol> handlers = new List<INamedTypeSymbol>();
+                    AttributeData? attributeData = contextSymbol
                         .GetAttributes()
                         .FirstOrDefault(ad =>
                             ad.AttributeClass?.ToDisplayString() == ContextAttributeName
@@ -187,13 +189,13 @@ internal static class CqrsGeneratorPart
                         return ImmutableArray<INamedTypeSymbol>.Empty;
                     }
 
-                    var constructorArgs = attributeData.ConstructorArguments[0];
+                    TypedConstant constructorArgs = attributeData.ConstructorArguments[0];
                     if (constructorArgs.Kind != TypedConstantKind.Array)
                     {
                         return ImmutableArray<INamedTypeSymbol>.Empty;
                     }
 
-                    foreach (var typeConstant in constructorArgs.Values)
+                    foreach (TypedConstant typeConstant in constructorArgs.Values)
                     {
                         if (typeConstant.Value is INamedTypeSymbol handlerTypeSymbol)
                         {
@@ -204,20 +206,25 @@ internal static class CqrsGeneratorPart
                 }
             );
 
-        var allHandlerSymbols = handlersFromAttribute
+        IncrementalValueProvider<(
+            ImmutableArray<INamedTypeSymbol> Left,
+            ImmutableArray<INamedTypeSymbol> Right
+        )> allHandlerSymbols = handlersFromAttribute
             .Collect()
             .Combine(handlersFromContext.Collect());
 
         return allHandlerSymbols.Select(
             (tuple, _) =>
             {
-                var uniqueHandlers = new HashSet<INamedTypeSymbol>(SymbolEqualityComparer.Default);
-                foreach (var handler in tuple.Left)
+                HashSet<INamedTypeSymbol> uniqueHandlers = new HashSet<INamedTypeSymbol>(
+                    SymbolEqualityComparer.Default
+                );
+                foreach (INamedTypeSymbol? handler in tuple.Left)
                 {
                     uniqueHandlers.Add(handler);
                 }
 
-                foreach (var handler in tuple.Right)
+                foreach (INamedTypeSymbol? handler in tuple.Right)
                 {
                     uniqueHandlers.Add(handler);
                 }
@@ -238,8 +245,8 @@ internal static class CqrsGeneratorPart
                 predicate: (n, _) => n is ClassDeclarationSyntax,
                 transform: (c, _) =>
                 {
-                    var symbol = (INamedTypeSymbol)c.TargetSymbol;
-                    var attributeData = symbol
+                    INamedTypeSymbol symbol = (INamedTypeSymbol)c.TargetSymbol;
+                    AttributeData attributeData = symbol
                         .GetAttributes()
                         .First(ad => ad.AttributeClass?.ToDisplayString() == BehaviorAttributeName);
                     if (attributeData.ConstructorArguments.Length == 0)
@@ -258,27 +265,30 @@ internal static class CqrsGeneratorPart
                     {
                         return null;
                     }
-                    var orderArg = attributeData.ConstructorArguments.FirstOrDefault(arg =>
-                        arg.Type?.ToDisplayString() == "int"
+                    TypedConstant orderArg = attributeData.ConstructorArguments.FirstOrDefault(
+                        arg => arg.Type?.ToDisplayString() == "int"
                     );
-                    var order = orderArg.IsNull ? 0 : (int)orderArg.Value!;
+                    int order = orderArg.IsNull ? 0 : (int)orderArg.Value!;
 
-                    var constraints = new List<string>();
+                    List<string> constraints = new List<string>();
                     if (symbol.IsGenericType)
                     {
-                        var typeParameter = symbol.TypeParameters.FirstOrDefault(tp =>
-                            tp.Name == "TRequest"
+                        ITypeParameterSymbol? typeParameter = symbol.TypeParameters.FirstOrDefault(
+                            tp => tp.Name == "TRequest"
                         );
                         if (typeParameter != null)
                         {
-                            foreach (var constraintTypeSymbol in typeParameter.ConstraintTypes)
+                            foreach (
+                                ITypeSymbol constraintTypeSymbol in typeParameter.ConstraintTypes
+                            )
                             {
                                 if (
                                     constraintTypeSymbol is INamedTypeSymbol namedConstraint
                                     && namedConstraint.IsGenericType
                                 )
                                 {
-                                    var originalDefinition = namedConstraint.OriginalDefinition;
+                                    INamedTypeSymbol originalDefinition =
+                                        namedConstraint.OriginalDefinition;
                                     constraints.Add(
                                         originalDefinition.ToDisplayString(
                                             SymbolDisplayFormat.FullyQualifiedFormat
@@ -297,8 +307,10 @@ internal static class CqrsGeneratorPart
                         }
                     }
 
-                    var originalSymbol = symbol.IsGenericType ? symbol.OriginalDefinition : symbol;
-                    var unboundTypeName = originalSymbol
+                    INamedTypeSymbol originalSymbol = symbol.IsGenericType
+                        ? symbol.OriginalDefinition
+                        : symbol;
+                    string unboundTypeName = originalSymbol
                         .ToDisplayString(
                             SymbolDisplayFormat.FullyQualifiedFormat.WithGlobalNamespaceStyle(
                                 SymbolDisplayGlobalNamespaceStyle.Included
@@ -322,7 +334,7 @@ internal static class CqrsGeneratorPart
 
     private static HandlerInfo? GetHandlerInfo(INamedTypeSymbol classSymbol)
     {
-        var handlerInterface = classSymbol.AllInterfaces.FirstOrDefault(i =>
+        INamedTypeSymbol? handlerInterface = classSymbol.AllInterfaces.FirstOrDefault(i =>
             i.OriginalDefinition.ToDisplayString().StartsWith(ICommandHandlerName)
             || i.OriginalDefinition.ToDisplayString().StartsWith(IQueryHandlerName)
         );
@@ -332,20 +344,20 @@ internal static class CqrsGeneratorPart
             return null;
         }
 
-        var requestTypeSymbol = handlerInterface.TypeArguments[0];
-        var responseTypeSymbol =
+        ITypeSymbol requestTypeSymbol = handlerInterface.TypeArguments[0];
+        ITypeSymbol? responseTypeSymbol =
             handlerInterface.TypeArguments.Length > 1 ? handlerInterface.TypeArguments[1] : null;
-        var responseTypeName =
+        string responseTypeName =
             responseTypeSymbol?.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat)
             ?? UnitTypeName;
-        var markerInterfaces = new List<string>();
-        var unboundMarkerInterfaces = new List<string>();
+        List<string> markerInterfaces = new List<string>();
+        List<string> unboundMarkerInterfaces = new List<string>();
 
         markerInterfaces.Add(
             requestTypeSymbol.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat)
         );
 
-        foreach (var implementedInterface in requestTypeSymbol.AllInterfaces)
+        foreach (INamedTypeSymbol implementedInterface in requestTypeSymbol.AllInterfaces)
         {
             markerInterfaces.Add(
                 implementedInterface.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat)
@@ -361,18 +373,18 @@ internal static class CqrsGeneratorPart
             }
         }
 
-        var specificBehaviors = new List<string>();
-        var applyBehaviorAttributes = requestTypeSymbol
+        List<string> specificBehaviors = new List<string>();
+        IEnumerable<AttributeData> applyBehaviorAttributes = requestTypeSymbol
             .GetAttributes()
             .Where(ad => ad.AttributeClass?.ToDisplayString() == ApplyBehaviorAttributeName);
-        foreach (var attr in applyBehaviorAttributes)
+        foreach (AttributeData? attr in applyBehaviorAttributes)
         {
             if (
                 attr.ConstructorArguments.Length > 0
                 && attr.ConstructorArguments[0].Kind == TypedConstantKind.Array
             )
             {
-                foreach (var typeConstant in attr.ConstructorArguments[0].Values)
+                foreach (TypedConstant typeConstant in attr.ConstructorArguments[0].Values)
                 {
                     if (typeConstant.Value is INamedTypeSymbol behaviorTypeSymbol)
                     {
@@ -410,7 +422,7 @@ internal static class CqrsGeneratorPart
         IReadOnlyList<BehaviorInfo> availableBehaviors
     )
     {
-        var sb = new StringBuilder();
+        StringBuilder sb = new StringBuilder();
         sb.AppendLine(
             @"// <auto-generated> by LinKit.Generator
 #nullable enable
@@ -433,10 +445,10 @@ namespace LinKit.Generated.Cqrs
             {"
         );
 
-        var voidCommandHandlers = handlers.Where(h =>
+        IEnumerable<HandlerInfo> voidCommandHandlers = handlers.Where(h =>
             h.HandlerInterface.Contains(ICommandHandlerName) && h.ResponseType == UnitTypeName
         );
-        foreach (var handler in voidCommandHandlers)
+        foreach (HandlerInfo? handler in voidCommandHandlers)
         {
             sb.AppendLine(
                 $"                {handler.RequestType} c => HandleVoidRequest(c, cancellationToken),"
@@ -453,10 +465,10 @@ namespace LinKit.Generated.Cqrs
             {"
         );
 
-        var resultCommandHandlers = handlers.Where(h =>
+        IEnumerable<HandlerInfo> resultCommandHandlers = handlers.Where(h =>
             h.HandlerInterface.Contains(ICommandHandlerName) && h.ResponseType != UnitTypeName
         );
-        foreach (var handler in resultCommandHandlers)
+        foreach (HandlerInfo? handler in resultCommandHandlers)
         {
             sb.AppendLine(
                 $"                {handler.RequestType} c => (Task<TResponse>)(object)HandleResultRequest(c, cancellationToken),"
@@ -473,8 +485,10 @@ namespace LinKit.Generated.Cqrs
             {"
         );
 
-        var queryHandlers = handlers.Where(h => h.HandlerInterface.Contains(IQueryHandlerName));
-        foreach (var handler in queryHandlers)
+        IEnumerable<HandlerInfo> queryHandlers = handlers.Where(h =>
+            h.HandlerInterface.Contains(IQueryHandlerName)
+        );
+        foreach (HandlerInfo? handler in queryHandlers)
         {
             sb.AppendLine(
                 $"                {handler.RequestType} q => (Task<TResponse>)(object)HandleResultRequest(q, cancellationToken),"
@@ -487,7 +501,7 @@ namespace LinKit.Generated.Cqrs
 "
         );
 
-        foreach (var handler in handlers.Where(h => h.ResponseType != UnitTypeName))
+        foreach (HandlerInfo? handler in handlers.Where(h => h.ResponseType != UnitTypeName))
         {
             sb.AppendLine(
                 $@"
@@ -505,7 +519,7 @@ namespace LinKit.Generated.Cqrs
             );
         }
 
-        foreach (var handler in handlers.Where(h => h.ResponseType == UnitTypeName))
+        foreach (HandlerInfo? handler in handlers.Where(h => h.ResponseType == UnitTypeName))
         {
             sb.AppendLine(
                 $@"
@@ -533,7 +547,7 @@ namespace LinKit.Generated.Cqrs
         bool hasResult
     )
     {
-        var applicableContractBehaviors = availableBehaviors
+        List<BehaviorInfo> applicableContractBehaviors = availableBehaviors
             .Where(b =>
             {
                 bool targetMatch =
@@ -556,9 +570,9 @@ namespace LinKit.Generated.Cqrs
             .OrderBy(b => b.Order)
             .ToList();
 
-        foreach (var specificBehaviorType in handler.SpecificBehaviors.AsEnumerable().Reverse())
+        foreach (string? specificBehaviorType in handler.SpecificBehaviors.AsEnumerable().Reverse())
         {
-            var closedBehaviorType =
+            string closedBehaviorType =
                 $"{specificBehaviorType.Split('<')[0]}<{handler.RequestType}, {handler.ResponseType}>";
             sb.AppendLine("            {");
             sb.AppendLine("                var capturedNext = next;");
@@ -577,9 +591,9 @@ namespace LinKit.Generated.Cqrs
             sb.AppendLine("            }");
         }
 
-        foreach (var behavior in applicableContractBehaviors.AsEnumerable().Reverse())
+        foreach (BehaviorInfo? behavior in applicableContractBehaviors.AsEnumerable().Reverse())
         {
-            var closedBehaviorType =
+            string closedBehaviorType =
                 $"{behavior.UnboundBehaviorType}<{handler.RequestType}, {handler.ResponseType}>";
             sb.AppendLine("            {");
             sb.AppendLine("                var capturedNext = next;");

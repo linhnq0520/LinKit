@@ -1,11 +1,11 @@
-﻿using System;
+﻿using Microsoft.CodeAnalysis;
+using Microsoft.CodeAnalysis.CSharp.Syntax;
+using Microsoft.CodeAnalysis.Text;
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text;
 using System.Text.RegularExpressions;
-using Microsoft.CodeAnalysis;
-using Microsoft.CodeAnalysis.CSharp.Syntax;
-using Microsoft.CodeAnalysis.Text;
 
 namespace LinKit.Generator.Generators;
 
@@ -23,6 +23,7 @@ internal record EndpointInfo(
     string HttpMethod,
     string Route,
     bool IsCommandWithoutResult,
+    bool ICommand,
     string FeatureName,
     string? CustomName,
     string? GroupPrefix,
@@ -59,7 +60,6 @@ internal static class EndpointsGeneratorPart
 
     public static void Initialize(IncrementalGeneratorInitializationContext context)
     {
-        // Collect route groups
         IncrementalValueProvider<List<RouteGroupInfo>> routeGroups =
             context.CompilationProvider.Select(
                 (compilation, _) =>
@@ -80,7 +80,6 @@ internal static class EndpointsGeneratorPart
                 }
             );
 
-        // Collect endpoints
         IncrementalValuesProvider<EndpointInfo?> endpointDeclarations = context
             .SyntaxProvider.ForAttributeWithMetadataName(
                 EndpointAttributeName,
@@ -89,7 +88,6 @@ internal static class EndpointsGeneratorPart
             )
             .Where(info => info is not null);
 
-        // Collect exception mappings
         IncrementalValuesProvider<ExceptionMappingInfo?> exceptionMappings = context
             .SyntaxProvider.ForAttributeWithMetadataName(
                 ExceptionMappingAttributeName,
@@ -98,7 +96,6 @@ internal static class EndpointsGeneratorPart
             )
             .Where(info => info is not null);
 
-        // Generate endpoints
         context.RegisterSourceOutput(
             endpointDeclarations.Collect().Combine(routeGroups),
             (spc, data) =>
@@ -118,7 +115,6 @@ internal static class EndpointsGeneratorPart
             }
         );
 
-        // Generate exception handler
         context.RegisterSourceOutput(
             exceptionMappings.Collect(),
             (spc, mappings) =>
@@ -189,7 +185,6 @@ internal static class EndpointsGeneratorPart
         );
         string route = attributeData.ConstructorArguments[1].Value as string ?? "";
 
-        // Validate and normalize route
         route = NormalizeRoute(route);
 
         INamedTypeSymbol? cqrsInterface = requestSymbol.AllInterfaces.FirstOrDefault(i =>
@@ -204,6 +199,9 @@ internal static class EndpointsGeneratorPart
 
         string responseType;
         bool isCommandWithoutResult = false;
+        bool isCommand = cqrsInterface
+            .OriginalDefinition.ToDisplayString()
+            .StartsWith(ICommandInterfaceName);
 
         if (cqrsInterface.TypeArguments.Length > 0)
         {
@@ -221,7 +219,6 @@ internal static class EndpointsGeneratorPart
             requestSymbol.ContainingNamespace.ToDisplayString().Split('.').LastOrDefault()
             ?? "Default";
 
-        // Extract named properties
         string? customName = null,
             groupPrefix = null,
             policies = null,
@@ -280,6 +277,7 @@ internal static class EndpointsGeneratorPart
             HttpMethod: httpMethodEnum.ToString(),
             Route: route,
             IsCommandWithoutResult: isCommandWithoutResult,
+            ICommand: isCommand,
             FeatureName: featureName,
             CustomName: customName,
             GroupPrefix: groupPrefix,
@@ -560,9 +558,18 @@ internal static class EndpointsGeneratorPart
         }
         else
         {
-            sb.AppendLine(
-                $"                var result = await mediator.QueryAsync<{endpoint.ResponseType.TrimEnd('?')}>(request, cancellationToken);"
-            );
+            if (endpoint.ICommand)
+            {
+                sb.AppendLine(
+                    $"                var result = await mediator.SendAsync(request, cancellationToken);"
+                );
+            }
+            else
+            {
+                sb.AppendLine(
+                    $"                var result = await mediator.QueryAsync(request, cancellationToken);"
+                );
+            }
             sb.AppendLine(
                 "                return result is not null ? Results.Ok(result) : Results.NotFound();"
             );

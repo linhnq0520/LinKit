@@ -1,19 +1,20 @@
 ﻿using LinKit.Core.Cqrs;
+using LinKit.Core.Endpoints;
 using LinKit.Core.Messaging;
+using SampleWebApp.Behaviors;
 using SampleWebApp.Contracts.Behaviors;
 
 namespace SampleWebApp.Features.Users
 {
     [Message("user-events", RoutingKey = "user.created", QueueName = "email-service-queue")]
-    public record UserCreatedEvent(int UserId, string Email) : ICommand, IAuditable, IValidator;
+    [ApiEndpoint(ApiMethod.Post, "create event")]
+    //[ApplyBehavior(typeof(ValidationBehavior1<,>))]
+    public record UserCreatedEvent(int UserId, string Email) : ICommand<bool>;
 
     [CqrsHandler]
-    public class UserCreatedEventHandler : ICommandHandler<UserCreatedEvent>
+    public class UserCreatedEventHandler : ICommandHandler<UserCreatedEvent, bool>
     {
-        Task<Unit> IHandler<UserCreatedEvent, Unit>.HandleAsync(
-            UserCreatedEvent request,
-            CancellationToken cancellationToken
-        )
+        public Task<bool> HandleAsync(UserCreatedEvent request, CancellationToken cancellationToken = default)
         {
             throw new NotImplementedException();
         }

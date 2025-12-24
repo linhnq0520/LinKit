@@ -7,7 +7,7 @@ namespace SampleWebApp.Features.Users.UpdateUser
         public async Task<UpdateUserResposne> HandleAsync(UpdateUserCommand request, CancellationToken cancellationToken = default)
         {
             await Task.CompletedTask;
-            var user = request.ToUser();
+            Domains.User user = request.ToUser();
             return user.ToUpdateUserResposne();
         }
     }

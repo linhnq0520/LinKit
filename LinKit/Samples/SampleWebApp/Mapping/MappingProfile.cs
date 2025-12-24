@@ -1,4 +1,5 @@
 ﻿using LinKit.Core.Mapping;
+using LinKit.Json.Runtime;
 using SampleWebApp.Domains;
 using SampleWebApp.Features.Users.UpdateUser;
 
@@ -9,7 +10,7 @@ namespace SampleWebApp.Mapping
     {
         public void Configure(IMapperConfigurationBuilder builder)
         {
-            builder.CreateMap<UpdateUserCommand, User>();
+            builder.CreateMap<UpdateUserCommand, User>().ForMember(d => d.Name, o => o.MapFrom(s => s.Id.ToJson(null, null)));
             builder.CreateMap<User, UpdateUserResposne>();
         }
     }

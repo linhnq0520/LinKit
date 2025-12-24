@@ -33,91 +33,89 @@ internal static class CqrsGeneratorPart
     private const string ContextAttributeName = "LinKit.Core.Cqrs.CqrsContextAttribute";
     private const string BehaviorAttributeName = "LinKit.Core.Cqrs.CqrsBehaviorAttribute";
     private const string ApplyBehaviorAttributeName = "LinKit.Core.Cqrs.ApplyBehaviorAttribute";
-    private const string UnitTypeName = "LinKit.Core.Cqrs.Unit";
+    private const string UnitTypeName = "global::LinKit.Core.Cqrs.Unit";
 
-    #region Pipeline Setup (Initialize and GetServices)
+    private static string GetCleanName(string fullName)
+    {
+        if (string.IsNullOrEmpty(fullName))
+            return fullName;
+        string name = fullName;
+        if (name.StartsWith("global::"))
+            name = name.Substring(8);
+        int angleIndex = name.IndexOf('<');
+        return angleIndex > 0 ? name.Substring(0, angleIndex) : name;
+    }
+
+    private static bool IsBehaviorApplicable(BehaviorInfo behavior, HandlerInfo handler)
+    {
+        string cleanTarget = GetCleanName(behavior.TargetInterface);
+        bool targetMatch =
+            cleanTarget == "System.Object" || handler.UnboundMarkerInterfaces.Contains(cleanTarget);
+
+        if (!targetMatch)
+            return false;
+
+        return behavior.GenericConstraints.All(constraint =>
+        {
+            string cleanConstraint = GetCleanName(constraint);
+            return handler.UnboundMarkerInterfaces.Contains(cleanConstraint);
+        });
+    }
+
+    #region Pipeline & Services Setup
 
     public static IncrementalValueProvider<IReadOnlyList<CqrsServiceInfo>> GetServices(
         IncrementalGeneratorInitializationContext context
     )
     {
-        IncrementalValueProvider<IReadOnlyList<HandlerInfo>> collectedHandlers =
-            GetCollectedHandlers(context);
-        IncrementalValueProvider<ImmutableArray<BehaviorInfo?>> collectedBehaviors =
-            GetCollectedBehaviors(context);
+        var collectedHandlers = GetCollectedHandlers(context);
+        var collectedBehaviors = GetCollectedBehaviors(context);
 
         return collectedHandlers
             .Combine(collectedBehaviors)
             .Select(
                 (source, _) =>
                 {
-                    IReadOnlyList<HandlerInfo> handlers = source.Left;
-                    ImmutableArray<BehaviorInfo?> behaviors = source.Right;
-                    List<CqrsServiceInfo> services = new List<CqrsServiceInfo>();
+                    var (handlers, behaviors) = source;
+                    var services = new List<CqrsServiceInfo>();
 
-                    if (!handlers.Any())
-                    {
-                        return (IReadOnlyList<CqrsServiceInfo>)services;
-                    }
-
-                    foreach (HandlerInfo? handler in handlers)
+                    foreach (var handler in handlers)
                     {
                         services.Add(
                             new CqrsServiceInfo(
                                 $"services.AddTransient<{handler.HandlerInterface}, {handler.HandlerType}>();"
                             )
                         );
-                    }
 
-                    if (behaviors.Any())
-                    {
-                        HashSet<string> registeredBehaviors = new HashSet<string>();
+                        var registeredForThisHandler = new HashSet<string>();
 
-                        foreach (HandlerInfo? handler in handlers)
+                        // 1. Đăng ký Specific Behaviors (ApplyBehavior)
+                        foreach (var sbType in handler.SpecificBehaviors)
                         {
-                            IEnumerable<BehaviorInfo?> applicableContractBehaviors =
-                                behaviors.Where(b =>
-                                {
-                                    bool targetMatch =
-                                        b.TargetInterface is null
-                                        || b.TargetInterface == "global::System.Object"
-                                        || handler.MarkerInterfaces.Contains(b.TargetInterface);
-                                    if (!targetMatch)
-                                    {
-                                        return false;
-                                    }
+                            string closedType =
+                                $"{GetCleanName(sbType)}<{handler.RequestType}, {handler.ResponseType}>";
+                            if (registeredForThisHandler.Add(closedType))
+                                services.Add(
+                                    new CqrsServiceInfo(
+                                        $"services.AddTransient<global::{closedType}>();"
+                                    )
+                                );
+                        }
 
-                                    bool constraintsMatch = b.GenericConstraints.All(constraint =>
-                                        handler.UnboundMarkerInterfaces.Contains(constraint)
-                                        || handler.MarkerInterfaces.Contains(constraint)
-                                    );
-                                    return constraintsMatch;
-                                });
-
-                            IEnumerable<string> allApplicableBehaviors = handler
-                                .SpecificBehaviors.Select(sb => sb.Split('<')[0])
-                                .Concat(
-                                    applicableContractBehaviors.Select(cb => cb.UnboundBehaviorType)
-                                )
-                                .Distinct();
-
-                            foreach (string? unboundBehaviorType in allApplicableBehaviors)
-                            {
-                                string closedBehaviorType =
-                                    $"{unboundBehaviorType}<{handler.RequestType}, {handler.ResponseType}>";
-
-                                if (registeredBehaviors.Add(closedBehaviorType))
-                                {
-                                    services.Add(
-                                        new CqrsServiceInfo(
-                                            $"services.AddTransient<{closedBehaviorType}>();"
-                                        )
-                                    );
-                                }
-                            }
+                        // 2. Đăng ký Global Behaviors
+                        var applicable = behaviors
+                            .Where(b => b != null && IsBehaviorApplicable(b!, handler))
+                            .OrderBy(b => b!.Order);
+                        foreach (var b in applicable)
+                        {
+                            string closedType =
+                                $"{b!.UnboundBehaviorType}<{handler.RequestType}, {handler.ResponseType}>";
+                            if (registeredForThisHandler.Add(closedType))
+                                services.Add(
+                                    new CqrsServiceInfo($"services.AddTransient<{closedType}>();")
+                                );
                         }
                     }
-
                     return (IReadOnlyList<CqrsServiceInfo>)services;
                 }
             );
@@ -125,28 +123,17 @@ internal static class CqrsGeneratorPart
 
     public static void Initialize(IncrementalGeneratorInitializationContext context)
     {
-        IncrementalValueProvider<IReadOnlyList<HandlerInfo>> collectedHandlers =
-            GetCollectedHandlers(context);
-        IncrementalValueProvider<ImmutableArray<BehaviorInfo?>> collectedBehaviors =
-            GetCollectedBehaviors(context);
-
-        IncrementalValueProvider<(
-            IReadOnlyList<HandlerInfo> Left,
-            ImmutableArray<BehaviorInfo?> Right
-        )> combined = collectedHandlers.Combine(collectedBehaviors);
+        var collectedHandlers = GetCollectedHandlers(context);
+        var collectedBehaviors = GetCollectedBehaviors(context);
+        var combined = collectedHandlers.Combine(collectedBehaviors);
 
         context.RegisterSourceOutput(
             combined,
             (spc, source) =>
             {
-                IReadOnlyList<HandlerInfo> handlers = source.Left;
-                ImmutableArray<BehaviorInfo?> behaviors = source.Right;
-                if (!handlers.Any())
-                {
+                if (!source.Left.Any())
                     return;
-                }
-
-                string mediatorSource = GenerateMediatorClass(handlers, behaviors);
+                string mediatorSource = GenerateMediatorClass(source.Left, source.Right!);
                 spc.AddSource("Cqrs.Mediator.g.cs", SourceText.From(mediatorSource, Encoding.UTF8));
             }
         );
@@ -154,85 +141,63 @@ internal static class CqrsGeneratorPart
 
     #endregion
 
-    #region Data Collection Logic (GetHandlerInfo, etc.)
+    #region Data Collection (Handlers & Context)
 
     private static IncrementalValueProvider<IReadOnlyList<HandlerInfo>> GetCollectedHandlers(
         IncrementalGeneratorInitializationContext context
     )
     {
-        IncrementalValuesProvider<INamedTypeSymbol> handlersFromAttribute = context
-            .SyntaxProvider.ForAttributeWithMetadataName(
-                HandlerAttributeName,
-                (n, _) => n is ClassDeclarationSyntax,
-                (c, _) => (INamedTypeSymbol)c.TargetSymbol
-            )
-            .Where(s => s is not null);
+        // Source 1: Từ [CqrsHandler] trên từng class
+        var fromAttribute = context.SyntaxProvider.ForAttributeWithMetadataName(
+            HandlerAttributeName,
+            (n, _) => n is ClassDeclarationSyntax,
+            (c, _) => (INamedTypeSymbol)c.TargetSymbol
+        );
 
-        IncrementalValuesProvider<INamedTypeSymbol> handlersFromContext = context
+        // Source 2: Từ [CqrsContext(typeof(A), typeof(B))]
+        var fromContext = context
             .SyntaxProvider.ForAttributeWithMetadataName(
                 ContextAttributeName,
                 (n, _) => n is ClassDeclarationSyntax,
-                (c, _) => c
-            )
-            .SelectMany(
-                (data, _) =>
+                (c, _) =>
                 {
-                    INamedTypeSymbol contextSymbol = (INamedTypeSymbol)data.TargetSymbol;
-                    List<INamedTypeSymbol> handlers = new List<INamedTypeSymbol>();
-                    AttributeData? attributeData = contextSymbol
-                        .GetAttributes()
-                        .FirstOrDefault(ad =>
-                            ad.AttributeClass?.ToDisplayString() == ContextAttributeName
-                        );
-                    if (attributeData is null || attributeData.ConstructorArguments.Length == 0)
-                    {
+                    var attr = c.Attributes.FirstOrDefault(a =>
+                        GetCleanName(a.AttributeClass?.ToDisplayString() ?? "")
+                        == GetCleanName(ContextAttributeName)
+                    );
+                    if (attr == null || attr.ConstructorArguments.Length == 0)
                         return ImmutableArray<INamedTypeSymbol>.Empty;
-                    }
 
-                    TypedConstant constructorArgs = attributeData.ConstructorArguments[0];
-                    if (constructorArgs.Kind != TypedConstantKind.Array)
-                    {
+                    var arg = attr.ConstructorArguments[0];
+                    if (arg.Kind != TypedConstantKind.Array)
                         return ImmutableArray<INamedTypeSymbol>.Empty;
-                    }
 
-                    foreach (TypedConstant typeConstant in constructorArgs.Values)
-                    {
-                        if (typeConstant.Value is INamedTypeSymbol handlerTypeSymbol)
-                        {
-                            handlers.Add(handlerTypeSymbol);
-                        }
-                    }
-                    return handlers.ToImmutableArray();
+                    return arg
+                        .Values.Select(v => v.Value as INamedTypeSymbol)
+                        .Where(s => s != null)
+                        .ToImmutableArray()!;
+                }
+            )
+            .SelectMany((symbols, _) => symbols);
+
+        return fromAttribute
+            .Collect()
+            .Combine(fromContext.Collect())
+            .Select(
+                (tuple, _) =>
+                {
+                    var uniqueSymbols = new HashSet<INamedTypeSymbol>(
+                        SymbolEqualityComparer.Default
+                    );
+                    foreach (var s in tuple.Left)
+                        uniqueSymbols.Add(s);
+                    foreach (var s in tuple.Right)
+                        uniqueSymbols.Add(s);
+
+                    return (IReadOnlyList<HandlerInfo>)
+                        uniqueSymbols.Select(GetHandlerInfo).Where(x => x != null).ToList()!;
                 }
             );
-
-        IncrementalValueProvider<(
-            ImmutableArray<INamedTypeSymbol> Left,
-            ImmutableArray<INamedTypeSymbol> Right
-        )> allHandlerSymbols = handlersFromAttribute
-            .Collect()
-            .Combine(handlersFromContext.Collect());
-
-        return allHandlerSymbols.Select(
-            (tuple, _) =>
-            {
-                HashSet<INamedTypeSymbol> uniqueHandlers = new HashSet<INamedTypeSymbol>(
-                    SymbolEqualityComparer.Default
-                );
-                foreach (INamedTypeSymbol? handler in tuple.Left)
-                {
-                    uniqueHandlers.Add(handler);
-                }
-
-                foreach (INamedTypeSymbol? handler in tuple.Right)
-                {
-                    uniqueHandlers.Add(handler);
-                }
-
-                return (IReadOnlyList<HandlerInfo>)
-                    uniqueHandlers.Select(GetHandlerInfo).Where(info => info is not null)!.ToList();
-            }
-        );
     }
 
     private static IncrementalValueProvider<ImmutableArray<BehaviorInfo?>> GetCollectedBehaviors(
@@ -241,190 +206,135 @@ internal static class CqrsGeneratorPart
     {
         return context
             .SyntaxProvider.ForAttributeWithMetadataName(
-                fullyQualifiedMetadataName: BehaviorAttributeName,
-                predicate: (n, _) => n is ClassDeclarationSyntax,
-                transform: (c, _) =>
+                BehaviorAttributeName,
+                (n, _) => n is ClassDeclarationSyntax,
+                (c, _) =>
                 {
-                    INamedTypeSymbol symbol = (INamedTypeSymbol)c.TargetSymbol;
-                    AttributeData attributeData = symbol
+                    var symbol = (INamedTypeSymbol)c.TargetSymbol;
+                    var attr = symbol
                         .GetAttributes()
-                        .First(ad => ad.AttributeClass?.ToDisplayString() == BehaviorAttributeName);
-                    if (attributeData.ConstructorArguments.Length == 0)
-                    {
-                        return null;
-                    }
-
-                    if (
-                        attributeData
-                            .ConstructorArguments.FirstOrDefault(arg =>
-                                arg.Type?.ToDisplayString() == "System.Type"
-                            )
-                            .Value
-                        is not INamedTypeSymbol targetInterfaceType
-                    )
-                    {
-                        return null;
-                    }
-                    TypedConstant orderArg = attributeData.ConstructorArguments.FirstOrDefault(
-                        arg => arg.Type?.ToDisplayString() == "int"
-                    );
-                    int order = orderArg.IsNull ? 0 : (int)orderArg.Value!;
-
-                    List<string> constraints = new List<string>();
-                    if (symbol.IsGenericType)
-                    {
-                        ITypeParameterSymbol? typeParameter = symbol.TypeParameters.FirstOrDefault(
-                            tp => tp.Name == "TRequest"
+                        .First(ad =>
+                            GetCleanName(ad.AttributeClass?.ToDisplayString() ?? "")
+                            == GetCleanName(BehaviorAttributeName)
                         );
-                        if (typeParameter != null)
-                        {
-                            foreach (
-                                ITypeSymbol constraintTypeSymbol in typeParameter.ConstraintTypes
-                            )
-                            {
-                                if (
-                                    constraintTypeSymbol is INamedTypeSymbol namedConstraint
-                                    && namedConstraint.IsGenericType
-                                )
-                                {
-                                    INamedTypeSymbol originalDefinition =
-                                        namedConstraint.OriginalDefinition;
-                                    constraints.Add(
-                                        originalDefinition.ToDisplayString(
-                                            SymbolDisplayFormat.FullyQualifiedFormat
-                                        )
-                                    );
-                                }
-                                else
-                                {
-                                    constraints.Add(
-                                        constraintTypeSymbol.ToDisplayString(
-                                            SymbolDisplayFormat.FullyQualifiedFormat
-                                        )
-                                    );
-                                }
-                            }
-                        }
-                    }
+                    var targetType = attr.ConstructorArguments[0].Value as INamedTypeSymbol;
+                    if (targetType == null)
+                        return null;
 
-                    INamedTypeSymbol originalSymbol = symbol.IsGenericType
-                        ? symbol.OriginalDefinition
-                        : symbol;
-                    string unboundTypeName = originalSymbol
-                        .ToDisplayString(
-                            SymbolDisplayFormat.FullyQualifiedFormat.WithGlobalNamespaceStyle(
-                                SymbolDisplayGlobalNamespaceStyle.Included
-                            )
-                        )
-                        .Split('<')[0];
+                    var constraints = new List<string>();
+                    var tRequest = symbol.TypeParameters.FirstOrDefault(tp =>
+                        tp.Name == "TRequest"
+                    );
+                    if (tRequest != null)
+                        foreach (var ct in tRequest.ConstraintTypes)
+                            constraints.Add(
+                                ct.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat)
+                            );
 
-                    return new BehaviorInfo(
-                        unboundTypeName,
-                        order,
-                        targetInterfaceType.ToDisplayString(
+                    string unboundName = symbol.IsGenericType
+                        ? symbol.OriginalDefinition.ToDisplayString(
                             SymbolDisplayFormat.FullyQualifiedFormat
-                        ),
+                        )
+                        : symbol.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
+                    return new BehaviorInfo(
+                        unboundName.Split('<')[0],
+                        (int)(attr.ConstructorArguments[1].Value ?? 0),
+                        targetType.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat),
                         constraints
                     );
                 }
             )
-            .Where(info => info is not null)!
             .Collect();
     }
 
     private static HandlerInfo? GetHandlerInfo(INamedTypeSymbol classSymbol)
     {
-        INamedTypeSymbol? handlerInterface = classSymbol.AllInterfaces.FirstOrDefault(i =>
-            i.OriginalDefinition.ToDisplayString().StartsWith(ICommandHandlerName)
-            || i.OriginalDefinition.ToDisplayString().StartsWith(IQueryHandlerName)
-        );
-
-        if (handlerInterface is null || handlerInterface.TypeArguments.Length == 0)
+        var handlerInterface = classSymbol.AllInterfaces.FirstOrDefault(i =>
         {
-            return null;
-        }
-
-        ITypeSymbol requestTypeSymbol = handlerInterface.TypeArguments[0];
-        ITypeSymbol? responseTypeSymbol =
-            handlerInterface.TypeArguments.Length > 1 ? handlerInterface.TypeArguments[1] : null;
-        string responseTypeName =
-            responseTypeSymbol?.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat)
-            ?? UnitTypeName;
-        List<string> markerInterfaces = new List<string>();
-        List<string> unboundMarkerInterfaces = new List<string>();
-
-        markerInterfaces.Add(
-            requestTypeSymbol.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat)
-        );
-
-        foreach (INamedTypeSymbol implementedInterface in requestTypeSymbol.AllInterfaces)
-        {
-            markerInterfaces.Add(
-                implementedInterface.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat)
+            var name = GetCleanName(
+                i.OriginalDefinition.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat)
             );
+            return name == ICommandHandlerName || name == IQueryHandlerName;
+        });
 
-            if (implementedInterface.IsGenericType)
+        if (handlerInterface == null)
+            return null;
+
+        var requestType = handlerInterface.TypeArguments[0];
+        var responseType =
+            handlerInterface.TypeArguments.Length > 1
+                ? handlerInterface
+                    .TypeArguments[1]
+                    .ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat)
+                : UnitTypeName;
+
+        var unboundMarkers = new List<string>();
+        void AddMarkers(ITypeSymbol s)
+        {
+            unboundMarkers.Add(
+                GetCleanName(s.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat))
+            );
+            foreach (var i in s.AllInterfaces)
             {
-                unboundMarkerInterfaces.Add(
-                    implementedInterface.OriginalDefinition.ToDisplayString(
-                        SymbolDisplayFormat.FullyQualifiedFormat
+                unboundMarkers.Add(
+                    GetCleanName(i.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat))
+                );
+                unboundMarkers.Add(
+                    GetCleanName(
+                        i.OriginalDefinition.ToDisplayString(
+                            SymbolDisplayFormat.FullyQualifiedFormat
+                        )
                     )
                 );
             }
         }
+        AddMarkers(requestType);
 
-        List<string> specificBehaviors = new List<string>();
-        IEnumerable<AttributeData> applyBehaviorAttributes = requestTypeSymbol
+        var specificBehaviors = new List<string>();
+        var applyAttrs = requestType
             .GetAttributes()
-            .Where(ad => ad.AttributeClass?.ToDisplayString() == ApplyBehaviorAttributeName);
-        foreach (AttributeData? attr in applyBehaviorAttributes)
+            .Where(ad =>
+                GetCleanName(ad.AttributeClass?.ToDisplayString() ?? "")
+                == GetCleanName(ApplyBehaviorAttributeName)
+            );
+        foreach (var attr in applyAttrs)
         {
             if (
                 attr.ConstructorArguments.Length > 0
                 && attr.ConstructorArguments[0].Kind == TypedConstantKind.Array
             )
             {
-                foreach (TypedConstant typeConstant in attr.ConstructorArguments[0].Values)
-                {
-                    if (typeConstant.Value is INamedTypeSymbol behaviorTypeSymbol)
-                    {
+                foreach (var val in attr.ConstructorArguments[0].Values)
+                    if (val.Value is INamedTypeSymbol bSymbol)
                         specificBehaviors.Add(
-                            behaviorTypeSymbol.ToDisplayString(
-                                SymbolDisplayFormat.FullyQualifiedFormat
-                            )
+                            bSymbol.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat)
                         );
-                    }
-                }
             }
         }
 
         return new HandlerInfo(
-            HandlerType: classSymbol.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat),
-            RequestType: requestTypeSymbol.ToDisplayString(
-                SymbolDisplayFormat.FullyQualifiedFormat
-            ),
-            ResponseType: responseTypeName,
-            MarkerInterfaces: markerInterfaces,
-            UnboundMarkerInterfaces: unboundMarkerInterfaces,
-            HandlerInterface: handlerInterface.ToDisplayString(
-                SymbolDisplayFormat.FullyQualifiedFormat
-            ),
-            SpecificBehaviors: specificBehaviors
+            classSymbol.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat),
+            requestType.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat),
+            responseType,
+            new List<string>(),
+            unboundMarkers.Distinct().ToList(),
+            handlerInterface.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat),
+            specificBehaviors
         );
     }
 
     #endregion
 
-    #region Source Generation Logic (GenerateMediatorClass)
+    #region Source Generation
 
     private static string GenerateMediatorClass(
         IReadOnlyList<HandlerInfo> handlers,
-        IReadOnlyList<BehaviorInfo> availableBehaviors
+        IReadOnlyList<BehaviorInfo?> behaviors
     )
     {
         StringBuilder sb = new StringBuilder();
         sb.AppendLine(
-            @"// <auto-generated> by LinKit.Generator
+            @"// <auto-generated />
 #nullable enable
 using LinKit.Core.Cqrs;
 using Microsoft.Extensions.DependencyInjection;
@@ -439,104 +349,79 @@ namespace LinKit.Generated.Cqrs
         private readonly IServiceProvider _serviceProvider;
         public Mediator(IServiceProvider serviceProvider) => _serviceProvider = serviceProvider;
 
-        public Task SendAsync(ICommand command, CancellationToken cancellationToken = default)
-        {
-            return (object)command switch
-            {"
+        public Task SendAsync(ICommand command, CancellationToken cancellationToken = default) => (object)command switch {"
         );
 
-        IEnumerable<HandlerInfo> voidCommandHandlers = handlers.Where(h =>
-            h.HandlerInterface.Contains(ICommandHandlerName) && h.ResponseType == UnitTypeName
-        );
-        foreach (HandlerInfo? handler in voidCommandHandlers)
-        {
+        foreach (
+            var h in handlers.Where(x =>
+                GetCleanName(x.HandlerInterface) == ICommandHandlerName
+                && x.ResponseType == UnitTypeName
+            )
+        )
             sb.AppendLine(
-                $"                {handler.RequestType} c => HandleVoidRequest(c, cancellationToken),"
+                $"            {h.RequestType} c => HandleVoidRequest(c, cancellationToken),"
             );
-        }
+
         sb.AppendLine(
-            @"                _ => throw new InvalidOperationException($""No handler found for command type {command.GetType().FullName}"")
-            };
-        }
+            @"            _ => throw new InvalidOperationException()
+        };
 
-        public Task<TResponse> SendAsync<TResponse>(ICommand<TResponse> command, CancellationToken cancellationToken = default)
-        {
-            return (object)command switch
-            {"
+        public Task<TResponse> SendAsync<TResponse>(ICommand<TResponse> command, CancellationToken cancellationToken = default) => (object)command switch {"
         );
 
-        IEnumerable<HandlerInfo> resultCommandHandlers = handlers.Where(h =>
-            h.HandlerInterface.Contains(ICommandHandlerName) && h.ResponseType != UnitTypeName
-        );
-        foreach (HandlerInfo? handler in resultCommandHandlers)
-        {
+        foreach (
+            var h in handlers.Where(x =>
+                GetCleanName(x.HandlerInterface) == ICommandHandlerName
+                && x.ResponseType != UnitTypeName
+            )
+        )
             sb.AppendLine(
-                $"                {handler.RequestType} c => (Task<TResponse>)(object)HandleResultRequest(c, cancellationToken),"
+                $"            {h.RequestType} c => (Task<TResponse>)(object)HandleResultRequest(c, cancellationToken),"
             );
-        }
+
         sb.AppendLine(
-            @"                _ => throw new InvalidOperationException($""No handler found for command type {command.GetType().FullName}"")
-            };
-        }
+            @"            _ => throw new InvalidOperationException()
+        };
 
-        public Task<TResponse> QueryAsync<TResponse>(IQuery<TResponse> query, CancellationToken cancellationToken = default)
-        {
-            return (object)query switch
-            {"
+        public Task<TResponse> QueryAsync<TResponse>(IQuery<TResponse> query, CancellationToken cancellationToken = default) => (object)query switch {"
         );
 
-        IEnumerable<HandlerInfo> queryHandlers = handlers.Where(h =>
-            h.HandlerInterface.Contains(IQueryHandlerName)
-        );
-        foreach (HandlerInfo? handler in queryHandlers)
-        {
+        foreach (
+            var h in handlers.Where(x => GetCleanName(x.HandlerInterface) == IQueryHandlerName)
+        )
             sb.AppendLine(
-                $"                {handler.RequestType} q => (Task<TResponse>)(object)HandleResultRequest(q, cancellationToken),"
+                $"            {h.RequestType} q => (Task<TResponse>)(object)HandleResultRequest(q, cancellationToken),"
             );
-        }
+
         sb.AppendLine(
-            @"                _ => throw new InvalidOperationException($""No handler found for query type {query.GetType().FullName}"")
-            };
-        }
-"
+            @"            _ => throw new InvalidOperationException()
+        };"
         );
 
-        foreach (HandlerInfo? handler in handlers.Where(h => h.ResponseType != UnitTypeName))
+        foreach (var h in handlers)
         {
-            sb.AppendLine(
-                $@"
-        private Task<{handler.ResponseType}> HandleResultRequest({handler.RequestType} request, CancellationToken cancellationToken)
-        {{
-            RequestHandlerDelegate<{handler.ResponseType}> next = () => _serviceProvider.GetRequiredService<{handler.HandlerInterface}>().HandleAsync(request, cancellationToken);
-"
-            );
-            GeneratePipelineLogic(sb, handler, availableBehaviors, hasResult: true);
-            sb.Append(
-                @"
-            return next();
+            if (h.ResponseType == UnitTypeName)
+            {
+                sb.AppendLine(
+                    $@"
+        private async Task HandleVoidRequest({h.RequestType} request, CancellationToken cancellationToken) {{
+            Func<Task> next = () => _serviceProvider.GetRequiredService<{h.HandlerInterface}>().HandleAsync(request, cancellationToken);"
+                );
+                GeneratePipelineLogic(sb, h, behaviors!, false);
+                sb.AppendLine("            await next();\n        }");
+            }
+            else
+            {
+                sb.AppendLine(
+                    $@"
+        private Task<{h.ResponseType}> HandleResultRequest({h.RequestType} request, CancellationToken cancellationToken) {{
+            RequestHandlerDelegate<{h.ResponseType}> next = () => _serviceProvider.GetRequiredService<{h.HandlerInterface}>().HandleAsync(request, cancellationToken);"
+                );
+                GeneratePipelineLogic(sb, h, behaviors!, true);
+                sb.AppendLine("            return next();\n        }");
+            }
         }
-"
-            );
-        }
-
-        foreach (HandlerInfo? handler in handlers.Where(h => h.ResponseType == UnitTypeName))
-        {
-            sb.AppendLine(
-                $@"
-        private async Task HandleVoidRequest({handler.RequestType} request, CancellationToken cancellationToken)
-        {{
-            Func<Task> next = () => _serviceProvider.GetRequiredService<{handler.HandlerInterface}>().HandleAsync(request, cancellationToken);
-"
-            );
-            GeneratePipelineLogic(sb, handler, availableBehaviors, hasResult: false);
-            sb.AppendLine("            await next();");
-            sb.AppendLine("        }");
-            sb.AppendLine();
-        }
-
-        sb.AppendLine("    }");
-        sb.AppendLine("}");
-
+        sb.AppendLine("    }\n}");
         return sb.ToString();
     }
 
@@ -547,71 +432,36 @@ namespace LinKit.Generated.Cqrs
         bool hasResult
     )
     {
-        List<BehaviorInfo> applicableContractBehaviors = availableBehaviors
-            .Where(b =>
-            {
-                bool targetMatch =
-                    b.TargetInterface is null
-                    || b.TargetInterface == "global::System.Object"
-                    || handler.MarkerInterfaces.Contains(b.TargetInterface);
-
-                if (!targetMatch)
-                {
-                    return false;
-                }
-
-                bool constraintsMatch = b.GenericConstraints.All(constraint =>
-                    handler.UnboundMarkerInterfaces.Contains(constraint)
-                    || handler.MarkerInterfaces.Contains(constraint)
-                );
-
-                return constraintsMatch;
-            })
+        var global = availableBehaviors
+            .Where(b => IsBehaviorApplicable(b, handler))
             .OrderBy(b => b.Order)
             .ToList();
 
-        foreach (string? specificBehaviorType in handler.SpecificBehaviors.AsEnumerable().Reverse())
+        // Wrap Specific (ApplyBehavior)
+        foreach (var sbType in handler.SpecificBehaviors.AsEnumerable().Reverse())
         {
-            string closedBehaviorType =
-                $"{specificBehaviorType.Split('<')[0]}<{handler.RequestType}, {handler.ResponseType}>";
-            sb.AppendLine("            {");
-            sb.AppendLine("                var capturedNext = next;");
-            if (hasResult)
-            {
-                sb.AppendLine(
-                    $@"                next = () => _serviceProvider.GetRequiredService<{closedBehaviorType}>().HandleAsync(request, capturedNext, cancellationToken);"
-                );
-            }
-            else
-            {
-                sb.AppendLine(
-                    $"                next = async () => {{ var _ = await _serviceProvider.GetRequiredService<{closedBehaviorType}>().HandleAsync(request, () => capturedNext().ContinueWith(_ => {UnitTypeName}.Value, cancellationToken), cancellationToken); }};"
-                );
-            }
-            sb.AppendLine("            }");
+            string closedType =
+                $"{GetCleanName(sbType)}<{handler.RequestType}, {handler.ResponseType}>";
+            sb.AppendLine(
+                $@"            {{
+                var capturedNext = next;
+                next = {(hasResult ? "" : "async ")}() => {(hasResult ? "" : "await ")}_serviceProvider.GetRequiredService<{closedType}>().HandleAsync(request, {(hasResult ? "capturedNext" : "() => capturedNext().ContinueWith(_ => " + UnitTypeName + ".Value, cancellationToken)")}, cancellationToken);
+            }}"
+            );
         }
 
-        foreach (BehaviorInfo? behavior in applicableContractBehaviors.AsEnumerable().Reverse())
+        // Wrap Global
+        foreach (var b in global.AsEnumerable().Reverse())
         {
-            string closedBehaviorType =
-                $"{behavior.UnboundBehaviorType}<{handler.RequestType}, {handler.ResponseType}>";
-            sb.AppendLine("            {");
-            sb.AppendLine("                var capturedNext = next;");
-            if (hasResult)
-            {
-                sb.AppendLine(
-                    $@"                next = () => _serviceProvider.GetRequiredService<{closedBehaviorType}>().HandleAsync(request, capturedNext, cancellationToken);"
-                );
-            }
-            else
-            {
-                sb.AppendLine(
-                    $"                next = async () => {{ var _ = await _serviceProvider.GetRequiredService<{closedBehaviorType}>().HandleAsync(request, () => capturedNext().ContinueWith(_ => {UnitTypeName}.Value, cancellationToken), cancellationToken); }};"
-                );
-            }
-            sb.AppendLine("            }");
+            string closedType =
+                $"{b.UnboundBehaviorType}<{handler.RequestType}, {handler.ResponseType}>";
+            sb.AppendLine(
+                $@"            {{
+                var capturedNext = next;
+                next = {(hasResult ? "" : "async ")}() => {(hasResult ? "" : "await ")}_serviceProvider.GetRequiredService<{closedType}>().HandleAsync(request, {(hasResult ? "capturedNext" : "() => capturedNext().ContinueWith(_ => " + UnitTypeName + ".Value, cancellationToken)")}, cancellationToken);
+            }}"
+            );
         }
     }
-
     #endregion
 }

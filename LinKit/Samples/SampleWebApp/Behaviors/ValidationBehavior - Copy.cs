@@ -4,10 +4,10 @@ using System.ComponentModel.DataAnnotations;
 
 namespace SampleWebApp.Behaviors;
 
-[CqrsBehavior(typeof(IQuery<>), 1)]
-public class ValidationBehavior<TRequest, TResponse>(IServiceProvider serviceProvider)
+[CqrsBehavior(typeof(IRequest), 1)]
+public class ValidationBehavior1<TRequest, TResponse>(IServiceProvider serviceProvider)
     : IPipelineBehavior<TRequest, TResponse>
-    where TRequest : IQuery<TResponse>
+    where TRequest : IRequest<TResponse>
 {
     private readonly IServiceProvider _serviceProvider = serviceProvider;
 

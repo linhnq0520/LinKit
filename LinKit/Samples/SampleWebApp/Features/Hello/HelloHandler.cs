@@ -2,7 +2,7 @@
 
 namespace SampleWebApp.Features.Hello
 {
-    [CqrsHandler]
+    //[CqrsHandler]
     public class HelloHandler : IQueryHandler<HelloQuery, HelloReply>
     {
         public Task<HelloReply> HandleAsync(HelloQuery request, CancellationToken cancellationToken = default)

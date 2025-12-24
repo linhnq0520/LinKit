@@ -14,7 +14,7 @@ builder.Services.AddGrpc();
 //builder.Services.AddLinKitRabbitMQ(builder.Configuration);
 
 builder.Services.AddLogging();
-builder.AddBackgroundJobs();
+//builder.AddBackgroundJobs();
 
 // --- Swagger ---
 builder.Services.AddEndpointsApiExplorer();

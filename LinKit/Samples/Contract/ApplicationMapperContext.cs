@@ -1,5 +1,6 @@
 ﻿using Contract.Models;
 using LinKit.Core.Mapping;
+using LinKit.Json.Runtime;
 
 namespace Contract;
 
@@ -13,7 +14,7 @@ public partial class ApplicationMapperContext : IMappingConfigurator
             .ForMember(dest => dest.Name, opt => opt.Ignore())
             .ForMember(
                 dest => dest.Name,
-                opt => opt.MapFrom(src => src.Models[0].Prop1 + " " + src.UserName)
+                opt => opt.MapFrom(src => src.Models[0].ToJson(null, null))
             )
             .ForMember(
                 dest => dest.ExtraInfo,

@@ -23,7 +23,7 @@ internal record EndpointInfo(
     string HttpMethod,
     string Route,
     bool IsCommandWithoutResult,
-    bool ICommand,
+    bool IsCommand,
     string FeatureName,
     string? CustomName,
     string? GroupPrefix,
@@ -277,7 +277,7 @@ internal static class EndpointsGeneratorPart
             HttpMethod: httpMethodEnum.ToString(),
             Route: route,
             IsCommandWithoutResult: isCommandWithoutResult,
-            ICommand: isCommand,
+            IsCommand: isCommand,
             FeatureName: featureName,
             CustomName: customName,
             GroupPrefix: groupPrefix,
@@ -558,7 +558,7 @@ internal static class EndpointsGeneratorPart
         }
         else
         {
-            if (endpoint.ICommand)
+            if (endpoint.IsCommand)
             {
                 sb.AppendLine(
                     $"                var result = await mediator.SendAsync(request, cancellationToken);"

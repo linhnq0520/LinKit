@@ -26,7 +26,7 @@ public record GetUserQuery : IQuery<UserDto>, IValidator
 //[GrpcEndpoint(typeof(UserGrpcService.UserGrpcServiceBase), "GetUsers")]
 public record GetUsersQuery : IQuery<UsersDto>, IValidator { };
 
-[CqrsHandler]
+//[CqrsHandler]
 public class GetUserQueryHandler : IQueryHandler<GetUserQuery, UserDto>
 {
     public Task<UserDto> HandleAsync(
@@ -39,7 +39,7 @@ public class GetUserQueryHandler : IQueryHandler<GetUserQuery, UserDto>
     }
 }
 
-[CqrsHandler]
+//[CqrsHandler]
 public class GetUsersQueryHandler : IQueryHandler<GetUsersQuery, UsersDto>
 {
     public Task<UsersDto> HandleAsync(

@@ -48,193 +48,129 @@ dotnet add package LinKit.Messaging.RabbitMQ
 
 ### 1. CQRS Kit
 
-A high-performance, source-generated Mediator for implementing the CQRS (Command Query Responsibility Segregation) pattern with zero reflection.
+A high-performance, source-generated Mediator for implementing the CQRS (Command Query Responsibility Segregation) pattern with **zero reflection**.
 
-The LinKit CQRS Kit provides a clean, type-safe API for sending commands and queries. The source generator analyzes your request and handler classes, then creates a highly optimized `Mediator` implementation that wires everything together at compile time. This approach guarantees the best possible runtime performance and is fully compatible with NativeAOT.
+The LinKit CQRS Kit analyzes your code at compile time to generate a highly optimized `Mediator`. It supports modular registration, advanced pipeline behaviors, and is fully compatible with NativeAOT.
 
-#### Core Concepts
+#### Core Interfaces
 
-LinKit defines a clear set of interfaces for your requests:
-
--   `ICommand`: Represents an operation that changes the state of the system but does not return a value (a "fire-and-forget" action).
--   `ICommand<TResponse>`: Represents an operation that changes state and returns a value (e.g., creating an entity and returning its new ID).
--   `IQuery<TResponse>`: Represents an operation that retrieves data and does not change the state of the system.
-
-#### How It Works
-
-1.  **Define Requests:** Create classes that implement one of the core request interfaces (`ICommand`, `ICommand<TResponse>`, or `IQuery<TResponse>`).
-2.  **Create Handlers:** For each request, create a handler class that implements the corresponding handler interface (`ICommandHandler` or `IQueryHandler`). Mark the handler with the `[CqrsHandler]` attribute for discovery.
-3.  **Register Services:** In your `Program.cs`, call the `builder.Services.AddLinKitCqrs()` extension method. This single call registers the generated `IMediator`, all your handlers, and any pipeline behaviors.
-4.  **Inject and Use:** Inject `IMediator` into your controllers, services, or other handlers and use its simple, intentional API to send requests.
+-   `ICommand`: A "void" operation (returns `Task<Unit>`).
+-   `ICommand<TResponse>`: An operation that changes state and returns a value.
+-   `IQuery<TResponse>`: A data retrieval operation.
 
 ---
 
-#### Step-by-Step Usage
+#### Step 1: Define Requests & Handlers
 
-**Step 1: Define Your Requests**
-
-Create classes for each command and query. The interface you implement determines which `IMediator` method you will use.
-
-**Example 1: A Query that returns data**
-This query will fetch a `UserDto` object.
-
+**1. Create a Request:**
 ```csharp
-// In: Features/Users/GetUserQuery.cs
-public class GetUserQuery : IQuery<UserDto>
-{
-    public int UserId { get; set; }
-}
+public record CreateUserCommand(string Name) : ICommand<int>;
 ```
 
-**Example 2: A Command that does not return a value**
-This command creates a new user. It implements `ICommand`, signifying a "void" operation.
-
+**2. Create a Handler:**
+Mark your handler with `[CqrsHandler]` for automatic discovery.
 ```csharp
-// In: Features/Users/CreateUserCommand.cs
-public class CreateUserCommand : ICommand
-{
-    public string UserName { get; set; }
-    public string Email { get; set; }
-}
-```
-
-**Example 3: A Command that returns a value**
-This command creates an order and returns the `Guid` of the newly created entity.
-
-```csharp
-// In: Features/Orders/CreateOrderCommand.cs
-public class CreateOrderCommand : ICommand<Guid>
-{
-    public Guid CustomerId { get; set; }
-    public List<OrderItemDto> Items { get; set; }
-}
-```
-
-**Step 2: Create Handlers**
-
-For each request, create a corresponding handler and mark it with `[CqrsHandler]`.
-
-**Handler for the Query:**
-
-```csharp
-// In: Features/Users/GetUserHandler.cs
-using LinKit.Core.Cqrs;
-
 [CqrsHandler]
-public class GetUserHandler : IQueryHandler<GetUserQuery, UserDto>
+public class CreateUserHandler : ICommandHandler<CreateUserCommand, int>
 {
-    private readonly IUserRepository _userRepository;
-
-    public GetUserHandler(IUserRepository userRepository)
-    {
-        _userRepository = userRepository;
-    }
-
-    public async Task<UserDto> HandleAsync(GetUserQuery query, CancellationToken cancellationToken)
-    {
-        var user = await _userRepository.GetByIdAsync(query.UserId);
-        // Map user entity to UserDto and return...
-        return user.ToUserDto();
-    }
+    public async Task<int> HandleAsync(CreateUserCommand request, CancellationToken ct) 
+        => await Task.FromResult(1);
 }
 ```
 
-**Handler for the "void" Command:**
-For commands that don't return a value (`ICommand`), the handler must return `Task<Unit>` and end with `return Unit.Value;`. The `Unit` type is a special struct provided by LinKit to represent a `void` result in a generic context.
+---
+
+#### Step 2: Modular Registration (CqrsContext)
+
+Instead of marking every handler with an attribute, you can group them into a **Context**. This is ideal for Modular Monolith architectures to keep registration centralized and explicit.
 
 ```csharp
-// In: Features/Users/CreateUserHandler.cs
-using LinKit.Core.Cqrs;
+[CqrsContext(
+    typeof(CreateUserHandler),
+    typeof(GetUserHandler),
+    typeof(UpdateOrderHandler)
+)]
+public partial class UserModuleContext { }
+```
+*Note: The generator combines handlers found via both `[CqrsHandler]` and `[CqrsContext]`.*
 
-[CqrsHandler]
-public class CreateUserHandler : ICommandHandler<CreateUserCommand>
-{
-    private readonly AppDbContext _context;
+---
 
-    public CreateUserHandler(AppDbContext context)
-    {
-        _context = context;
-    }
+#### Step 3: Advanced Pipeline Behaviors
 
-    public async Task<Unit> HandleAsync(CreateUserCommand command, CancellationToken cancellationToken)
-    {
-        var user = new User { UserName = command.UserName, Email = command.Email };
-        _context.Users.Add(user);
-        await _context.SaveChangesAsync(cancellationToken);
-        
-        // Always return Unit.Value for ICommand handlers
-        return Unit.Value;
-    }
-}
+LinKit's pipeline is generated at compile-time using a **Clean Name matching engine**. This means a behavior targeting `ICommand` will automatically match both `ICommand` and `ICommand<TResponse>`.
+
+##### A. Global & Contract Behaviors (`[CqrsBehavior]`)
+Use this for cross-cutting concerns. You can target a specific marker interface or use `typeof(object)` for a truly global behavior.
+
+```csharp
+// 1. Truly Global Behavior (Runs for EVERYTHING: Commands and Queries)
+[CqrsBehavior(typeof(object), Order = 1)]
+public class LoggingBehavior<TRequest, TResponse> : IPipelineBehavior<TRequest, TResponse> 
+    where TRequest : IRequest<TResponse>
+{ ... }
+
+// 2. Contract-based Behavior (Runs only for Commands)
+// LinKit automatically matches ICommand, ICommand<T>, and their implementations.
+[CqrsBehavior(typeof(ICommand), Order = 2)]
+public class TransactionBehavior<TRequest, TResponse> : IPipelineBehavior<TRequest, TResponse>
+    where TRequest : ICommand<TResponse>
+{ ... }
 ```
 
-**Step 3: Register the CQRS Kit**
-
-In your application's entry point (`Program.cs`), add the LinKit CQRS services.
+##### B. Specific Behaviors (`[ApplyBehavior]`)
+Use this for ad-hoc logic applied directly to a specific request class. These behaviors run **closest to the handler**.
 
 ```csharp
-var builder = WebApplication.CreateBuilder(args);
+[ApplyBehavior(typeof(ValidationBehavior<,>), typeof(IdempotencyBehavior<,>))]
+public record ProcessPaymentCommand(Guid Id) : ICommand<bool>;
+```
 
-// This extension method finds the source generator and registers
-// the generated Mediator, all handlers, and all behaviors.
+**Execution Order:**
+1. Global Behaviors (by `Order`)
+2. Contract Behaviors (by `Order`)
+3. Specific Behaviors (defined in `[ApplyBehavior]`)
+4. Final Handler
+
+---
+
+#### Step 4: Register and Use
+
+**Registration:**
+```csharp
+// Program.cs
+// This single call registers the generated Mediator, all Handlers, 
+// and wires up the entire Pipeline.
 builder.Services.AddLinKitCqrs();
-
-// Add other services like DbContext, repositories, etc.
-builder.Services.AddDbContext<AppDbContext>(...);
-builder.Services.AddScoped<IUserRepository, UserRepository>();
-
-var app = builder.Build();
 ```
 
-**Step 4: Use the Mediator**
-
-Inject `IMediator` and call the appropriate method based on your request type. The API is clean, explicit, and type-safe.
-
+**Usage:**
 ```csharp
-using LinKit.Core.Cqrs;
-using Microsoft.AspNetCore.Mvc;
-
-[ApiController]
-[Route("api/[controller]")]
-public class UsersController : ControllerBase
+public class MyApi(IMediator mediator)
 {
-    private readonly IMediator _mediator;
-
-    public UsersController(IMediator mediator)
+    public async Task Invoke()
     {
-        _mediator = mediator;
-    }
+        // Use SendAsync for ICommand / ICommand<T>
+        int userId = await mediator.SendAsync(new CreateUserCommand("Alice"));
 
-    [HttpGet("{id}")]
-    public async Task<IActionResult> GetUserById(int id)
-    {
-        var query = new GetUserQuery { UserId = id };
-        
-        // Use QueryAsync for IQuery<TResponse>
-        var userDto = await _mediator.QueryAsync(query);
-        
-        return Ok(userDto);
-    }
-
-    [HttpPost]
-    public async Task<IActionResult> CreateUser([FromBody] CreateUserCommand command)
-    {
-        // Use SendAsync for ICommand
-        await _mediator.SendAsync(command);
-
-        return Created();
-    }
-
-    [HttpPost("orders")]
-    public async Task<IActionResult> CreateOrder([FromBody] CreateOrderCommand command)
-    {
-        // Use the SendAsync<TResponse> overload for ICommand<TResponse>
-        Guid newOrderId = await _mediator.SendAsync(command);
-        
-        return CreatedAtAction(nameof(GetOrderById), new { id = newOrderId }, newOrderId);
+        // Use QueryAsync for IQuery<T>
+        var user = await mediator.QueryAsync(new GetUserQuery(userId));
     }
 }
 ```
+
+---
+
+#### Why LinKit Mediator is Different?
+
+| Feature | LinKit (Source Gen) | MediatR (Reflection) |
+| :--- | :--- | :--- |
+| **Performance** | Direct method calls (Zero Reflection) | Reflection-based `Activator.CreateInstance` |
+| **Startup Time** | Instant (Static registration) | Slow (Assembly scanning) |
+| **NativeAOT** | Fully Compatible | Requires complex workarounds |
+| **Pipeline** | Compile-time static graph | Runtime dynamic construction |
+| **Error Messages** | Compile-time errors | Runtime exceptions |
+
 ---
 
 ### Advanced: Pipeline Behaviors for Cross-Cutting Concerns

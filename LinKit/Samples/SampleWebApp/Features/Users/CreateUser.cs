@@ -6,13 +6,13 @@ using SampleWebApp.Contracts.Behaviors;
 namespace SampleWebApp.Features.Users;
 
 //[ApiEndpoint(ApiMethod.Post, "create-user")]
-[BackgroundJob("AutoCreateUser")]
+//[BackgroundJob("AutoCreateUser")]
 public class CreateUserCommand : BackgroundJobCommand, IAuditable, IValidator
 {
     public string Name { get; set; }
 };
 
-[CqrsHandler]
+//[CqrsHandler]
 public class CreateUser : ICommandHandler<CreateUserCommand>
 {
     public Task<Unit> HandleAsync(

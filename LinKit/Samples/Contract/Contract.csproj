@@ -10,6 +10,7 @@
 	<ItemGroup>
 		<Protobuf Include="Protos\users.proto" GrpcServices="Both" />
 		<PackageReference Include="Grpc.AspNetCore" Version="2.71.0" />
+		<PackageReference Include="LinKit.Json.Runtime" Version="1.0.0" />
 		<!--<PackageReference Include="LinKit.Core" Version="1.0.5" />-->
 		<ProjectReference Include="..\..\LinKit.Core\LinKit.Core.csproj" />
 		<ProjectReference Include="..\..\LinKit.Generator\LinKit.Generator.csproj" OutputItemType="Analyzer" ReferenceOutputAssembly="false" />

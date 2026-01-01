@@ -8,7 +8,7 @@ public enum ApiMethod
     Post,
     Put,
     Delete,
-    Patch
+    Patch,
 }
 
 /// <summary>
@@ -82,6 +82,7 @@ public sealed class ApiEndpointAttribute : Attribute
     /// API version (e.g., "1.0", "2.0")
     /// </summary>
     public string? Version { get; set; }
+    public string? MediatorKey { get; set; }
 
     public ApiEndpointAttribute(ApiMethod method, string route)
     {

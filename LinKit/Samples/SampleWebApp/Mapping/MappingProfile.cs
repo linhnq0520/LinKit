@@ -12,6 +12,7 @@ namespace SampleWebApp.Mapping
         {
             builder.CreateMap<UpdateUserCommand, User>().ForMember(d => d.Name, o => o.MapFrom(s => s.Id.ToJson(null, null)));
             builder.CreateMap<User, UpdateUserResposne>();
+            builder.CreateMap<User, User1>();
         }
     }
 }

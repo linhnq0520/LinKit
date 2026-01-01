@@ -1,11 +1,11 @@
-﻿using Microsoft.CodeAnalysis;
-using Microsoft.CodeAnalysis.CSharp.Syntax;
-using Microsoft.CodeAnalysis.Text;
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text;
 using System.Text.RegularExpressions;
+using Microsoft.CodeAnalysis;
+using Microsoft.CodeAnalysis.CSharp.Syntax;
+using Microsoft.CodeAnalysis.Text;
 
 namespace LinKit.Generator.Generators;
 
@@ -35,7 +35,8 @@ internal record EndpointInfo(
     string? Description,
     string? RateLimitPolicy,
     string? CorsPolicy,
-    string? Version
+    string? Version,
+    string? MediatorKey
 );
 
 internal record ExceptionMappingInfo(
@@ -100,10 +101,7 @@ internal static class EndpointsGeneratorPart
             endpointDeclarations.Collect().Combine(routeGroups),
             (spc, data) =>
             {
-                (
-                    System.Collections.Immutable.ImmutableArray<EndpointInfo> endpoints,
-                    List<RouteGroupInfo> groups
-                ) = data;
+                var (endpoints, groups) = data;
                 List<EndpointInfo> validEndpoints = endpoints.OfType<EndpointInfo>().ToList();
                 if (!validEndpoints.Any())
                 {
@@ -168,7 +166,6 @@ internal static class EndpointsGeneratorPart
                     break;
             }
         }
-
         return new RouteGroupInfo(prefix!, tag, feature, requireAuth, policies);
     }
 
@@ -180,9 +177,10 @@ internal static class EndpointsGeneratorPart
         }
 
         AttributeData attributeData = context.Attributes[0];
-        Core.Endpoints.ApiMethod httpMethodEnum = (Core.Endpoints.ApiMethod)(
-            attributeData.ConstructorArguments[0].Value ?? 0
-        );
+        var methodValue = attributeData.ConstructorArguments[0].Value;
+        string httpMethodStr = methodValue is int i
+            ? ((LinKit.Core.Endpoints.ApiMethod)i).ToString()
+            : "Get";
         string route = attributeData.ConstructorArguments[1].Value as string ?? "";
 
         route = NormalizeRoute(route);
@@ -222,12 +220,13 @@ internal static class EndpointsGeneratorPart
         string? customName = null,
             groupPrefix = null,
             policies = null,
-            roles = null;
-        string? summary = null,
+            roles = null,
+            summary = null,
             description = null,
             rateLimitPolicy = null,
             corsPolicy = null,
-            version = null;
+            version = null,
+            mediatorKey = null;
         bool requireAuth = false,
             allowAnonymous = false;
 
@@ -268,13 +267,16 @@ internal static class EndpointsGeneratorPart
                 case "Version":
                     version = named.Value.Value as string;
                     break;
+                case "MediatorKey":
+                    mediatorKey = named.Value.Value as string;
+                    break;
             }
         }
 
         return new EndpointInfo(
             RequestType: requestSymbol.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat),
             ResponseType: responseType,
-            HttpMethod: httpMethodEnum.ToString(),
+            HttpMethod: httpMethodStr,
             Route: route,
             IsCommandWithoutResult: isCommandWithoutResult,
             IsCommand: isCommand,
@@ -289,7 +291,8 @@ internal static class EndpointsGeneratorPart
             Description: description,
             RateLimitPolicy: rateLimitPolicy,
             CorsPolicy: corsPolicy,
-            Version: version
+            Version: version,
+            MediatorKey: mediatorKey
         );
     }
 
@@ -330,14 +333,12 @@ internal static class EndpointsGeneratorPart
         }
 
         return new ExceptionMappingInfo(
-            ExceptionType: exceptionSymbol.ToDisplayString(
-                SymbolDisplayFormat.FullyQualifiedFormat
-            ),
-            StatusCode: statusCode,
-            Title: title,
-            IncludeDetails: includeDetails,
-            LogException: logException,
-            LogLevel: logLevel
+            exceptionSymbol.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat),
+            statusCode,
+            title,
+            includeDetails,
+            logException,
+            logLevel
         );
     }
 
@@ -352,25 +353,18 @@ internal static class EndpointsGeneratorPart
             return "";
         }
 
-        // Remove leading/trailing whitespace
         route = route.Trim();
-
-        // Ensure starts with /
         if (!route.StartsWith("/"))
         {
             route = "/" + route;
         }
 
-        // Remove duplicate slashes
         route = Regex.Replace(route, @"/+", "/");
-
-        // Remove trailing slash (except for root)
         if (route.Length > 1 && route.EndsWith("/"))
         {
             route = route.TrimEnd('/');
         }
 
-        // Validate route parameters
         if (!IsValidRoute(route))
         {
             throw new InvalidOperationException($"Invalid route: {route}");
@@ -381,41 +375,22 @@ internal static class EndpointsGeneratorPart
 
     private static bool IsValidRoute(string route)
     {
-        // Check for valid route parameter syntax
         string paramPattern = @"\{[a-zA-Z_][a-zA-Z0-9_]*(:.*?)?\}";
         string[] segments = route.Split('/');
-
-        foreach (string? segment in segments)
+        foreach (string segment in segments)
         {
             if (string.IsNullOrEmpty(segment))
             {
                 continue;
             }
 
-            if (segment.Contains("{"))
+            if (segment.Contains("{") && !Regex.IsMatch(segment, $"^{paramPattern}$"))
             {
-                if (!Regex.IsMatch(segment, $"^{paramPattern}$"))
-                {
-                    return false;
-                }
+                return false;
             }
         }
-
         return true;
     }
-
-    //private static string CombineRoutes(string? prefix, string route)
-    //{
-    //    if (string.IsNullOrEmpty(prefix))
-    //    {
-    //        return route;
-    //    }
-
-    //    prefix = NormalizeRoute(prefix);
-    //    route = route.TrimStart('/');
-
-    //    return $"{prefix}/{route}";
-    //}
 
     #endregion
 
@@ -433,23 +408,28 @@ internal static class EndpointsGeneratorPart
         sb.AppendLine("using Microsoft.AspNetCore.Builder;");
         sb.AppendLine("using Microsoft.AspNetCore.Http;");
         sb.AppendLine("using Microsoft.AspNetCore.Routing;");
+        sb.AppendLine("using Microsoft.Extensions.DependencyInjection;"); // Required for Keyed Services
         sb.AppendLine("using System.Threading;");
         sb.AppendLine();
         sb.AppendLine("namespace LinKit.Core");
         sb.AppendLine("{");
         sb.AppendLine("    internal static partial class GeneratedEndpointsExtensions");
         sb.AppendLine("    {");
+
+        // Private helper to handle Ok/NotFound safely for both ValueTypes and ReferenceTypes
+        sb.AppendLine(
+            "        private static IResult ToResult<T>(T result) => result is not null ? Results.Ok(result) : Results.NotFound();"
+        );
+        sb.AppendLine();
+
         sb.AppendLine(
             "        public static IEndpointRouteBuilder MapGeneratedEndpoints(this IEndpointRouteBuilder app)"
         );
         sb.AppendLine("        {");
 
-        // Group endpoints by feature/group
-        List<IGrouping<string, EndpointInfo>> groupedEndpoints = endpoints
-            .GroupBy(e => e.GroupPrefix ?? e.FeatureName)
-            .ToList();
+        var groupedEndpoints = endpoints.GroupBy(e => e.GroupPrefix ?? e.FeatureName).ToList();
 
-        foreach (IGrouping<string, EndpointInfo>? group in groupedEndpoints)
+        foreach (var group in groupedEndpoints)
         {
             string groupKey = group.Key;
             RouteGroupInfo? groupInfo = routeGroups.FirstOrDefault(g =>
@@ -462,7 +442,6 @@ internal static class EndpointsGeneratorPart
                 sb.AppendLine(
                     $"            var group_{SanitizeIdentifier(groupKey)} = app.MapGroup(\"{NormalizeRoute(groupInfo.Prefix)}\")"
                 );
-
                 if (!string.IsNullOrEmpty(groupInfo.Tag))
                 {
                     sb.AppendLine($"                .WithTags(\"{groupInfo.Tag}\")");
@@ -475,23 +454,19 @@ internal static class EndpointsGeneratorPart
 
                 if (!string.IsNullOrEmpty(groupInfo.Policies))
                 {
-                    IEnumerable<string> policies = groupInfo
-                        .Policies!.Split(',')
-                        .Select(p => $"\"{p.Trim()}\"");
+                    var policies = groupInfo.Policies!.Split(',').Select(p => $"\"{p.Trim()}\"");
                     sb.AppendLine(
                         $"                .RequireAuthorization({string.Join(", ", policies)})"
                     );
                 }
-
                 sb.AppendLine("                ;");
                 sb.AppendLine();
             }
 
-            foreach (EndpointInfo? endpoint in group)
+            foreach (var endpoint in group)
             {
                 GenerateEndpoint(sb, endpoint, groupInfo, groupKey);
             }
-
             sb.AppendLine();
         }
 
@@ -511,10 +486,7 @@ internal static class EndpointsGeneratorPart
     )
     {
         List<string> handlerParams = [];
-        bool isBodyMethod =
-            endpoint.HttpMethod.Equals("POST", StringComparison.OrdinalIgnoreCase)
-            || endpoint.HttpMethod.Equals("PUT", StringComparison.OrdinalIgnoreCase)
-            || endpoint.HttpMethod.Equals("PATCH", StringComparison.OrdinalIgnoreCase);
+        bool isBodyMethod = !new[] { "GET", "DELETE" }.Contains(endpoint.HttpMethod.ToUpper());
 
         if (isBodyMethod)
         {
@@ -529,20 +501,15 @@ internal static class EndpointsGeneratorPart
             );
         }
 
-        handlerParams.Add("[Microsoft.AspNetCore.Mvc.FromServices] IMediator mediator");
+        // Mediator Injection (Check for Keyed Services)
+        string mediatorAttr = string.IsNullOrEmpty(endpoint.MediatorKey)
+            ? "[Microsoft.AspNetCore.Mvc.FromServices]"
+            : $"[Microsoft.Extensions.DependencyInjection.FromKeyedServices(\"{endpoint.MediatorKey}\")]";
+
+        handlerParams.Add($"{mediatorAttr} IMediator mediator");
         handlerParams.Add("CancellationToken cancellationToken");
 
-        string mapMethod = endpoint.HttpMethod switch
-        {
-            "Get" => "MapGet",
-            "Post" => "MapPost",
-            "Put" => "MapPut",
-            "Delete" => "MapDelete",
-            "Patch" => "MapPatch",
-            _ =>
-                $"MapMethods(\"{endpoint.Route}\", new[] {{ \"{endpoint.HttpMethod.ToUpper()}\" }})",
-        };
-
+        string mapMethod = $"Map{endpoint.HttpMethod}";
         string builder = groupInfo != null ? $"group_{SanitizeIdentifier(groupKey)}" : "app";
         string finalRoute = groupInfo != null ? endpoint.Route.TrimStart('/') : endpoint.Route;
 
@@ -558,33 +525,22 @@ internal static class EndpointsGeneratorPart
         }
         else
         {
-            if (endpoint.IsCommand)
-            {
-                sb.AppendLine(
-                    $"                var result = await mediator.SendAsync(request, cancellationToken);"
-                );
-            }
-            else
-            {
-                sb.AppendLine(
-                    $"                var result = await mediator.QueryAsync(request, cancellationToken);"
-                );
-            }
+            string call = endpoint.IsCommand ? "SendAsync" : "QueryAsync";
             sb.AppendLine(
-                "                return result is not null ? Results.Ok(result) : Results.NotFound();"
+                $"                var result = await mediator.{call}(request, cancellationToken);"
             );
+            // Use the ToResult helper to avoid boxing and handle ValueTypes correctly
+            sb.AppendLine("                return ToResult(result);");
         }
 
         sb.AppendLine("            })");
 
-        // Endpoint name
-        string endpointName = endpoint.CustomName ?? GenerateEndpointName(endpoint);
-        sb.AppendLine($"            .WithName(\"{endpointName}\")");
-
-        // Tags
+        // Metadata preservation
+        sb.AppendLine(
+            $"            .WithName(\"{endpoint.CustomName ?? GenerateEndpointName(endpoint)}\")"
+        );
         sb.AppendLine($"            .WithTags(\"{endpoint.FeatureName}\")");
 
-        // Summary & Description
         if (!string.IsNullOrEmpty(endpoint.Summary))
         {
             sb.AppendLine($"            .WithSummary(\"{EscapeString(endpoint.Summary!)}\")");
@@ -597,7 +553,6 @@ internal static class EndpointsGeneratorPart
             );
         }
 
-        // Authorization
         if (endpoint.AllowAnonymous)
         {
             sb.AppendLine("            .AllowAnonymous()");
@@ -608,26 +563,16 @@ internal static class EndpointsGeneratorPart
             || !string.IsNullOrEmpty(endpoint.Roles)
         )
         {
-            List<string> authPolicies = [];
-
-            if (!string.IsNullOrEmpty(endpoint.Policies))
-            {
-                authPolicies.AddRange(endpoint.Policies!.Split(',').Select(p => $"\"{p.Trim()}\""));
-            }
-
             if (!string.IsNullOrEmpty(endpoint.Roles))
             {
-                IEnumerable<string> roles = endpoint
-                    .Roles!.Split(',')
-                    .Select(r => $"\"{r.Trim()}\"");
                 sb.AppendLine(
                     $"            .RequireAuthorization(new Microsoft.AspNetCore.Authorization.AuthorizeAttribute {{ Roles = \"{endpoint.Roles}\" }})"
                 );
             }
-            else if (authPolicies.Any())
+            else if (!string.IsNullOrEmpty(endpoint.Policies))
             {
                 sb.AppendLine(
-                    $"            .RequireAuthorization({string.Join(", ", authPolicies)})"
+                    $"            .RequireAuthorization({string.Join(", ", endpoint.Policies!.Split(',').Select(p => $"\"{p.Trim()}\""))})"
                 );
             }
             else
@@ -636,19 +581,16 @@ internal static class EndpointsGeneratorPart
             }
         }
 
-        // Rate limiting
         if (!string.IsNullOrEmpty(endpoint.RateLimitPolicy))
         {
             sb.AppendLine($"            .RequireRateLimiting(\"{endpoint.RateLimitPolicy}\")");
         }
 
-        // CORS
         if (!string.IsNullOrEmpty(endpoint.CorsPolicy))
         {
             sb.AppendLine($"            .RequireCors(\"{endpoint.CorsPolicy}\")");
         }
 
-        // Response types
         if (endpoint.IsCommandWithoutResult)
         {
             sb.AppendLine("            .Produces(StatusCodes.Status200OK)");
@@ -660,10 +602,9 @@ internal static class EndpointsGeneratorPart
             );
             sb.AppendLine("            .Produces(StatusCodes.Status404NotFound)");
         }
-
-        sb.AppendLine("            .ProducesValidationProblem()");
-        sb.AppendLine("            .ProducesProblem(StatusCodes.Status500InternalServerError);");
-        sb.AppendLine();
+        sb.AppendLine(
+            "            .ProducesValidationProblem().ProducesProblem(StatusCodes.Status500InternalServerError);"
+        );
     }
 
     private static string GenerateEndpointName(EndpointInfo endpoint)
@@ -674,7 +615,6 @@ internal static class EndpointsGeneratorPart
             .Replace("Query", "")
             .Replace("Command", "")
             .Replace("Request", "");
-
         return $"{endpoint.HttpMethod}{requestTypeName}";
     }
 
@@ -711,7 +651,6 @@ internal static class EndpointsGeneratorPart
             "                    var contextFeature = context.Features.Get<IExceptionHandlerFeature>();"
         );
         sb.AppendLine("                    if (contextFeature == null) return;");
-        sb.AppendLine();
         sb.AppendLine(
             "                    var logger = context.RequestServices.GetService(typeof(ILogger<object>)) as ILogger;"
         );
@@ -720,80 +659,41 @@ internal static class EndpointsGeneratorPart
         );
         sb.AppendLine("                    var isDevelopment = env?.IsDevelopment() ?? false;");
         sb.AppendLine("                    var exception = contextFeature.Error;");
-        sb.AppendLine();
         sb.AppendLine(
             "                    context.Response.ContentType = \"application/problem+json\";"
         );
-        sb.AppendLine();
         sb.AppendLine("                    switch (exception)");
         sb.AppendLine("                    {");
 
-        // Built-in exception handling
-        sb.AppendLine("                        case ValidationException ex:");
-        sb.AppendLine(
-            "                            logger?.LogWarning(ex, \"Validation error occurred\");"
+        // Built-in handlers
+        AddBuiltInException(
+            sb,
+            "ValidationException",
+            "HttpStatusCode.BadRequest",
+            "Validation Error",
+            400,
+            "ex.Message"
         );
-        sb.AppendLine(
-            "                            context.Response.StatusCode = (int)HttpStatusCode.BadRequest;"
+        AddBuiltInException(
+            sb,
+            "UnauthorizedAccessException",
+            "HttpStatusCode.Forbidden",
+            "Forbidden",
+            403,
+            "\"You do not have permission to access this resource.\""
         );
-        sb.AppendLine("                            await context.Response.WriteAsJsonAsync(new");
-        sb.AppendLine("                            {");
-        sb.AppendLine(
-            "                                Type = \"https://tools.ietf.org/html/rfc7231#section-6.5.1\","
+        AddBuiltInException(
+            sb,
+            "ArgumentException",
+            "HttpStatusCode.BadRequest",
+            "Bad Request",
+            400,
+            "ex.Message"
         );
-        sb.AppendLine("                                Title = \"Validation Error\",");
-        sb.AppendLine("                                Status = 400,");
-        sb.AppendLine("                                Detail = ex.Message,");
-        sb.AppendLine("                                Instance = context.Request.Path");
-        sb.AppendLine("                            });");
-        sb.AppendLine("                            break;");
-        sb.AppendLine();
-        sb.AppendLine("                        case UnauthorizedAccessException ex:");
-        sb.AppendLine(
-            "                            logger?.LogWarning(ex, \"Unauthorized access attempt\");"
-        );
-        sb.AppendLine(
-            "                            context.Response.StatusCode = (int)HttpStatusCode.Forbidden;"
-        );
-        sb.AppendLine("                            await context.Response.WriteAsJsonAsync(new");
-        sb.AppendLine("                            {");
-        sb.AppendLine(
-            "                                Type = \"https://tools.ietf.org/html/rfc7231#section-6.5.3\","
-        );
-        sb.AppendLine("                                Title = \"Forbidden\",");
-        sb.AppendLine("                                Status = 403,");
-        sb.AppendLine(
-            "                                Detail = \"You do not have permission to access this resource.\","
-        );
-        sb.AppendLine("                                Instance = context.Request.Path");
-        sb.AppendLine("                            });");
-        sb.AppendLine("                            break;");
-        sb.AppendLine();
-        sb.AppendLine("                        case ArgumentException ex:");
-        sb.AppendLine(
-            "                            logger?.LogWarning(ex, \"Invalid argument provided\");"
-        );
-        sb.AppendLine(
-            "                            context.Response.StatusCode = (int)HttpStatusCode.BadRequest;"
-        );
-        sb.AppendLine("                            await context.Response.WriteAsJsonAsync(new");
-        sb.AppendLine("                            {");
-        sb.AppendLine(
-            "                                Type = \"https://tools.ietf.org/html/rfc7231#section-6.5.1\","
-        );
-        sb.AppendLine("                                Title = \"Bad Request\",");
-        sb.AppendLine("                                Status = 400,");
-        sb.AppendLine("                                Detail = ex.Message,");
-        sb.AppendLine("                                Instance = context.Request.Path");
-        sb.AppendLine("                            });");
-        sb.AppendLine("                            break;");
-        sb.AppendLine();
 
-        // Custom exception mappings
-        foreach (ExceptionMappingInfo mapping in mappings)
+        foreach (var mapping in mappings)
         {
             sb.AppendLine($"                        case {mapping.ExceptionType} ex:");
-
             if (mapping.LogException)
             {
                 string logMethod = mapping.LogLevel switch
@@ -808,40 +708,24 @@ internal static class EndpointsGeneratorPart
                     $"                            logger?.{logMethod}(ex, \"Exception occurred\");"
                 );
             }
-
             sb.AppendLine(
                 $"                            context.Response.StatusCode = {mapping.StatusCode};"
             );
             sb.AppendLine(
-                "                            await context.Response.WriteAsJsonAsync(new"
-            );
-            sb.AppendLine("                            {");
-            sb.AppendLine(
-                $"                                Type = \"https://tools.ietf.org/html/rfc7231\","
+                "                            await context.Response.WriteAsJsonAsync(new {"
             );
             sb.AppendLine(
-                $"                                Title = \"{mapping.Title ?? "Error"}\","
+                $"                                Type = \"https://tools.ietf.org/html/rfc7231\", Title = \"{mapping.Title ?? "Error"}\", Status = {mapping.StatusCode},"
             );
-            sb.AppendLine($"                                Status = {mapping.StatusCode},");
-
-            if (mapping.IncludeDetails)
-            {
-                sb.AppendLine(
-                    "                                Detail = isDevelopment ? ex.Message : \"An error occurred.\","
-                );
-            }
-            else
-            {
-                sb.AppendLine("                                Detail = \"An error occurred.\",");
-            }
-
+            sb.AppendLine(
+                mapping.IncludeDetails
+                    ? "                                Detail = isDevelopment ? ex.Message : \"An error occurred.\","
+                    : "                                Detail = \"An error occurred.\","
+            );
             sb.AppendLine("                                Instance = context.Request.Path");
-            sb.AppendLine("                            });");
-            sb.AppendLine("                            break;");
-            sb.AppendLine();
+            sb.AppendLine("                            }); break;");
         }
 
-        // Default case
         sb.AppendLine("                        default:");
         sb.AppendLine(
             "                            logger?.LogError(exception, \"Unhandled exception occurred\");"
@@ -849,43 +733,42 @@ internal static class EndpointsGeneratorPart
         sb.AppendLine(
             "                            context.Response.StatusCode = (int)HttpStatusCode.InternalServerError;"
         );
-        sb.AppendLine("                            await context.Response.WriteAsJsonAsync(new");
-        sb.AppendLine("                            {");
         sb.AppendLine(
-            "                                Type = \"https://tools.ietf.org/html/rfc7231#section-6.6.1\","
+            "                            await context.Response.WriteAsJsonAsync(new { Type = \"https://tools.ietf.org/html/rfc7231#section-6.6.1\", Title = \"Internal Server Error\", Status = 500, Detail = isDevelopment ? exception.Message : \"An unexpected error occurred.\", Instance = context.Request.Path, StackTrace = isDevelopment ? exception.StackTrace : null }); break;"
         );
-        sb.AppendLine("                                Title = \"Internal Server Error\",");
-        sb.AppendLine("                                Status = 500,");
-        sb.AppendLine(
-            "                                Detail = isDevelopment ? exception.Message : \"An unexpected error occurred. Please try again later.\","
-        );
-        sb.AppendLine("                                Instance = context.Request.Path,");
-        sb.AppendLine(
-            "                                StackTrace = isDevelopment ? exception.StackTrace : null"
-        );
-        sb.AppendLine("                            });");
-        sb.AppendLine("                            break;");
         sb.AppendLine("                    }");
         sb.AppendLine("                });");
-        sb.AppendLine("            });");
-        sb.AppendLine();
-        sb.AppendLine("            return app;");
+        sb.AppendLine("            }); return app;");
         sb.AppendLine("        }");
         sb.AppendLine("    }");
         sb.AppendLine("}");
-
         return sb.ToString();
     }
 
-    private static string SanitizeIdentifier(string input)
+    private static void AddBuiltInException(
+        StringBuilder sb,
+        string type,
+        string statusEnum,
+        string title,
+        int code,
+        string detail
+    )
     {
-        return Regex.Replace(input, @"[^a-zA-Z0-9_]", "_");
+        sb.AppendLine($"                        case {type} ex:");
+        sb.AppendLine($"                            logger?.LogWarning(ex, \"{title} occurred\");");
+        sb.AppendLine(
+            $"                            context.Response.StatusCode = (int){statusEnum};"
+        );
+        sb.AppendLine(
+            $"                            await context.Response.WriteAsJsonAsync(new {{ Type = \"https://tools.ietf.org/html/rfc7231\", Title = \"{title}\", Status = {code}, Detail = {detail}, Instance = context.Request.Path }}); break;"
+        );
     }
 
-    private static string EscapeString(string input)
-    {
-        return input.Replace("\"", "\\\"").Replace("\n", "\\n").Replace("\r", "\\r");
-    }
+    private static string SanitizeIdentifier(string input) =>
+        Regex.Replace(input, @"[^a-zA-Z0-9_]", "_");
+
+    private static string EscapeString(string input) =>
+        input.Replace("\"", "\\\"").Replace("\n", "\\n").Replace("\r", "\\r");
 
     #endregion
 }

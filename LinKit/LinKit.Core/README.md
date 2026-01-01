@@ -105,7 +105,7 @@ Use this for cross-cutting concerns. You can target a specific marker interface 
 
 ```csharp
 // 1. Truly Global Behavior (Runs for EVERYTHING: Commands and Queries)
-[CqrsBehavior(typeof(object), Order = 1)]
+[CqrsBehavior(typeof(IRequest<>), Order = 1)]
 public class LoggingBehavior<TRequest, TResponse> : IPipelineBehavior<TRequest, TResponse> 
     where TRequest : IRequest<TResponse>
 { ... }
@@ -173,161 +173,6 @@ public class MyApi(IMediator mediator)
 
 ---
 
-### Advanced: Pipeline Behaviors for Cross-Cutting Concerns
-
-The true power of the Mediator pattern comes from its ability to create a pipeline of behaviors to handle cross-cutting concerns like validation, logging, caching, and transactions in a clean and reusable way. The LinKit CQRS Kit has built-in, source-generated support for a flexible and powerful behavior pipeline.
-
-There are two ways to apply behaviors in LinKit:
-
-1.  **Contract Behaviors:** Applied automatically to any request that implements a specific "marker" interface. Ideal for broad, rule-based concerns.
-2.  **Specific Behaviors:** Applied explicitly to a single request class using an attribute. Ideal for unique, ad-hoc logic.
-
-#### How to Create a Behavior
-
-A behavior is a generic class that implements the `IPipelineBehavior<TRequest, TResponse>` interface. It receives the current request and a `next` delegate. Calling `await next()` passes control to the next behavior in the pipeline, or to the final handler. This allows you to execute code **before** and **after** the core business logic runs.
-
-**Example: A Simple Logging Behavior**
-
-```csharp
-// In: Behaviors/LoggingBehavior.cs
-using LinKit.Core.Cqrs;
-
-public class LoggingBehavior<TRequest, TResponse> : IPipelineBehavior<TRequest, TResponse>
-    where TRequest : IRequest<TResponse>
-{
-    private readonly ILogger<LoggingBehavior<TRequest, TResponse>> _logger;
-
-    public LoggingBehavior(ILogger<LoggingBehavior<TRequest, TResponse>> logger)
-    {
-        _logger = logger;
-    }
-
-    public async Task<TResponse> HandleAsync(
-        TRequest request,
-        RequestHandlerDelegate<TResponse> next,
-        CancellationToken cancellationToken)
-    {
-        var requestName = typeof(TRequest).Name;
-        _logger.LogInformation("--> Handling request: {RequestName}", requestName);
-
-        // Call the next item in the pipeline
-        var response = await next();
-
-        _logger.LogInformation("<-- Finished request: {RequestName}", requestName);
-        return response;
-    }
-}
-```
-
----
-
-#### 1. Contract Behaviors
-
-Use Contract Behaviors to apply logic to entire categories of requests.
-
-**Step 1: Create a "Marker" Interface**
-
-This is a simple, empty interface used to "tag" your requests.
-
-```csharp
-// In: Contracts/IAuditable.cs
-public interface IAuditable { }
-
-// In: Contracts/IValidatable.cs
-public interface IValidatable { }
-```
-
-**Step 2: Create a Behavior and Register it with `[CqrsBehavior]`**
-
-The `[CqrsBehavior]` attribute tells the source generator that this class is a behavior and specifies which marker interface (`TargetInterface`) it should apply to. You can also control the execution order with the `Order` property (lower numbers run first).
-
-```csharp
-// In: Behaviors/AuditBehavior.cs
-using LinKit.Core.Cqrs;
-
-// This behavior will run for any request that implements IAuditable.
-// Order = 100 means it runs after behaviors with lower order numbers.
-[CqrsBehavior(typeof(IAuditable), Order = 100)]
-public class AuditBehavior<TRequest, TResponse> : IPipelineBehavior<TRequest, TResponse>
-    where TRequest : IRequest<TResponse>, IAuditable
-{
-    // ... your auditing logic ...
-    public async Task<TResponse> HandleAsync(TRequest request, RequestHandlerDelegate<TResponse> next, CancellationToken ct)
-    {
-        // Code before handler
-        var result = await next();
-        // Code after handler
-        return result;
-    }
-}
-```
-
-**Step 3: Apply the Marker Interface to Your Requests**
-
-Simply implement the marker interface on any command or query you want the behavior to apply to.
-
-```csharp
-public class CreateUserCommand : ICommand, IAuditable, IValidatable
-{
-    public string UserName { get; set; }
-    public string Email { get; set; }
-}
-
-public class UpdateUserCommand : ICommand, IAuditable
-{
-    public int UserId { get; set; }
-    public string UserName { get; set; }
-}
-```
-
-**That's it!** No further registration is needed. The source generator will automatically detect the `[CqrsBehavior]` attribute and wire up the pipeline correctly during compilation. When you send a `CreateUserCommand`, it will pass through both the `AuditBehavior` and any `ValidationBehavior` you've defined. When you send `UpdateUserCommand`, it will only pass through the `AuditBehavior`.
-
----
-
-#### 2. Specific Behaviors
-
-Use Specific Behaviors when you have logic that applies only to one particular request and creating a marker interface would be overkill.
-
-**Step 1: Create the Behavior (No Attribute Needed)**
-
-Create a standard `IPipelineBehavior` class. It does not need the `[CqrsBehavior]` attribute.
-
-```csharp
-// In: Behaviors/IdempotencyCheckBehavior.cs
-public class IdempotencyCheckBehavior<TRequest, TResponse> : IPipelineBehavior<TRequest, TResponse>
-    where TRequest : IRequest<TResponse>
-{
-    // ... logic to check for duplicate requests using a key ...
-    public async Task<TResponse> HandleAsync(TRequest request, RequestHandlerDelegate<TResponse> next, CancellationToken ct)
-    {
-        // Check idempotency key before calling next()
-        var result = await next();
-        return result;
-    }
-}
-```
-
-**Step 2: Apply the Behavior with `[ApplyBehavior]`**
-
-Decorate the specific command or query class directly with the `[ApplyBehavior]` attribute, passing the type of the behavior to apply.
-
-```csharp
-using LinKit.Core.Cqrs;
-
-// This specific behavior will ONLY run for the ProcessPaymentCommand.
-[ApplyBehavior(typeof(IdempotencyCheckBehavior<,>))]
-public class ProcessPaymentCommand : ICommand<PaymentResult>
-{
-    public Guid IdempotencyKey { get; set; }
-    public decimal Amount { get; set; }
-}
-```
-**Note:** When passing the behavior type to the attribute, use the unbound generic form (e.g., `typeof(MyBehavior<,>)`). The source generator will automatically fill in the correct generic arguments.
-
-The `IdempotencyCheckBehavior` will now be part of the pipeline for `ProcessPaymentCommand` but no other request in the system.
-
----
-
 ### 2. Dependency Injection Kit
 
 Attribute-based, source-generated DI registration.
@@ -350,19 +195,20 @@ builder.Services.AddLinKitDependency();
 
 ### 3. Endpoints Kit (Minimal APIs)
 
-The Endpoints Kit transforms your CQRS requests directly into high-performance Minimal API endpoints using Source Generators. It eliminates the need for Controllers, manual route mapping, and reflection-based dispatching.
+The Endpoints Kit transforms your CQRS requests directly into high-performance Minimal API endpoints using Source Generators. It eliminates controllers, manual route mapping, and reflection-based dispatching.
 
 -   **Zero Boilerplate:** The request DTO *is* the API definition.
 -   **Automatic Binding:** Infers `[FromBody]` for command payloads (POST/PUT/PATCH) and `[AsParameters]` for queries (GET/DELETE).
--   **Metadata & OpenAPI:** Support for Summary, Description, Tags, and Versions for Swagger/OpenAPI generation.
--   **Security:** Built-in support for Policies, Roles, and CORS.
--   **Exception Handling:** Map custom exceptions to HTTP status codes automatically.
+-   **Flexible Response Handling:** Intelligent result mapping that handles both Reference Types and **Value Types** (like `bool`, `int`). It automatically returns `200 OK` for valid results and `404 Not Found` for nulls without boxing overhead.
+-   **Keyed Mediator Support:** Ability to inject specific Mediator instances using .NET 8+ Keyed Services.
+-   **Metadata & OpenAPI:** Built-in support for Summary, Description, Tags, and Versions.
+-   **Security:** Native support for Policies, Roles, and CORS.
 
 #### Step 1: Define Endpoints
 
 Decorate your `ICommand` or `IQuery` classes with the `[ApiEndpoint]` attribute.
 
-**Example 1: A GET Query (Automatic Query String Binding)**
+**Example 1: A GET Query with Automatic Binding**
 
 ```csharp
 using LinKit.Core.Endpoints;
@@ -372,57 +218,52 @@ using Microsoft.AspNetCore.Mvc;
 [ApiEndpoint(ApiMethod.Get, "users/{Id}")]
 public class GetUserQuery : IQuery<UserDto>
 {
-    // Attributes like [FromRoute] are supported by standard Minimal APIs
     [FromRoute] public int Id { get; set; }
 }
 ```
 
-**Example 2: A POST Command (Automatic Body Binding)**
+**Example 2: A POST Command returning a Value Type (`bool`)**
+
+LinKit's generator handles Value Types correctly. A `false` boolean result will still return `200 OK`, while only a true `null` (for nullable types) triggers `404 Not Found`.
 
 ```csharp
-using LinKit.Core.Endpoints;
-
-// Maps to: POST /users
-[ApiEndpoint(ApiMethod.Post, "users")]
-public class CreateUserCommand : ICommand<int>
+// Maps to: POST /users/check-email
+[ApiEndpoint(ApiMethod.Post, "users/check-email")]
+public class CheckEmailCommand : ICommand<bool>
 {
-    public string UserName { get; set; }
     public string Email { get; set; }
 }
 ```
 
-**Example 3: Rich Metadata & Security**
+**Example 3: Using Keyed Mediator & Security**
 
-You can configure detailed endpoint metadata directly on the request.
+If your architecture uses multiple Mediator instances (e.g., for different modules or cross-cutting concerns), use `MediatorKey`.
 
 ```csharp
-[ApiEndpoint(ApiMethod.Put, "users/{Id}/email",
-    Name = "UpdateUserEmail",
-    Summary = "Updates a user's email address",
-    Description = "Requires Admin privileges.",
-    Tags = new[] { "UserManagement" }, // (Note: Tagging is handled via Feature groupings usually)
+[ApiEndpoint(ApiMethod.Put, "users/{Id}/role",
+    Name = "UpdateUserRole",
+    Summary = "Updates user role",
     Roles = "Admin",
-    Policies = "CanUpdateUsers",
+    MediatorKey = "IdentityMediator", // Uses [FromKeyedServices("IdentityMediator")]
     RateLimitPolicy = "Strict"
 )]
-public class UpdateEmailCommand : ICommand
+public class UpdateRoleCommand : ICommand
 {
     [FromRoute] public int Id { get; set; }
-    public string NewEmail { get; set; }
+    public string NewRole { get; set; }
 }
 ```
 
 #### Step 2: Route Grouping (Optional)
 
-You can define global prefixes and shared security policies for a group of endpoints using the `[ApiRouteGroup]` attribute at the **Assembly** level. This is useful for versioning or feature grouping.
+Define global prefixes and shared security policies for a group of endpoints using the `[ApiRouteGroup]` attribute at the **Assembly** level.
 
 ```csharp
 // In Program.cs or AssemblyInfo.cs
 [assembly: ApiRouteGroup("/api/v1", Tag = "V1 API", RequireAuthorization = true)]
-[assembly: ApiRouteGroup("/api/v2", Tag = "V2 API")]
 ```
 
-You can then associate an endpoint with a group using the `Group` property:
+Associate an endpoint with a group using the `Group` property (it can be the prefix or the feature name):
 
 ```csharp
 [ApiEndpoint(ApiMethod.Get, "products", Group = "/api/v1")]
@@ -431,9 +272,9 @@ public class GetProductsQuery : IQuery<List<ProductDto>> { ... }
 
 #### Step 3: Global Exception Handling
 
-LinKit can generate a highly optimized exception handler middleware that maps your custom exceptions to specific HTTP status codes and Problem Details.
+Map custom exceptions to HTTP status codes automatically with an optimized, non-reflection based middleware.
 
-1.  **Define Mappings:** Decorate your custom exception classes.
+1.  **Define Mappings:**
 
 ```csharp
 using LinKit.Core.Endpoints;
@@ -448,23 +289,21 @@ public class UserNotFoundException : Exception
 public class DuplicateEmailException : Exception { ... }
 ```
 
-2.  **Register Middleware:** Use the generated middleware in your app pipeline.
+2.  **Register Middleware:**
 
 ```csharp
 var app = builder.Build();
-
-// Replaces the standard app.UseExceptionHandler()
-app.UseGeneratedExceptionHandler(); 
+app.UseGeneratedExceptionHandler(); // Highly optimized switch-based handler
 ```
 
 #### Step 4: Register Endpoints
 
-In your `Program.cs`, simply call `MapGeneratedEndpoints`.
+In your `Program.cs`, simply call `MapGeneratedEndpoints`. All your CQRS-based endpoints are discovered and mapped at compile-time.
 
 ```csharp
 var app = builder.Build();
 
-app.UseGeneratedExceptionHandler(); // Optional: If using exception mappings
+app.UseGeneratedExceptionHandler(); 
 app.UseAuthentication();
 app.UseAuthorization();
 

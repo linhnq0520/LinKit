@@ -363,7 +363,7 @@ namespace LinKit.Generated.Cqrs
             );
 
         sb.AppendLine(
-            @"            _ => throw new InvalidOperationException()
+            @"            _ => throw new HandlerNotFoundException(command.GetType())
         };
 
         public Task<TResponse> SendAsync<TResponse>(ICommand<TResponse> command, CancellationToken cancellationToken = default) => (object)command switch {"
@@ -380,7 +380,7 @@ namespace LinKit.Generated.Cqrs
             );
 
         sb.AppendLine(
-            @"            _ => throw new InvalidOperationException()
+            @"            _ => throw new HandlerNotFoundException(command.GetType())
         };
 
         public Task<TResponse> QueryAsync<TResponse>(IQuery<TResponse> query, CancellationToken cancellationToken = default) => (object)query switch {"
@@ -394,7 +394,7 @@ namespace LinKit.Generated.Cqrs
             );
 
         sb.AppendLine(
-            @"            _ => throw new InvalidOperationException()
+            @"            _ => throw new HandlerNotFoundException(query.GetType())
         };"
         );
 
@@ -404,7 +404,8 @@ namespace LinKit.Generated.Cqrs
             {
                 sb.AppendLine(
                     $@"
-        private async Task HandleVoidRequest({h.RequestType} request, CancellationToken cancellationToken) {{
+        private async Task HandleVoidRequest({h.RequestType} request, CancellationToken cancellationToken)
+        {{
             Func<Task> next = () => _serviceProvider.GetRequiredService<{h.HandlerInterface}>().HandleAsync(request, cancellationToken);"
                 );
                 GeneratePipelineLogic(sb, h, behaviors!, false);
@@ -414,7 +415,8 @@ namespace LinKit.Generated.Cqrs
             {
                 sb.AppendLine(
                     $@"
-        private Task<{h.ResponseType}> HandleResultRequest({h.RequestType} request, CancellationToken cancellationToken) {{
+        private Task<{h.ResponseType}> HandleResultRequest({h.RequestType} request, CancellationToken cancellationToken)
+        {{
             RequestHandlerDelegate<{h.ResponseType}> next = () => _serviceProvider.GetRequiredService<{h.HandlerInterface}>().HandleAsync(request, cancellationToken);"
                 );
                 GeneratePipelineLogic(sb, h, behaviors!, true);

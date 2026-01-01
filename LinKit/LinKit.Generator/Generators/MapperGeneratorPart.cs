@@ -901,17 +901,46 @@ public static class MapperGeneratorPart
             && SymbolEqualityComparer.Default.Equals(p.Dst, dn)
         );
 
-    private static IEnumerable<IPropertySymbol> GetSettableProps(INamedTypeSymbol t) =>
-        t.GetMembers()
-            .OfType<IPropertySymbol>()
-            .Where(p =>
-                !p.IsStatic
-                && p.SetMethod != null
-                && p.SetMethod.DeclaredAccessibility != Accessibility.Private
-            );
+    private static IEnumerable<IPropertySymbol> GetSettableProps(INamedTypeSymbol t)
+    {
+        HashSet<string> seen = new HashSet<string>();
+        INamedTypeSymbol? current = t;
 
-    private static IEnumerable<IPropertySymbol> GetReadableProps(INamedTypeSymbol t) =>
-        t.GetMembers().OfType<IPropertySymbol>().Where(p => !p.IsStatic && p.GetMethod != null);
+        while (current != null)
+        {
+            foreach (IPropertySymbol p in current.GetMembers().OfType<IPropertySymbol>())
+            {
+                if (!p.IsStatic
+                    && p.SetMethod != null
+                    && p.SetMethod.DeclaredAccessibility != Accessibility.Private
+                    && seen.Add(p.Name)) // Tránh duplicate khi override
+                {
+                    yield return p;
+                }
+            }
+            current = current.BaseType;
+        }
+    }
+
+    private static IEnumerable<IPropertySymbol> GetReadableProps(INamedTypeSymbol t)
+    {
+        HashSet<string> seen = new HashSet<string>();
+        INamedTypeSymbol? current = t;
+
+        while (current != null)
+        {
+            foreach (IPropertySymbol p in current.GetMembers().OfType<IPropertySymbol>())
+            {
+                if (!p.IsStatic
+                    && p.GetMethod != null
+                    && seen.Add(p.Name)) // Tránh duplicate khi override
+                {
+                    yield return p;
+                }
+            }
+            current = current.BaseType;
+        }
+    }
 
     #endregion
 

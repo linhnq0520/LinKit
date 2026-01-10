@@ -173,25 +173,79 @@ public class MyApi(IMediator mediator)
 
 ---
 
-### 2. Dependency Injection Kit
+## 2. Dependency Injection Kit
 
-Attribute-based, source-generated DI registration.
+### Usage Guide
 
-- **Mark Services:** `[RegisterService(Lifetime.Scoped)]` on your class.
-- **Register:** `builder.Services.AddLinKitDependency();`
+#### 1. Mark Your Services
+Use the `[RegisterService]` attribute to mark a class for automatic registration in the DI Container.
 
 ```csharp
+// Automatically registers as IUserService (the Leaf Interface) with Scoped lifetime
 [RegisterService(Lifetime.Scoped)]
-public class MyService : IMyService { ... }
+public class UserService : IUserService { ... }
+
+// Register with a specific interface and Singleton lifetime
+[RegisterService(Lifetime.Singleton, ServiceType = typeof(IDataProvider))]
+public class MyDataProvider : IDataProvider, IDisposable { ... }
+
+// Keyed Service registration (Native .NET 8+ support)
+[RegisterService(Lifetime.Transient, Key = "excel_report")]
+public class ExcelReportService : IReportService { ... }
 ```
 
-**Usage:**
+#### 2. Open Generics Support
+To register Open Generic types, set the `IsGeneric` property to `true`.
 
 ```csharp
-builder.Services.AddLinKitDependency();
+[RegisterService(Lifetime.Scoped, IsGeneric = true)]
+public class Repository<T> : IRepository<T> where T : class { ... }
 ```
+
+#### 3. Automatic Interface Discovery
+If you do not specify a `ServiceType`, LinKit follows a smart hierarchy to choose the best interface:
+1. **Convention:** An interface matching the class name (e.g., `MyService` -> `IMyService`).
+2. **Leaf Interface:** The most specific interface in the inheritance chain (closest parent).
+3. **Self-Registration:** If no interfaces are found, it registers the class itself.
+
+#### 4. Activation in Program.cs
+The Source Generator automatically creates an extension method called `AddLinKitDependency()`. Call it once in your startup configuration:
+
+```csharp
+var builder = WebApplication.CreateBuilder(args);
+
+// Automatically registers all classes marked with [RegisterService]
+builder.Services.AddLinKitDependency();
+
+var app = builder.Build();
+```
+
+### `RegisterServiceAttribute` Parameters
+
+| Parameter | Type | Description |
+| :--- | :--- | :--- |
+| `Lifetime` | `int`/`Enum` | `0`: Scoped, `1`: Singleton, `2`: Transient (based on your Enum definition). |
+| `ServiceType` | `Type` | (Optional) Specify a specific interface/base class to register. |
+| `Key` | `string` | (Optional) Registers the service as a **Keyed Service**. |
+| `IsGeneric` | `bool` | (Optional) Set to `true` for Open Generic classes (`Class<T>`). |
+
+### Why LinKit DI?
+
+In standard DI registration, if a class implements multiple inherited interfaces:
+```csharp
+public interface IRepository<T> { }
+public interface IUserRepository : IRepository<User> { }
+public class UserRepository : IUserRepository { }
+```
+LinKit is "context-aware"—it understands that you likely want to inject `IUserRepository` rather than the generic `IRepository<User>`, ensuring your dependencies are specific and clean.
 
 ---
+
+### Pro-Tips:
+* **Multiple Registrations:** If a class implements multiple independent interfaces (e.g., `IServiceA` and `IServiceB`), you can apply the attribute multiple times (requires `AllowMultiple = true` in attribute definition).
+* **Native AOT:** Since all code is generated at compile-time, this library is perfect for high-performance, cloud-native environments where Reflection is restricted.
+
+--- 
 
 ### 3. Endpoints Kit (Minimal APIs)
 

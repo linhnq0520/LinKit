@@ -31,11 +31,11 @@ internal static class DependencyInjectionGeneratorPart
                 RegisterServiceAttributeName,
                 predicate: (node, _) => node is ClassDeclarationSyntax,
                 transform: (ctx, _) =>
-                    (
-                        Implementation: (INamedTypeSymbol)ctx.TargetSymbol,
-                        Attribute: ctx.Attributes[0]
+                    ctx.Attributes.Select(attr =>
+                        (Implementation: (INamedTypeSymbol)ctx.TargetSymbol, Attribute: attr)
                     )
             )
+            .SelectMany((items, _) => items)
             .Where(x => x.Implementation is not null);
 
         return serviceDeclarations
@@ -58,46 +58,28 @@ internal static class DependencyInjectionGeneratorPart
 
                         if (serviceTypeSymbol == null)
                         {
-                            serviceTypeSymbol = implementation.AllInterfaces.FirstOrDefault();
+                            var allInterfaces = implementation.AllInterfaces;
+                            var leafInterfaces = allInterfaces
+                                .Where(i =>
+                                    !allInterfaces.Any(other =>
+                                        other.AllInterfaces.Contains(
+                                            i,
+                                            SymbolEqualityComparer.Default
+                                        )
+                                    )
+                                )
+                                .ToList();
+
+                            serviceTypeSymbol =
+                                leafInterfaces.FirstOrDefault(i =>
+                                    i.Name == $"I{implementation.Name}"
+                                )
+                                ?? leafInterfaces.FirstOrDefault()
+                                ?? implementation;
                         }
 
-                        string serviceTypeName =
-                            serviceTypeSymbol?.ToDisplayString(
-                                SymbolDisplayFormat.FullyQualifiedFormat
-                            )
-                            ?? implementation.ToDisplayString(
-                                SymbolDisplayFormat.FullyQualifiedFormat
-                            );
-
-                        if (isGeneric && serviceTypeSymbol != null)
-                        {
-                            var openGenericType =
-                                serviceTypeSymbol.ConstructedFrom ?? serviceTypeSymbol;
-                            serviceTypeName = openGenericType.ToDisplayString(
-                                SymbolDisplayFormat.FullyQualifiedFormat
-                            );
-                            int paramCount = openGenericType.TypeParameters.Length;
-                            string genericPlaceholder = "<" + new string(',', paramCount - 1) + ">";
-                            serviceTypeName = Regex.Replace(
-                                serviceTypeName,
-                                @"<[^>]+>",
-                                genericPlaceholder
-                            );
-                        }
-
-                        string implementationTypeName = implementation.ToDisplayString(
-                            SymbolDisplayFormat.FullyQualifiedFormat
-                        );
-                        if (isGeneric)
-                        {
-                            int paramCount = implementation.TypeParameters.Length;
-                            string genericPlaceholder = "<" + new string(',', paramCount - 1) + ">";
-                            implementationTypeName = Regex.Replace(
-                                implementationTypeName,
-                                @"<[^>]+>",
-                                genericPlaceholder
-                            );
-                        }
+                        string serviceTypeName = FormatTypeName(serviceTypeSymbol, isGeneric);
+                        string implementationTypeName = FormatTypeName(implementation, isGeneric);
 
                         serviceInfos.Add(
                             new ServiceInfo(
@@ -114,6 +96,24 @@ internal static class DependencyInjectionGeneratorPart
             );
     }
 
+    private static string FormatTypeName(ITypeSymbol type, bool isGeneric)
+    {
+        string name = type.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
+
+        if (isGeneric && type is INamedTypeSymbol namedType)
+        {
+            var openGenericType = namedType.ConstructedFrom ?? namedType;
+            name = openGenericType.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
+            int paramCount = openGenericType.TypeParameters.Length;
+            if (paramCount > 0)
+            {
+                string genericPlaceholder = "<" + new string(',', paramCount - 1) + ">";
+                name = Regex.Replace(name, @"<[^>]+>", genericPlaceholder);
+            }
+        }
+        return name;
+    }
+
     private static T? GetParameter<T>(
         AttributeData attribute,
         int constructorArgIndex,
@@ -128,19 +128,13 @@ internal static class DependencyInjectionGeneratorPart
         {
             var value = attribute.ConstructorArguments[constructorArgIndex].Value;
             if (value is T typedValue)
-            {
                 return typedValue;
-            }
         }
 
         var namedArg = attribute.NamedArguments.FirstOrDefault(a => a.Key == namedArgKey);
         if (namedArg.Key != null && namedArg.Value.Value is T typedNamedValue)
-        {
             return typedNamedValue;
-        }
 
         return defaultValue;
     }
-
-    public static void Initialize(IncrementalGeneratorInitializationContext context) { }
 }

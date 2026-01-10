@@ -5,7 +5,7 @@ namespace LinKit.Core.Abstractions;
 /// <summary>
 /// Marks a class for automatic dependency injection registration by the LinKit source generator.
 /// </summary>
-[AttributeUsage(AttributeTargets.Class, Inherited = false, AllowMultiple = false)]
+[AttributeUsage(AttributeTargets.Class, Inherited = false, AllowMultiple = true)]
 public sealed class RegisterServiceAttribute : Attribute
 {
     /// <summary>

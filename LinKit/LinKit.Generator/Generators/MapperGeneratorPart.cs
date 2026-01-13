@@ -31,14 +31,14 @@ internal sealed record MapperInfo(
     string DestType,
     string DestShortName,
     IReadOnlyList<string> ConstructorArgs,
-    IReadOnlyList<(string DestProp, string SourceExpr)> MemberAssignments,
+    IReadOnlyList<(string Name, string Expr)> InitOnlyAssignments,
+    IReadOnlyList<(string Name, string Expr)> SettableAssignments,
     HashSet<string> ExtraNamespaces
 );
 
 public static class MapperGeneratorPart
 {
     private const string MapperContextAttr = "LinKit.Core.Mapping.MapperContextAttribute";
-    private const string MappingProfileAttr = "LinKit.Core.Mapping.MappingProfileAttribute";
 
     private static readonly DiagnosticDescriptor InvalidMappingConfiguration = new(
         id: "LKM002",
@@ -58,10 +58,7 @@ public static class MapperGeneratorPart
                 static (ctx, _) => (ClassDeclarationSyntax)ctx.TargetNode
             );
 
-        IncrementalValuesProvider<(
-            string Namespace,
-            ImmutableArray<MapConfigWithDiags> Configs
-        )> mapConfigsPerClass = mapperContexts
+        var mapConfigsPerClass = mapperContexts
             .Combine(context.CompilationProvider)
             .Select(
                 static (tuple, _) =>
@@ -69,62 +66,52 @@ public static class MapperGeneratorPart
                     (ClassDeclarationSyntax classSyntax, Compilation compilation) = tuple;
                     SemanticModel model = compilation.GetSemanticModel(classSyntax.SyntaxTree);
                     if (model.GetDeclaredSymbol(classSyntax) is not INamedTypeSymbol classSymbol)
-                    {
                         return (Namespace: "", Configs: ImmutableArray<MapConfigWithDiags>.Empty);
-                    }
+
                     string classNamespace = classSymbol.ContainingNamespace.IsGlobalNamespace
                         ? ""
                         : classSymbol.ContainingNamespace.ToDisplayString();
 
-                    MethodDeclarationSyntax? configureMethodSyntax = classSyntax
+                    var configureMethodSyntax = classSyntax
                         .Members.OfType<MethodDeclarationSyntax>()
-                        .FirstOrDefault(m =>
-                            m.Identifier.Text == "Configure"
-                            && m.ParameterList.Parameters.Count == 1
-                        );
+                        .FirstOrDefault(m => m.Identifier.Text == "Configure");
 
                     if (configureMethodSyntax is null)
-                    {
                         return (
                             Namespace: classNamespace,
                             Configs: ImmutableArray<MapConfigWithDiags>.Empty
                         );
-                    }
 
-                    List<MapConfigWithDiags> configsWithDiags = new List<MapConfigWithDiags>();
-                    foreach (
-                        InvocationExpressionSyntax inv in configureMethodSyntax
-                            .DescendantNodes()
-                            .OfType<InvocationExpressionSyntax>()
-                    )
+                    var configsWithDiags = new List<MapConfigWithDiags>();
+                    var invocations = configureMethodSyntax
+                        .DescendantNodes()
+                        .OfType<InvocationExpressionSyntax>();
+
+                    foreach (var inv in invocations)
                     {
                         if (
-                            inv.Expression is MemberAccessExpressionSyntax ma
-                            && ma.Name is GenericNameSyntax gns
+                            inv.Expression
+                                is MemberAccessExpressionSyntax { Name: GenericNameSyntax gns }
                             && gns.Identifier.Text == "CreateMap"
                         )
                         {
-                            SeparatedSyntaxList<TypeSyntax> typeArgs =
-                                gns.TypeArgumentList.Arguments;
+                            var typeArgs = gns.TypeArgumentList.Arguments;
                             if (typeArgs.Count != 2)
-                            {
                                 continue;
-                            }
 
                             if (
                                 model.GetTypeInfo(typeArgs[0]).Type is not INamedTypeSymbol srcType
                                 || model.GetTypeInfo(typeArgs[1]).Type
                                     is not INamedTypeSymbol dstType
                             )
-                            {
                                 continue;
-                            }
 
-                            (List<ForMemberRule> rules, List<Diagnostic> diags) =
-                                CollectForMemberChain(inv, model);
-                            MapConfig cfg = new MapConfig(srcType, dstType, rules);
+                            var (rules, diags) = CollectForMemberChain(inv, model);
                             configsWithDiags.Add(
-                                new MapConfigWithDiags(cfg, diags.ToImmutableArray())
+                                new MapConfigWithDiags(
+                                    new MapConfig(srcType, dstType, rules),
+                                    diags.ToImmutableArray()
+                                )
                             );
                         }
                     }
@@ -135,572 +122,137 @@ public static class MapperGeneratorPart
                 }
             );
 
-        IncrementalValueProvider<
-            ImmutableArray<(string Namespace, ImmutableArray<MapConfigWithDiags> Configs)>
-        > allMapConfigs = mapConfigsPerClass.Collect();
-
         context.RegisterSourceOutput(
-            allMapConfigs,
+            mapConfigsPerClass.Collect(),
             static (spc, allConfigsBatch) =>
             {
-                List<(string Namespace, MapConfigWithDiags Config)> allConfigsWithDiags =
-                    allConfigsBatch
-                        .SelectMany(tuple =>
-                            tuple.Configs.Select(cfg => (tuple.Namespace, Config: cfg))
-                        )
-                        .ToList();
+                var allConfigsWithDiags = allConfigsBatch
+                    .SelectMany(tuple => tuple.Configs.Select(cfg => (tuple.Namespace, cfg)))
+                    .ToList();
+                var mapPairs = allConfigsWithDiags
+                    .Select(x => (Src: x.cfg.Config.SourceSymbol, Dst: x.cfg.Config.DestSymbol))
+                    .ToList();
+                var mapperInfos = new List<MapperInfo>();
+                var globalNamespaces = new HashSet<string>();
 
-                foreach ((string Namespace, MapConfigWithDiags Config) item in allConfigsWithDiags)
+                foreach (var item in allConfigsWithDiags)
                 {
-                    foreach (Diagnostic d in item.Config.Diagnostics)
-                    {
+                    foreach (var d in item.cfg.Diagnostics)
                         spc.ReportDiagnostic(d);
-                    }
+
+                    var info = BuildMapperInfo(item.Namespace, item.cfg.Config, mapPairs);
+                    mapperInfos.Add(info);
+                    if (!string.IsNullOrEmpty(item.Namespace))
+                        globalNamespaces.Add(item.Namespace);
                 }
 
-                List<(string Namespace, MapConfig Config)> allConfigs = allConfigsWithDiags
-                    .Select(x => (x.Namespace, x.Config.Config))
-                    .ToList();
-                if (allConfigs.Count == 0)
+                if (mapperInfos.Count > 0)
                 {
-                    return;
-                }
-
-                List<(INamedTypeSymbol Src, INamedTypeSymbol Dst)> mapPairs = allConfigs
-                    .Select(c => (Src: c.Config.SourceSymbol, Dst: c.Config.DestSymbol))
-                    .ToList();
-                List<MapperInfo> mapperInfos = new List<MapperInfo>();
-                List<string> nameSpaceList = new List<string>();
-
-                foreach ((string Namespace, MapConfig Config) cfg in allConfigs)
-                {
-                    (
-                        List<string> ctorArgs,
-                        List<(string DestProp, string SourceExpr)> assignments,
-                        HashSet<string> extraNs
-                    ) = BuildAssignments(cfg.Config, mapPairs);
-                    mapperInfos.Add(
-                        new MapperInfo(
-                            Namespace: cfg.Namespace,
-                            SourceType: cfg.Config.SourceSymbol.ToDisplayString(
-                                SymbolDisplayFormat.FullyQualifiedFormat
-                            ),
-                            DestType: cfg.Config.DestSymbol.ToDisplayString(
-                                SymbolDisplayFormat.FullyQualifiedFormat
-                            ),
-                            DestShortName: cfg.Config.DestSymbol.Name,
-                            ConstructorArgs: ctorArgs,
-                            MemberAssignments: assignments,
-                            ExtraNamespaces: extraNs
-                        )
+                    spc.AddSource(
+                        "Mappers.g.cs",
+                        SourceText.From(GenerateCode(mapperInfos), Encoding.UTF8)
                     );
 
-                    // Thêm namespace của chính mapper vào list global
-                    if (!string.IsNullOrEmpty(cfg.Namespace))
-                    {
-                        nameSpaceList.Add(cfg.Namespace);
-                    }
-                    // Thêm các namespace phát hiện được từ lambda vào list global
-                    // foreach (string ens in extraNs)
-                    // {
-                    //     nameSpaceList.Add(ens);
-                    // }
-                }
-
-                string code = GenerateCode(mapperInfos);
-                spc.AddSource("Mappers.g.cs", SourceText.From(code, Encoding.UTF8));
-
-                if (nameSpaceList.Any())
-                {
-                    IOrderedEnumerable<string> uniqueNs = nameSpaceList
-                        .Where(n => !string.IsNullOrEmpty(n))
-                        .Distinct()
-                        .OrderBy(x => x);
-                    StringBuilder globalUsingsSource = new StringBuilder();
-                    globalUsingsSource.AppendLine("// <auto-generated/> by LinKit.Generator");
-                    globalUsingsSource.AppendLine("#nullable enable");
-                    foreach (string? u in uniqueNs)
-                    {
-                        globalUsingsSource.AppendLine($"global using {u};");
-                    }
+                    // Gen Global Usings
+                    var usings = globalNamespaces.OrderBy(x => x).Select(n => $"global using {n};");
+                    var usingsCode = "// <auto-generated/>\n" + string.Join("\n", usings);
                     spc.AddSource(
                         "GlobalMapperUsings.g.cs",
-                        SourceText.From(globalUsingsSource.ToString(), Encoding.UTF8)
+                        SourceText.From(usingsCode, Encoding.UTF8)
                     );
                 }
             }
         );
     }
 
-    #region Parsing Logic
+    #region Analysis & Building logic
 
-    private static (List<ForMemberRule> Rules, List<Diagnostic> Diagnostics) CollectForMemberChain(
-        InvocationExpressionSyntax createMapCall,
-        SemanticModel model
-    )
-    {
-        List<ForMemberRule> rules = new List<ForMemberRule>();
-        List<Diagnostic> diagnostics = new List<Diagnostic>();
-        SyntaxNode? current = createMapCall;
-
-        while (
-            current?.Parent is MemberAccessExpressionSyntax parentMemberAccess
-            && parentMemberAccess.Name.Identifier.Text == "ForMember"
-            && parentMemberAccess.Parent is InvocationExpressionSyntax forMemberInvocation
-        )
-        {
-            (ForMemberRule? rule, Diagnostic? diag) = ParseForMemberInvocation(
-                forMemberInvocation,
-                model
-            );
-            if (rule is not null)
-            {
-                rules.Add(rule);
-            }
-
-            if (diag is not null)
-            {
-                diagnostics.Add(diag);
-            }
-
-            current = forMemberInvocation;
-        }
-
-        return (rules, diagnostics);
-    }
-
-    private static (ForMemberRule? Rule, Diagnostic? Diagnostic) ParseForMemberInvocation(
-        InvocationExpressionSyntax invocation,
-        SemanticModel model
-    )
-    {
-        SeparatedSyntaxList<ArgumentSyntax> args = invocation.ArgumentList.Arguments;
-        if (args.Count != 2)
-        {
-            return (
-                null,
-                Diagnostic.Create(
-                    InvalidMappingConfiguration,
-                    invocation.GetLocation(),
-                    "ForMember must have 2 arguments."
-                )
-            );
-        }
-
-        if (
-            args[0].Expression is not LambdaExpressionSyntax destLambda
-            || destLambda.Body is not MemberAccessExpressionSyntax destMemberAccess
-        )
-        {
-            return (
-                null,
-                Diagnostic.Create(
-                    InvalidMappingConfiguration,
-                    args[0].GetLocation(),
-                    "Destination member must be a simple property access lambda."
-                )
-            );
-        }
-
-        string destMemberName = destMemberAccess.Name.Identifier.ValueText;
-        if (
-            args[1].Expression is not LambdaExpressionSyntax optionsLambda
-            || optionsLambda.Body is not InvocationExpressionSyntax optionInvocation
-            || optionInvocation.Expression is not MemberAccessExpressionSyntax optionMemberAccess
-        )
-        {
-            return (
-                null,
-                Diagnostic.Create(
-                    InvalidMappingConfiguration,
-                    args[1].GetLocation(),
-                    "Mapping option must be a simple method call."
-                )
-            );
-        }
-
-        string optionMethodName = optionMemberAccess.Name.Identifier.ValueText;
-
-        switch (optionMethodName)
-        {
-            case "Ignore":
-                return (new ForMemberRule(destMemberName, null, Ignore: true), null);
-            case "MapFrom":
-                if (
-                    optionInvocation.ArgumentList.Arguments.Count == 1
-                    && optionInvocation.ArgumentList.Arguments[0].Expression
-                        is LambdaExpressionSyntax sourceLambda
-                )
-                {
-                    string sourceExpression = LambdaBodyRewriter.Translate(sourceLambda, "source");
-
-                    HashSet<string> extraNs = new HashSet<string>();
-                    CollectRequiredNamespaces(sourceLambda.Body, model, extraNs);
-
-                    return (
-                        new ForMemberRule(
-                            destMemberName,
-                            sourceExpression,
-                            ExtraNamespaces: extraNs
-                        ),
-                        null
-                    );
-                }
-                break;
-            case "ConvertWith":
-                return ParseConvertWith(destMemberName, optionInvocation, model);
-        }
-
-        return (
-            null,
-            Diagnostic.Create(
-                InvalidMappingConfiguration,
-                optionInvocation.GetLocation(),
-                $"Unsupported option '{optionMethodName}'."
-            )
-        );
-    }
-
-    private static void CollectRequiredNamespaces(
-        SyntaxNode node,
-        SemanticModel model,
-        HashSet<string> namespaces
-    )
-    {
-        foreach (SyntaxNode descendant in node.DescendantNodesAndSelf())
-        {
-            SymbolInfo symbolInfo = model.GetSymbolInfo(descendant);
-            ISymbol? symbol = symbolInfo.Symbol ?? symbolInfo.CandidateSymbols.FirstOrDefault();
-
-            if (symbol != null)
-            {
-                // Nếu là Method (Extension hoặc Static)
-                if (symbol is IMethodSymbol method)
-                {
-                    if (
-                        method.ContainingNamespace != null
-                        && !method.ContainingNamespace.IsGlobalNamespace
-                    )
-                    {
-                        namespaces.Add(method.ContainingNamespace.ToDisplayString());
-                    }
-                }
-                // Nếu là Type (ví dụ dùng Enum hoặc Static class trong lambda)
-                else if (symbol is ITypeSymbol type)
-                {
-                    if (
-                        type.ContainingNamespace != null
-                        && !type.ContainingNamespace.IsGlobalNamespace
-                    )
-                    {
-                        namespaces.Add(type.ContainingNamespace.ToDisplayString());
-                    }
-                }
-            }
-        }
-    }
-
-    private static (ForMemberRule? Rule, Diagnostic? Diagnostic) ParseConvertWith(
-        string destMemberName,
-        InvocationExpressionSyntax invocation,
-        SemanticModel model
-    )
-    {
-        // Giữ nguyên logic cũ của bạn
-        string? converterTypeDisplay = null;
-        string? methodName = null;
-        LambdaExpressionSyntax? sourceLambda = null;
-        Location? errorLocation = invocation.GetLocation();
-
-        if (invocation.Expression is MemberAccessExpressionSyntax { Name: GenericNameSyntax gns })
-        {
-            if (gns.TypeArgumentList.Arguments.Count != 1)
-            {
-                return (
-                    null,
-                    Diagnostic.Create(
-                        InvalidMappingConfiguration,
-                        gns.GetLocation(),
-                        "ConvertWith expects 1 type argument."
-                    )
-                );
-            }
-
-            INamedTypeSymbol? converterTypeSymbol =
-                model.GetTypeInfo(gns.TypeArgumentList.Arguments[0]).Type as INamedTypeSymbol;
-            if (converterTypeSymbol is null)
-            {
-                return (
-                    null,
-                    Diagnostic.Create(
-                        InvalidMappingConfiguration,
-                        gns.GetLocation(),
-                        "Could not resolve converter type."
-                    )
-                );
-            }
-
-            converterTypeDisplay = converterTypeSymbol.ToDisplayString(
-                SymbolDisplayFormat.FullyQualifiedFormat
-            );
-            SeparatedSyntaxList<ArgumentSyntax> args = invocation.ArgumentList.Arguments;
-            if (args.Count != 2)
-            {
-                return (
-                    null,
-                    Diagnostic.Create(
-                        InvalidMappingConfiguration,
-                        invocation.GetLocation(),
-                        "ConvertWith requires method name and source lambda."
-                    )
-                );
-            }
-
-            methodName = GetMethodNameFromArgument(args[0]);
-            sourceLambda = args[1].Expression as LambdaExpressionSyntax;
-            errorLocation = args[0].GetLocation();
-        }
-        else
-        {
-            SeparatedSyntaxList<ArgumentSyntax> args = invocation.ArgumentList.Arguments;
-            if (args.Count != 3)
-            {
-                return (
-                    null,
-                    Diagnostic.Create(
-                        InvalidMappingConfiguration,
-                        invocation.GetLocation(),
-                        "ConvertWith overload requires 3 arguments."
-                    )
-                );
-            }
-
-            if (args[0].Expression is TypeOfExpressionSyntax typeOfExpr)
-            {
-                INamedTypeSymbol? converterTypeSymbol =
-                    model.GetTypeInfo(typeOfExpr.Type).Type as INamedTypeSymbol;
-                if (converterTypeSymbol is null)
-                {
-                    return (
-                        null,
-                        Diagnostic.Create(
-                            InvalidMappingConfiguration,
-                            typeOfExpr.GetLocation(),
-                            "Could not resolve converter type."
-                        )
-                    );
-                }
-
-                converterTypeDisplay = converterTypeSymbol.ToDisplayString(
-                    SymbolDisplayFormat.FullyQualifiedFormat
-                );
-            }
-            else
-            {
-                return (
-                    null,
-                    Diagnostic.Create(
-                        InvalidMappingConfiguration,
-                        args[0].GetLocation(),
-                        "First argument must be typeof()."
-                    )
-                );
-            }
-
-            methodName = GetMethodNameFromArgument(args[1]);
-            sourceLambda = args[2].Expression as LambdaExpressionSyntax;
-            errorLocation = args[1].GetLocation();
-        }
-
-        if (methodName is null || sourceLambda is null)
-        {
-            return (
-                null,
-                Diagnostic.Create(
-                    InvalidMappingConfiguration,
-                    invocation.GetLocation(),
-                    "Invalid ConvertWith arguments."
-                )
-            );
-        }
-
-        string sourceArgument = LambdaBodyRewriter.Translate(sourceLambda, "source");
-        string finalExpression = $"{converterTypeDisplay}.{methodName}({sourceArgument})";
-
-        HashSet<string> extraNs = new HashSet<string>();
-        CollectRequiredNamespaces(sourceLambda.Body, model, extraNs);
-        return (new ForMemberRule(destMemberName, finalExpression, ExtraNamespaces: extraNs), null);
-    }
-
-    private static string? GetMethodNameFromArgument(ArgumentSyntax arg)
-    {
-        return arg.Expression switch
-        {
-            LiteralExpressionSyntax lit when lit.IsKind(SyntaxKind.StringLiteralExpression) =>
-                lit.Token.ValueText,
-            InvocationExpressionSyntax inv when inv.Expression.ToString() == "nameof" => inv
-                .ArgumentList.Arguments.FirstOrDefault()
-                ?.Expression switch
-            {
-                MemberAccessExpressionSyntax ma => ma.Name.Identifier.ValueText,
-                IdentifierNameSyntax id => id.Identifier.ValueText,
-                _ => null,
-            },
-            _ => null,
-        };
-    }
-
-    private class LambdaBodyRewriter : CSharpSyntaxRewriter
-    {
-        private readonly string _oldParameterName;
-        private readonly string _newParameterName;
-
-        private LambdaBodyRewriter(string old, string @new)
-        {
-            _oldParameterName = old;
-            _newParameterName = @new;
-        }
-
-        public static string Translate(LambdaExpressionSyntax lambda, string newName)
-        {
-            ParameterSyntax? parameter = lambda switch
-            {
-                SimpleLambdaExpressionSyntax s => s.Parameter,
-                ParenthesizedLambdaExpressionSyntax p =>
-                    p.ParameterList.Parameters.FirstOrDefault(),
-                _ => null,
-            };
-            if (parameter == null)
-            {
-                return lambda.Body.ToString();
-            }
-
-            LambdaBodyRewriter rewriter = new LambdaBodyRewriter(
-                parameter.Identifier.ValueText,
-                newName
-            );
-            return rewriter.Visit(lambda.Body).ToString();
-        }
-
-        public override SyntaxNode? VisitIdentifierName(IdentifierNameSyntax node)
-        {
-            if (node.Identifier.ValueText == _oldParameterName)
-            {
-                return SyntaxFactory.IdentifierName(_newParameterName);
-            }
-
-            return base.VisitIdentifierName(node);
-        }
-    }
-
-    #endregion
-
-    #region Mapping Logic (Constructor & Properties)
-
-    private static (
-        List<string> ConstructorArgs,
-        List<(string DestProp, string SourceExpr)> MemberAssignments,
-        HashSet<string> ExtraNamespaces
-    ) BuildAssignments(
+    private static MapperInfo BuildMapperInfo(
+        string ns,
         MapConfig cfg,
         List<(INamedTypeSymbol Src, INamedTypeSymbol Dst)> allMapPairs
     )
     {
-        List<string> constructorArgs = new List<string>();
-        Dictionary<string, string> memberAssignments = new Dictionary<string, string>(
-            StringComparer.OrdinalIgnoreCase
-        );
-        HashSet<string> extraNs = new HashSet<string>();
+        var constructorArgs = new List<string>();
+        var initAssignments = new List<(string Name, string Expr)>();
+        var settableAssignments = new List<(string Name, string Expr)>();
+        var extraNs = new HashSet<string>();
 
-        Dictionary<string, ForMemberRule> configuredRules = cfg.Rules.ToDictionary(
+        var rules = cfg.Rules.ToDictionary(
             r => r.DestinationMember,
             StringComparer.OrdinalIgnoreCase
         );
-        HashSet<string> mappedDestMembers = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        List<IPropertySymbol> srcProps = GetReadableProps(cfg.SourceSymbol).ToList();
+        var srcProps = GetReadableProps(cfg.SourceSymbol).ToList();
+        var mappedMembers = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
         // 1. Logic Constructor (Greedy)
-        List<IMethodSymbol> constructors = cfg
+        var selectedCtor = cfg
             .DestSymbol.Constructors.Where(c =>
                 c.DeclaredAccessibility is Accessibility.Public or Accessibility.Internal
             )
             .OrderByDescending(c => c.Parameters.Length)
-            .ToList();
-
-        IMethodSymbol selectedCtor =
-            constructors.FirstOrDefault(c => c.Parameters.Length == 0)
-            ?? constructors.FirstOrDefault();
+            .FirstOrDefault();
 
         if (selectedCtor != null && selectedCtor.Parameters.Length > 0)
         {
-            foreach (IParameterSymbol param in selectedCtor.Parameters)
+            foreach (var param in selectedCtor.Parameters)
             {
-                string? argExpr = null;
-                if (
-                    configuredRules.TryGetValue(param.Name, out ForMemberRule? rule)
-                    && rule.SourceExpression != null
-                )
+                string? expr = null;
+                if (rules.TryGetValue(param.Name, out var rule) && rule.SourceExpression != null)
                 {
-                    argExpr = rule.SourceExpression;
+                    expr = rule.SourceExpression;
                     if (rule.ExtraNamespaces != null)
-                    {
-                        foreach (string ns in rule.ExtraNamespaces)
-                        {
-                            extraNs.Add(ns);
-                        }
-                    }
+                        foreach (var ens in rule.ExtraNamespaces)
+                            extraNs.Add(ens);
                 }
                 else
-                {
-                    argExpr = TryAutoMap(param.Name, param.Type, srcProps, allMapPairs);
-                }
+                    expr = TryAutoMap(param.Name, param.Type, srcProps, allMapPairs, null);
 
                 constructorArgs.Add(
-                    argExpr
-                        ?? $"default({param.Type.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat)})"
+                    expr
+                        ?? $"default({param.Type.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat)})!"
                 );
-                mappedDestMembers.Add(param.Name);
+                mappedMembers.Add(param.Name);
             }
         }
 
-        // 2. Logic Properties
-        foreach (IPropertySymbol dp in GetSettableProps(cfg.DestSymbol))
+        // 2. Logic Properties (Init-only vs Settable)
+        foreach (var dp in GetSettableProps(cfg.DestSymbol))
         {
-            if (configuredRules.TryGetValue(dp.Name, out ForMemberRule? rule))
+            if (mappedMembers.Contains(dp.Name))
+                continue;
+
+            string? expr = null;
+            if (rules.TryGetValue(dp.Name, out var rule))
             {
                 if (rule.Ignore)
-                {
                     continue;
-                }
-
-                if (rule.SourceExpression != null)
-                {
-                    memberAssignments[dp.Name] = rule.SourceExpression;
-                    if (rule.ExtraNamespaces != null)
-                    {
-                        foreach (string ns in rule.ExtraNamespaces)
-                        {
-                            extraNs.Add(ns);
-                        }
-                    }
-                }
-                continue;
+                expr = rule.SourceExpression;
+                if (rule.ExtraNamespaces != null)
+                    foreach (var ens in rule.ExtraNamespaces)
+                        extraNs.Add(ens);
             }
-            if (mappedDestMembers.Contains(dp.Name))
-            {
-                continue;
-            }
+            else
+                expr = TryAutoMap(dp.Name, dp.Type, srcProps, allMapPairs, dp);
 
-            string? expr = TryAutoMap(dp.Name, dp.Type, srcProps, allMapPairs, dp);
             if (expr != null)
             {
-                memberAssignments[dp.Name] = expr;
+                bool isInitOnly = dp.SetMethod?.IsInitOnly ?? false;
+                if (isInitOnly)
+                    initAssignments.Add((dp.Name, expr));
+                else
+                    settableAssignments.Add((dp.Name, expr));
             }
         }
 
-        return (
+        return new MapperInfo(
+            ns,
+            cfg.SourceSymbol.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat),
+            cfg.DestSymbol.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat),
+            cfg.DestSymbol.Name,
             constructorArgs,
-            memberAssignments.Select(kv => (kv.Key, kv.Value)).ToList(),
+            initAssignments,
+            settableAssignments,
             extraNs
         );
     }
@@ -709,18 +261,17 @@ public static class MapperGeneratorPart
         string destName,
         ITypeSymbol destType,
         List<IPropertySymbol> srcProps,
-        List<(INamedTypeSymbol Src, INamedTypeSymbol Dst)> allMapPairs,
-        IPropertySymbol? destProp = null
+        List<(INamedTypeSymbol Src, INamedTypeSymbol Dst)> pairs,
+        IPropertySymbol? destProp
     )
     {
-        string? expr = null;
-        // Check JsonPropertyName
+        // Match JsonPropertyName
         if (destProp != null)
         {
-            string? destJson = GetJsonPropertyName(destProp);
+            var destJson = GetJsonPropertyName(destProp);
             if (destJson != null)
             {
-                IPropertySymbol sp = srcProps.FirstOrDefault(s =>
+                var sp = srcProps.FirstOrDefault(s =>
                     string.Equals(
                         GetJsonPropertyName(s),
                         destJson,
@@ -729,134 +280,422 @@ public static class MapperGeneratorPart
                 );
                 if (
                     sp != null
-                    && TryBuildAssignmentExpression(
-                        sp.Type,
-                        destType,
-                        $"source.{sp.Name}",
-                        allMapPairs,
-                        out expr
-                    )
+                    && TryBuildExpr(sp.Type, destType, $"source.{sp.Name}", pairs, out var e)
                 )
-                {
-                    return expr;
-                }
+                    return e;
             }
         }
-        // Name match
-        IPropertySymbol spName = srcProps.FirstOrDefault(s =>
+        // Match Name
+        var spName = srcProps.FirstOrDefault(s =>
             s.Name.Equals(destName, StringComparison.OrdinalIgnoreCase)
         );
         if (
             spName != null
-            && TryBuildAssignmentExpression(
-                spName.Type,
-                destType,
-                $"source.{spName.Name}",
-                allMapPairs,
-                out expr
-            )
+            && TryBuildExpr(spName.Type, destType, $"source.{spName.Name}", pairs, out var e2)
         )
-        {
-            return expr;
-        }
-
+            return e2;
         return null;
     }
 
-    private static bool TryBuildAssignmentExpression(
-        ITypeSymbol srcType,
-        ITypeSymbol destType,
-        string srcExpr,
-        List<(INamedTypeSymbol, INamedTypeSymbol)> pairs,
-        out string? expr
-    )
-    {
-        expr = null;
-        if (
-            srcType.SpecialType == SpecialType.System_String
-            && destType.SpecialType == SpecialType.System_String
-        )
-        {
-            expr = BuildNullableAware(srcType, destType, srcExpr);
-            return true;
-        }
-        if (AreValueTypesCompatible(srcType, destType))
-        {
-            expr = BuildNullableAware(srcType, destType, srcExpr);
-            return true;
-        }
-        if (SymbolEqualityComparer.Default.Equals(srcType, destType))
-        {
-            expr = BuildNullableAware(srcType, destType, srcExpr);
-            return true;
-        }
-
-        if (TryBuildCollectionMapping(srcType, destType, srcExpr, pairs, out string? coll))
-        {
-            expr = coll;
-            return true;
-        }
-
-        if (HasMapping(pairs, srcType, destType))
-        {
-            string destShort = (destType as INamedTypeSymbol)!.Name;
-            expr = BuildNullableAware(srcType, destType, $"{srcExpr}?.To{destShort}()");
-            return true;
-        }
-        return false;
-    }
-
-    private static bool TryBuildCollectionMapping(
-        ITypeSymbol src,
-        ITypeSymbol dst,
+    private static bool TryBuildExpr(
+        ITypeSymbol s,
+        ITypeSymbol d,
         string expr,
-        List<(INamedTypeSymbol, INamedTypeSymbol)> pairs,
+        List<(INamedTypeSymbol Src, INamedTypeSymbol Dst)> pairs,
         out string? res
     )
     {
         res = null;
-        if (
-            !IsEnumerable(src, out ITypeSymbol? sItem)
-            || !IsEnumerable(dst, out ITypeSymbol? dItem)
-            || sItem == null
-            || dItem == null
-        )
+        if (SymbolEqualityComparer.Default.Equals(s, d) || AreCompatible(s, d))
         {
-            return false;
-        }
-
-        if (SymbolEqualityComparer.Default.Equals(sItem, dItem))
-        {
-            res = $"{expr}?.ToList()";
+            res =
+                (
+                    s.NullableAnnotation == NullableAnnotation.Annotated
+                    && d.NullableAnnotation != NullableAnnotation.Annotated
+                )
+                    ? $"{expr} ?? default!"
+                    : expr;
             return true;
         }
-        if (HasMapping(pairs, sItem, dItem))
+        if (IsEnumerable(s, out var si) && IsEnumerable(d, out var di) && si != null && di != null)
         {
-            string dShort = (dItem as INamedTypeSymbol)!.Name;
-            res = $"{expr}?.Select(x => x.To{dShort}()).Where(x => x != null).ToList()!";
+            if (SymbolEqualityComparer.Default.Equals(si, di))
+            {
+                res = $"{expr}?.ToList()";
+                return true;
+            }
+            if (HasMap(pairs, si, di))
+            {
+                res = $"{expr}?.Select(x => x.To{di.Name}()).Where(x => x != null).ToList()!";
+                return true;
+            }
+        }
+        if (HasMap(pairs, s, d))
+        {
+            res = $"{expr}?.To{d.Name}()";
             return true;
         }
         return false;
+    }
+
+    #endregion
+
+    #region Code Generation
+
+    private static string GenerateCode(List<MapperInfo> infos)
+    {
+        var sb = new StringBuilder();
+        sb.AppendLine("// <auto-generated/> by LinKit.Generator");
+        sb.AppendLine("#nullable enable");
+        sb.AppendLine("using System.Collections.Generic;");
+        sb.AppendLine("using System.Linq;");
+
+        foreach (var nsGroup in infos.GroupBy(m => m.Namespace))
+        {
+            foreach (var m in nsGroup)
+            foreach (var ens in m.ExtraNamespaces)
+                sb.AppendLine($"using {ens};");
+
+            bool hasNs = !string.IsNullOrEmpty(nsGroup.Key);
+            if (hasNs)
+                sb.AppendLine($"namespace {nsGroup.Key}\n{{");
+            string indent = hasNs ? "    " : "";
+
+            sb.AppendLine(
+                $"{indent}public static partial class {nsGroup.Key.Replace(".", "_")}_MappingExtensions"
+            );
+            sb.AppendLine($"{indent}{{");
+
+            foreach (var m in nsGroup)
+            {
+                string mi = indent + "    ";
+                // --- Single Item Mapper ---
+                sb.AppendLine(
+                    $"{mi}public static {m.DestType}? To{m.DestShortName}(this {m.SourceType}? source, {m.DestType}? destination = default)"
+                );
+                sb.AppendLine($"{mi}{{");
+                sb.AppendLine($"{mi}    if (source == null) return destination;");
+                sb.AppendLine($"{mi}    if (destination == null)");
+                sb.AppendLine($"{mi}    {{");
+
+                // Trường hợp tạo mới: Dùng Constructor + Object Initializer (cả init và set)
+                string ctorArgs = string.Join(", ", m.ConstructorArgs);
+                sb.Append($"{mi}        destination = new {m.DestType}({ctorArgs})");
+
+                var allInitializers = m.InitOnlyAssignments.Concat(m.SettableAssignments).ToList();
+                if (allInitializers.Any())
+                {
+                    sb.AppendLine();
+                    sb.AppendLine($"{mi}        {{");
+                    foreach (var prop in allInitializers)
+                        sb.AppendLine($"{mi}            {prop.Name} = {prop.Expr},");
+                    sb.AppendLine($"{mi}        }};");
+                }
+                else
+                    sb.AppendLine(";");
+
+                sb.AppendLine($"{mi}    }}");
+                sb.AppendLine($"{mi}    else");
+                sb.AppendLine($"{mi}    {{");
+
+                // Trường hợp cập nhật: Chỉ gán các thuộc tính có SET (không gán được INIT)
+                if (m.SettableAssignments.Any())
+                {
+                    foreach (var prop in m.SettableAssignments)
+                        sb.AppendLine($"{mi}        destination.{prop.Name} = {prop.Expr};");
+                }
+                else
+                    sb.AppendLine($"{mi}        // No settable properties to update");
+
+                sb.AppendLine($"{mi}    }}");
+                sb.AppendLine($"{mi}    return destination;");
+                sb.AppendLine($"{mi}}}");
+                sb.AppendLine();
+
+                // --- List Mapper ---
+                sb.AppendLine(
+                    $"{mi}public static List<{m.DestType}> To{m.DestShortName}List(this IEnumerable<{m.SourceType}>? source)"
+                );
+                sb.AppendLine($"{mi}{{");
+                sb.AppendLine($"{mi}    if (source == null) return new List<{m.DestType}>();");
+                sb.AppendLine($"{mi}    var destination = new List<{m.DestType}>();");
+                sb.AppendLine($"{mi}    foreach (var item in source)");
+                sb.AppendLine($"{mi}    {{");
+                sb.AppendLine($"{mi}        var mapped = item.To{m.DestShortName}();");
+                sb.AppendLine($"{mi}        if (mapped != null) destination.Add(mapped);");
+                sb.AppendLine($"{mi}    }}");
+                sb.AppendLine($"{mi}    return destination;");
+                sb.AppendLine($"{mi}}}");
+            }
+            sb.AppendLine($"{indent}}}");
+            if (hasNs)
+                sb.AppendLine("}");
+        }
+        return sb.ToString();
+    }
+
+    #endregion
+
+    #region Parsing Logic (Original)
+
+    private static (List<ForMemberRule> Rules, List<Diagnostic> Diagnostics) CollectForMemberChain(
+        InvocationExpressionSyntax createMapCall,
+        SemanticModel model
+    )
+    {
+        var rules = new List<ForMemberRule>();
+        var diagnostics = new List<Diagnostic>();
+        SyntaxNode? current = createMapCall;
+
+        while (
+            current?.Parent is MemberAccessExpressionSyntax ma
+            && ma.Name.Identifier.Text == "ForMember"
+            && ma.Parent is InvocationExpressionSyntax forMemberInv
+        )
+        {
+            var (rule, diag) = ParseForMemberInvocation(forMemberInv, model);
+            if (rule != null)
+                rules.Add(rule);
+            if (diag != null)
+                diagnostics.Add(diag);
+            current = forMemberInv;
+        }
+        return (rules, diagnostics);
+    }
+
+    private static (ForMemberRule? Rule, Diagnostic? Diagnostic) ParseForMemberInvocation(
+        InvocationExpressionSyntax invocation,
+        SemanticModel model
+    )
+    {
+        var args = invocation.ArgumentList.Arguments;
+        if (args.Count != 2)
+            return (
+                null,
+                Diagnostic.Create(
+                    InvalidMappingConfiguration,
+                    invocation.GetLocation(),
+                    "ForMember needs 2 args."
+                )
+            );
+
+        if (
+            args[0].Expression is not LambdaExpressionSyntax destLambda
+            || destLambda.Body is not MemberAccessExpressionSyntax destMa
+        )
+            return (
+                null,
+                Diagnostic.Create(
+                    InvalidMappingConfiguration,
+                    args[0].GetLocation(),
+                    "Dest must be a property lambda."
+                )
+            );
+
+        string destName = destMa.Name.Identifier.ValueText;
+        if (
+            args[1].Expression is not LambdaExpressionSyntax optLambda
+            || optLambda.Body is not InvocationExpressionSyntax optInv
+            || optInv.Expression is not MemberAccessExpressionSyntax optMa
+        )
+            return (
+                null,
+                Diagnostic.Create(
+                    InvalidMappingConfiguration,
+                    args[1].GetLocation(),
+                    "Invalid mapping option."
+                )
+            );
+
+        string methodName = optMa.Name.Identifier.ValueText;
+        switch (methodName)
+        {
+            case "Ignore":
+                return (new ForMemberRule(destName, null, true), null);
+            case "MapFrom":
+                if (
+                    optInv.ArgumentList.Arguments.Count == 1
+                    && optInv.ArgumentList.Arguments[0].Expression
+                        is LambdaExpressionSyntax srcLambda
+                )
+                {
+                    var extraNs = new HashSet<string>();
+                    CollectRequiredNamespaces(srcLambda.Body, model, extraNs);
+                    return (
+                        new ForMemberRule(
+                            destName,
+                            LambdaBodyRewriter.Translate(srcLambda, "source"),
+                            false,
+                            extraNs
+                        ),
+                        null
+                    );
+                }
+                break;
+            case "ConvertWith":
+                return ParseConvertWith(destName, optInv, model);
+        }
+        return (
+            null,
+            Diagnostic.Create(
+                InvalidMappingConfiguration,
+                optInv.GetLocation(),
+                $"Unsupported: {methodName}"
+            )
+        );
+    }
+
+    private static (ForMemberRule?, Diagnostic?) ParseConvertWith(
+        string destName,
+        InvocationExpressionSyntax inv,
+        SemanticModel model
+    )
+    {
+        string? convType = null;
+        string? method = null;
+        LambdaExpressionSyntax? srcLambda = null;
+
+        if (inv.Expression is MemberAccessExpressionSyntax { Name: GenericNameSyntax gns })
+        {
+            convType = (
+                model.GetTypeInfo(gns.TypeArgumentList.Arguments[0]).Type as INamedTypeSymbol
+            )?.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
+            method = GetMethodName(inv.ArgumentList.Arguments[0]);
+            srcLambda = inv.ArgumentList.Arguments[1].Expression as LambdaExpressionSyntax;
+        }
+        else if (inv.ArgumentList.Arguments.Count == 3)
+        {
+            var typeOf = inv.ArgumentList.Arguments[0].Expression as TypeOfExpressionSyntax;
+            convType = (model.GetTypeInfo(typeOf!.Type).Type as INamedTypeSymbol)?.ToDisplayString(
+                SymbolDisplayFormat.FullyQualifiedFormat
+            );
+            method = GetMethodName(inv.ArgumentList.Arguments[1]);
+            srcLambda = inv.ArgumentList.Arguments[2].Expression as LambdaExpressionSyntax;
+        }
+
+        if (convType != null && method != null && srcLambda != null)
+        {
+            var extraNs = new HashSet<string>();
+            CollectRequiredNamespaces(srcLambda.Body, model, extraNs);
+            return (
+                new ForMemberRule(
+                    destName,
+                    $"{convType}.{method}({LambdaBodyRewriter.Translate(srcLambda, "source")})",
+                    false,
+                    extraNs
+                ),
+                null
+            );
+        }
+        return (
+            null,
+            Diagnostic.Create(InvalidMappingConfiguration, inv.GetLocation(), "Invalid ConvertWith")
+        );
+    }
+
+    private static string? GetMethodName(ArgumentSyntax arg) =>
+        arg.Expression switch
+        {
+            LiteralExpressionSyntax lit => lit.Token.ValueText,
+            InvocationExpressionSyntax inv when inv.Expression.ToString() == "nameof" => (
+                inv.ArgumentList.Arguments[0].Expression as MemberAccessExpressionSyntax
+            )
+                ?.Name
+                .Identifier
+                .ValueText
+                ?? (inv.ArgumentList.Arguments[0].Expression as IdentifierNameSyntax)
+                    ?.Identifier
+                    .ValueText,
+            _ => null,
+        };
+
+    private static void CollectRequiredNamespaces(
+        SyntaxNode node,
+        SemanticModel model,
+        HashSet<string> ns
+    )
+    {
+        foreach (var desc in node.DescendantNodesAndSelf())
+        {
+            var sym = model.GetSymbolInfo(desc).Symbol;
+            if (sym?.ContainingNamespace != null && !sym.ContainingNamespace.IsGlobalNamespace)
+                ns.Add(sym.ContainingNamespace.ToDisplayString());
+        }
+    }
+
+    private class LambdaBodyRewriter : CSharpSyntaxRewriter
+    {
+        private readonly string _old,
+            _new;
+
+        private LambdaBodyRewriter(string o, string n)
+        {
+            _old = o;
+            _new = n;
+        }
+
+        public static string Translate(LambdaExpressionSyntax lambda, string newName)
+        {
+            var param = lambda switch
+            {
+                SimpleLambdaExpressionSyntax s => s.Parameter,
+                ParenthesizedLambdaExpressionSyntax p =>
+                    p.ParameterList.Parameters.FirstOrDefault(),
+                _ => null,
+            };
+            if (param == null)
+                return lambda.Body.ToString();
+            return new LambdaBodyRewriter(param.Identifier.ValueText, newName)
+                .Visit(lambda.Body)
+                .ToString();
+        }
+
+        public override SyntaxNode? VisitIdentifierName(IdentifierNameSyntax node) =>
+            node.Identifier.ValueText == _old
+                ? SyntaxFactory.IdentifierName(_new)
+                : base.VisitIdentifierName(node);
+    }
+
+    #endregion
+
+    #region Reflection Helpers
+
+    private static IEnumerable<IPropertySymbol> GetSettableProps(INamedTypeSymbol t)
+    {
+        var seen = new HashSet<string>();
+        var curr = t;
+        while (curr != null)
+        {
+            foreach (var p in curr.GetMembers().OfType<IPropertySymbol>())
+                if (!p.IsStatic && p.SetMethod != null && seen.Add(p.Name))
+                    yield return p;
+            curr = curr.BaseType;
+        }
+    }
+
+    private static IEnumerable<IPropertySymbol> GetReadableProps(INamedTypeSymbol t)
+    {
+        var seen = new HashSet<string>();
+        var curr = t;
+        while (curr != null)
+        {
+            foreach (var p in curr.GetMembers().OfType<IPropertySymbol>())
+                if (!p.IsStatic && p.GetMethod != null && seen.Add(p.Name))
+                    yield return p;
+            curr = curr.BaseType;
+        }
     }
 
     private static bool IsEnumerable(ITypeSymbol t, out ITypeSymbol? item)
     {
         item = null;
         if (t.SpecialType == SpecialType.System_String)
-        {
             return false;
-        }
-
-        INamedTypeSymbol? iface =
-            t.AllInterfaces.FirstOrDefault(i =>
-                i.OriginalDefinition.SpecialType
+        var iface = t
+            .AllInterfaces.Concat(new[] { t as INamedTypeSymbol })
+            .FirstOrDefault(i =>
+                i?.OriginalDefinition.SpecialType
                 == SpecialType.System_Collections_Generic_IEnumerable_T
-            )
-            ?? (
-                t.OriginalDefinition.SpecialType
-                == SpecialType.System_Collections_Generic_IEnumerable_T
-                    ? t as INamedTypeSymbol
-                    : null
             );
         if (iface != null)
         {
@@ -866,33 +705,17 @@ public static class MapperGeneratorPart
         return false;
     }
 
-    private static string BuildNullableAware(ITypeSymbol s, ITypeSymbol d, string e) =>
-        (
-            s.NullableAnnotation == NullableAnnotation.Annotated
-            && d.NullableAnnotation != NullableAnnotation.Annotated
-        )
-            ? $"{e} ?? default"
-            : e;
-
-    private static bool AreValueTypesCompatible(ITypeSymbol s, ITypeSymbol d)
+    private static bool AreCompatible(ITypeSymbol s, ITypeSymbol d)
     {
-        ITypeSymbol su = (s as INamedTypeSymbol)?.TypeArguments.FirstOrDefault() ?? s;
-        ITypeSymbol du = (d as INamedTypeSymbol)?.TypeArguments.FirstOrDefault() ?? d;
+        var su = (s as INamedTypeSymbol)?.TypeArguments.FirstOrDefault() ?? s;
+        var du = (d as INamedTypeSymbol)?.TypeArguments.FirstOrDefault() ?? d;
         return su.IsValueType && du.IsValueType && SymbolEqualityComparer.Default.Equals(su, du);
     }
 
-    private static string? GetJsonPropertyName(ISymbol s) =>
-        s.GetAttributes()
-            .FirstOrDefault(a =>
-                a.AttributeClass?.ToDisplayString().Contains("JsonProperty") == true
-            )
-            ?.ConstructorArguments.FirstOrDefault()
-            .Value?.ToString();
-
-    private static bool HasMapping(
+    private static bool HasMap(
         List<(INamedTypeSymbol Src, INamedTypeSymbol Dst)> pairs,
-        ITypeSymbol? s,
-        ITypeSymbol? d
+        ITypeSymbol s,
+        ITypeSymbol d
     ) =>
         s is INamedTypeSymbol sn
         && d is INamedTypeSymbol dn
@@ -901,133 +724,11 @@ public static class MapperGeneratorPart
             && SymbolEqualityComparer.Default.Equals(p.Dst, dn)
         );
 
-    private static IEnumerable<IPropertySymbol> GetSettableProps(INamedTypeSymbol t)
-    {
-        HashSet<string> seen = new HashSet<string>();
-        INamedTypeSymbol? current = t;
-
-        while (current != null)
-        {
-            foreach (IPropertySymbol p in current.GetMembers().OfType<IPropertySymbol>())
-            {
-                if (!p.IsStatic
-                    && p.SetMethod != null
-                    && p.SetMethod.DeclaredAccessibility != Accessibility.Private
-                    && seen.Add(p.Name)) // Tránh duplicate khi override
-                {
-                    yield return p;
-                }
-            }
-            current = current.BaseType;
-        }
-    }
-
-    private static IEnumerable<IPropertySymbol> GetReadableProps(INamedTypeSymbol t)
-    {
-        HashSet<string> seen = new HashSet<string>();
-        INamedTypeSymbol? current = t;
-
-        while (current != null)
-        {
-            foreach (IPropertySymbol p in current.GetMembers().OfType<IPropertySymbol>())
-            {
-                if (!p.IsStatic
-                    && p.GetMethod != null
-                    && seen.Add(p.Name)) // Tránh duplicate khi override
-                {
-                    yield return p;
-                }
-            }
-            current = current.BaseType;
-        }
-    }
-
-    #endregion
-
-    #region Code Generation
-
-    private static string GenerateCode(List<MapperInfo> infos)
-    {
-        StringBuilder sb = new StringBuilder();
-        sb.AppendLine("// <auto-generated/> by LinKit.Generator");
-        sb.AppendLine("#nullable enable");
-        sb.AppendLine("using System.Collections.Generic;");
-        sb.AppendLine("using System.Linq;");
-
-        foreach (IGrouping<string, MapperInfo>? nsGroup in infos.GroupBy(m => m.Namespace))
-        {
-            foreach (MapperInfo? m in nsGroup)
-            {
-                foreach (string extra in m.ExtraNamespaces)
-                {
-                    sb.AppendLine($"using {extra};");
-                }
-            }
-            sb.AppendLine();
-            string ns = nsGroup.Key;
-            string sanitizedName = ns.Replace(".", "_").Replace("-", "_");
-            bool hasNs = !string.IsNullOrEmpty(ns);
-            if (hasNs)
-            {
-                sb.AppendLine($"namespace {ns}\n{{");
-            }
-            string indent = hasNs ? "    " : "";
-
-            sb.AppendLine($"{indent}public static partial class {sanitizedName}_MappingExtensions");
-            sb.AppendLine($"{indent}{{");
-
-            foreach (MapperInfo? m in nsGroup)
-            {
-                string mi = indent + "    ";
-                sb.AppendLine(
-                    $"{mi}public static {m.DestType}? To{m.DestShortName}(this {m.SourceType}? source)"
-                );
-                sb.AppendLine($"{mi}{{");
-                sb.AppendLine($"{mi}    if (source == null) return default;");
-
-                string argsStr = string.Join(", ", m.ConstructorArgs);
-                sb.Append($"{mi}    return new {m.DestType}({argsStr})");
-
-                if (m.MemberAssignments.Any())
-                {
-                    sb.AppendLine();
-                    sb.AppendLine($"{mi}    {{");
-                    foreach ((string DestProp, string SourceExpr) pair in m.MemberAssignments)
-                    {
-                        sb.AppendLine($"{mi}        {pair.DestProp} = {pair.SourceExpr},");
-                    }
-
-                    sb.AppendLine($"{mi}    }};");
-                }
-                else
-                {
-                    sb.AppendLine(";");
-                }
-
-                sb.AppendLine($"{mi}}}");
-                sb.AppendLine();
-
-                // List Extension
-                sb.AppendLine(
-                    $"{mi}public static List<{m.DestType}> To{m.DestShortName}List(this IEnumerable<{m.SourceType}>? source)"
-                );
-                sb.AppendLine($"{mi}{{");
-                sb.AppendLine($"{mi}    if (source == null) return new List<{m.DestType}>();");
-                sb.AppendLine(
-                    $"{mi}    return source.Select(x => x.To{m.DestShortName}()).Where(x => x != null).ToList()!;"
-                );
-                sb.AppendLine($"{mi}}}");
-                sb.AppendLine();
-            }
-
-            sb.AppendLine($"{indent}}}");
-            if (hasNs)
-            {
-                sb.AppendLine("}");
-            }
-        }
-        return sb.ToString();
-    }
+    private static string? GetJsonPropertyName(ISymbol s) =>
+        s.GetAttributes()
+            .FirstOrDefault(a => a.AttributeClass?.Name.Contains("JsonProperty") == true)
+            ?.ConstructorArguments.FirstOrDefault()
+            .Value?.ToString();
 
     #endregion
 }

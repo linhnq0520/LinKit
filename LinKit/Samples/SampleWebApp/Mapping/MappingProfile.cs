@@ -10,7 +10,10 @@ namespace SampleWebApp.Mapping
     {
         public void Configure(IMapperConfigurationBuilder builder)
         {
-            builder.CreateMap<UpdateUserCommand, User>().ForMember(d => d.Name, o => o.MapFrom(s => s.Id.ToJson(null, null)));
+            builder
+                .CreateMap<UpdateUserCommand, User>()
+                .ForMember(d => d.Name, o => o.MapFrom(s => s.Id.ToJson(null, null)))
+                .ForMember(d => d.Id, o => o.Ignore());
             builder.CreateMap<User, UpdateUserResposne>();
             builder.CreateMap<User, User1>();
         }

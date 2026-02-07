@@ -19,6 +19,7 @@ public sealed class GrpcEndpointAttribute : Attribute
     /// E.g., "GetUser"
     /// </summary>
     public string MethodName { get; }
+    public string? MediatorKeyedService { get; set; }
 
     public GrpcEndpointAttribute(Type serviceBaseType, string methodName)
     {

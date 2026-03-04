@@ -84,6 +84,11 @@ public sealed class ApiEndpointAttribute : Attribute
     public string? Version { get; set; }
     public string? MediatorKey { get; set; }
 
+    /// <summary>
+    /// Optional tag name for OpenAPI grouping
+    /// </summary>
+    public string? Tag { get; set; }
+
     public ApiEndpointAttribute(ApiMethod method, string route)
     {
         Method = method;

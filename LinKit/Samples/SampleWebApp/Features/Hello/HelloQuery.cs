@@ -8,7 +8,8 @@ namespace SampleWebApp.Features.Hello
         "/hello",
         Name = "SayHello",
         Summary = "Test api endpoint by say hello",
-        RateLimitPolicy = "HelloLimit"
+        RateLimitPolicy = "HelloLimit",
+        Tag = "hellos"
     )]
     public record HelloQuery(string Name) : IQuery<HelloReply>;
 }

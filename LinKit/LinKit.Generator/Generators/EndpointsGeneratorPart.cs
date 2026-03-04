@@ -36,6 +36,7 @@ internal record EndpointInfo(
     string? RateLimitPolicy,
     string? CorsPolicy,
     string? Version,
+    string? Tag,
     string? MediatorKey
 );
 
@@ -226,6 +227,7 @@ internal static class EndpointsGeneratorPart
             rateLimitPolicy = null,
             corsPolicy = null,
             version = null,
+            tag = null,
             mediatorKey = null;
         bool requireAuth = false,
             allowAnonymous = false;
@@ -234,6 +236,9 @@ internal static class EndpointsGeneratorPart
         {
             switch (named.Key)
             {
+                case "Tag": // Thêm case này
+                    tag = named.Value.Value as string;
+                    break;
                 case "Name":
                     customName = named.Value.Value as string;
                     break;
@@ -292,6 +297,7 @@ internal static class EndpointsGeneratorPart
             RateLimitPolicy: rateLimitPolicy,
             CorsPolicy: corsPolicy,
             Version: version,
+            Tag: tag,
             MediatorKey: mediatorKey
         );
     }
@@ -539,7 +545,10 @@ internal static class EndpointsGeneratorPart
         sb.AppendLine(
             $"            .WithName(\"{endpoint.CustomName ?? GenerateEndpointName(endpoint)}\")"
         );
-        sb.AppendLine($"            .WithTags(\"{endpoint.FeatureName}\")");
+        string finalTag = !string.IsNullOrEmpty(endpoint.Tag)
+            ? endpoint.Tag!
+            : endpoint.FeatureName;
+        sb.AppendLine($"            .WithTags(\"{finalTag}\")");
 
         if (!string.IsNullOrEmpty(endpoint.Summary))
         {

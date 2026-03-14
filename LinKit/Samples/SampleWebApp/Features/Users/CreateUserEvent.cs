@@ -1,8 +1,7 @@
-﻿using LinKit.Core.Cqrs;
+﻿using LinKit.Core.BackgroundJobs;
+using LinKit.Core.Cqrs;
 using LinKit.Core.Endpoints;
 using LinKit.Core.Messaging;
-using SampleWebApp.Behaviors;
-using SampleWebApp.Contracts.Behaviors;
 
 namespace SampleWebApp.Features.Users
 {
@@ -26,6 +25,17 @@ namespace SampleWebApp.Features.Users
             UserCreatedEvent request,
             CancellationToken cancellationToken = default
         )
+        {
+            throw new NotImplementedException();
+        }
+    }
+
+    public class TestJob : BackgroundJobCommand { }
+
+    [CqrsHandler]
+    public class TestJobHandler : ICommandHandler<TestJob>
+    {
+        public Task<Unit> HandleAsync(TestJob request, CancellationToken cancellationToken = default)
         {
             throw new NotImplementedException();
         }

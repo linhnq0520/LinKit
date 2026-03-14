@@ -434,36 +434,53 @@ namespace LinKit.Generated.Cqrs
         bool hasResult
     )
     {
-        var global = availableBehaviors
+        var globalBehaviors = availableBehaviors
             .Where(b => IsBehaviorApplicable(b, handler))
             .OrderBy(b => b.Order)
             .ToList();
 
-        // Wrap Specific (ApplyBehavior)
-        foreach (var sbType in handler.SpecificBehaviors.AsEnumerable().Reverse())
-        {
-            string closedType =
-                $"{GetCleanName(sbType)}<{handler.RequestType}, {handler.ResponseType}>";
-            sb.AppendLine(
-                $@"            {{
-                var capturedNext = next;
-                next = {(hasResult ? "" : "async ")}() => {(hasResult ? "" : "await ")}_serviceProvider.GetRequiredService<{closedType}>().HandleAsync(request, {(hasResult ? "capturedNext" : "() => capturedNext().ContinueWith(_ => " + UnitTypeName + ".Value, cancellationToken)")}, cancellationToken);
-            }}"
-            );
-        }
+        string requestType = handler.RequestType;
+        string responseType = handler.ResponseType;
 
-        // Wrap Global
-        foreach (var b in global.AsEnumerable().Reverse())
+        // Specific behaviors trước, global behaviors sau — cả 2 đều reverse
+        var specificClosedTypes = handler.SpecificBehaviors.Select(sbType =>
+            $"{GetCleanName(sbType)}<{requestType}, {responseType}>"
+        );
+
+        var globalClosedTypes = globalBehaviors.Select(b =>
+            $"{b.UnboundBehaviorType}<{requestType}, {responseType}>"
+        );
+
+        // Specific wrap trước (reverse), global wrap sau (reverse)
+        var allClosedTypes = specificClosedTypes.Reverse().Concat(globalClosedTypes.Reverse());
+
+        foreach (var closedType in allClosedTypes)
         {
-            string closedType =
-                $"{b.UnboundBehaviorType}<{handler.RequestType}, {handler.ResponseType}>";
-            sb.AppendLine(
-                $@"            {{
-                var capturedNext = next;
-                next = {(hasResult ? "" : "async ")}() => {(hasResult ? "" : "await ")}_serviceProvider.GetRequiredService<{closedType}>().HandleAsync(request, {(hasResult ? "capturedNext" : "() => capturedNext().ContinueWith(_ => " + UnitTypeName + ".Value, cancellationToken)")}, cancellationToken);
-            }}"
-            );
+            AppendBehaviorWrap(sb, closedType, hasResult);
         }
+    }
+
+    private static void AppendBehaviorWrap(StringBuilder sb, string closedType, bool hasResult)
+    {
+        string asyncModifier = hasResult ? "" : "async ";
+        string awaitModifier = hasResult ? "" : "await ";
+        string nextDelegate = hasResult
+            ? "capturedNext"
+            : $"async () => {{ await capturedNext(); return {UnitTypeName}.Value; }}";
+
+        sb.AppendLine(
+            $$"""
+                        {
+                            var capturedNext = next;
+                            next = {{asyncModifier}}() => {{awaitModifier}}_serviceProvider
+                                .GetRequiredService<{{closedType}}>()
+                                .HandleAsync(
+                                    request,
+                                    {{nextDelegate}},
+                                    cancellationToken);
+                        }
+            """
+        );
     }
     #endregion
 }

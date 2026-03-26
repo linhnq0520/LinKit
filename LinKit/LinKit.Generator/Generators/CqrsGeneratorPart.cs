@@ -15,7 +15,8 @@ internal record HandlerInfo(
     IReadOnlyList<string> MarkerInterfaces,
     IReadOnlyList<string> UnboundMarkerInterfaces,
     string HandlerInterface,
-    IReadOnlyList<string> SpecificBehaviors
+    IReadOnlyList<string> SpecificBehaviors,
+    bool IsNotification
 );
 
 internal record BehaviorInfo(
@@ -29,6 +30,7 @@ internal static class CqrsGeneratorPart
 {
     private const string ICommandHandlerName = "LinKit.Core.Cqrs.ICommandHandler";
     private const string IQueryHandlerName = "LinKit.Core.Cqrs.IQueryHandler";
+    private const string INotificationHandlerName = "LinKit.Core.Cqrs.INotificationHandler";
     private const string HandlerAttributeName = "LinKit.Core.Cqrs.CqrsHandlerAttribute";
     private const string ContextAttributeName = "LinKit.Core.Cqrs.CqrsContextAttribute";
     private const string BehaviorAttributeName = "LinKit.Core.Cqrs.CqrsBehaviorAttribute";
@@ -86,6 +88,11 @@ internal static class CqrsGeneratorPart
                                 $"services.AddTransient<{handler.HandlerInterface}, {handler.HandlerType}>();"
                             )
                         );
+
+                        if (handler.IsNotification)
+                        {
+                            continue;
+                        }
 
                         var registeredForThisHandler = new HashSet<string>();
 
@@ -249,11 +256,20 @@ internal static class CqrsGeneratorPart
 
     private static HandlerInfo? GetHandlerInfo(INamedTypeSymbol classSymbol)
     {
+        bool isNotification = false;
+
         var handlerInterface = classSymbol.AllInterfaces.FirstOrDefault(i =>
         {
             var name = GetCleanName(
                 i.OriginalDefinition.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat)
             );
+
+            if (name == INotificationHandlerName)
+            {
+                isNotification = true;
+                return true;
+            }
+
             return name == ICommandHandlerName || name == IQueryHandlerName;
         });
 
@@ -261,8 +277,9 @@ internal static class CqrsGeneratorPart
             return null;
 
         var requestType = handlerInterface.TypeArguments[0];
+
         var responseType =
-            handlerInterface.TypeArguments.Length > 1
+            (!isNotification && handlerInterface.TypeArguments.Length > 1)
                 ? handlerInterface
                     .TypeArguments[1]
                     .ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat)
@@ -291,24 +308,28 @@ internal static class CqrsGeneratorPart
         AddMarkers(requestType);
 
         var specificBehaviors = new List<string>();
-        var applyAttrs = requestType
-            .GetAttributes()
-            .Where(ad =>
-                GetCleanName(ad.AttributeClass?.ToDisplayString() ?? "")
-                == GetCleanName(ApplyBehaviorAttributeName)
-            );
-        foreach (var attr in applyAttrs)
+
+        if (!isNotification)
         {
-            if (
-                attr.ConstructorArguments.Length > 0
-                && attr.ConstructorArguments[0].Kind == TypedConstantKind.Array
-            )
+            var applyAttrs = requestType
+                .GetAttributes()
+                .Where(ad =>
+                    GetCleanName(ad.AttributeClass?.ToDisplayString() ?? "")
+                    == GetCleanName(ApplyBehaviorAttributeName)
+                );
+            foreach (var attr in applyAttrs)
             {
-                foreach (var val in attr.ConstructorArguments[0].Values)
-                    if (val.Value is INamedTypeSymbol bSymbol)
-                        specificBehaviors.Add(
-                            bSymbol.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat)
-                        );
+                if (
+                    attr.ConstructorArguments.Length > 0
+                    && attr.ConstructorArguments[0].Kind == TypedConstantKind.Array
+                )
+                {
+                    foreach (var val in attr.ConstructorArguments[0].Values)
+                        if (val.Value is INamedTypeSymbol bSymbol)
+                            specificBehaviors.Add(
+                                bSymbol.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat)
+                            );
+                }
             }
         }
 
@@ -319,7 +340,8 @@ internal static class CqrsGeneratorPart
             new List<string>(),
             unboundMarkers.Distinct().ToList(),
             handlerInterface.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat),
-            specificBehaviors
+            specificBehaviors,
+            isNotification
         );
     }
 
@@ -354,7 +376,8 @@ namespace LinKit.Generated.Cqrs
 
         foreach (
             var h in handlers.Where(x =>
-                GetCleanName(x.HandlerInterface) == ICommandHandlerName
+                !x.IsNotification
+                && GetCleanName(x.HandlerInterface) == ICommandHandlerName
                 && x.ResponseType == UnitTypeName
             )
         )
@@ -371,7 +394,8 @@ namespace LinKit.Generated.Cqrs
 
         foreach (
             var h in handlers.Where(x =>
-                GetCleanName(x.HandlerInterface) == ICommandHandlerName
+                !x.IsNotification
+                && GetCleanName(x.HandlerInterface) == ICommandHandlerName
                 && x.ResponseType != UnitTypeName
             )
         )
@@ -387,7 +411,9 @@ namespace LinKit.Generated.Cqrs
         );
 
         foreach (
-            var h in handlers.Where(x => GetCleanName(x.HandlerInterface) == IQueryHandlerName)
+            var h in handlers.Where(x =>
+                !x.IsNotification && GetCleanName(x.HandlerInterface) == IQueryHandlerName
+            )
         )
             sb.AppendLine(
                 $"            {h.RequestType} q => (Task<TResponse>)(object)HandleResultRequest(q, cancellationToken),"
@@ -398,7 +424,32 @@ namespace LinKit.Generated.Cqrs
         };"
         );
 
-        foreach (var h in handlers)
+        sb.AppendLine(
+            @"
+        public Task PublishAsync<TNotification>(TNotification notification, PublishStrategy strategy = PublishStrategy.Sequential, CancellationToken ct = default) => (object)notification switch {"
+        );
+
+        var notificationGroups = handlers
+            .Where(h => h.IsNotification)
+            .GroupBy(h => h.RequestType)
+            .ToList();
+        foreach (var group in notificationGroups)
+        {
+            string safeName = group
+                .Key.Replace(".", "_")
+                .Replace("<", "_")
+                .Replace(">", "_")
+                .Replace("global::", "");
+            sb.AppendLine($"            {group.Key} n => Publish_{safeName}(n, strategy, ct),");
+        }
+
+        sb.AppendLine(
+            @"            _ => Task.CompletedTask // Cho phép Publish Notification không có handler
+        };"
+        );
+
+        // Gen logic Command/Query Handler Private methods
+        foreach (var h in handlers.Where(h => !h.IsNotification))
         {
             if (h.ResponseType == UnitTypeName)
             {
@@ -423,6 +474,43 @@ namespace LinKit.Generated.Cqrs
                 sb.AppendLine("            return next();\n        }");
             }
         }
+
+        // Gen logic Notification Publisher Private methods
+        foreach (var group in notificationGroups)
+        {
+            string safeName = group
+                .Key.Replace(".", "_")
+                .Replace("<", "_")
+                .Replace(">", "_")
+                .Replace("global::", "");
+            string handlerInterface = group.First().HandlerInterface; // INotificationHandler<T>
+
+            sb.AppendLine(
+                $@"
+        private async Task Publish_{safeName}({group.Key} notification, PublishStrategy strategy, CancellationToken ct)
+        {{
+            var handlers = _serviceProvider.GetServices<{handlerInterface}>();
+
+            if (strategy == PublishStrategy.Sequential)
+            {{
+                foreach (var handler in handlers)
+                {{
+                    await handler.HandleAsync(notification, ct).ConfigureAwait(false);
+                }}
+            }}
+            else
+            {{
+                var tasks = new System.Collections.Generic.List<Task>();
+                foreach (var handler in handlers)
+                {{
+                    tasks.Add(handler.HandleAsync(notification, ct));
+                }}
+                await Task.WhenAll(tasks).ConfigureAwait(false);
+            }}
+        }}"
+            );
+        }
+
         sb.AppendLine("    }\n}");
         return sb.ToString();
     }

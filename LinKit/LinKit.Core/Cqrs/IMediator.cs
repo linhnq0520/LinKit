@@ -13,4 +13,16 @@ public interface IMediator
         IQuery<TResponse> query,
         CancellationToken cancellationToken = default
     );
+
+    Task PublishAsync<TNotification>(
+        TNotification notification,
+        PublishStrategy strategy = PublishStrategy.Sequential,
+        CancellationToken ct = default
+    );
+}
+
+public enum PublishStrategy
+{
+    Sequential,
+    Parallel,
 }

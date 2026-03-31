@@ -1,4 +1,4 @@
-﻿namespace LinKit.Core.BackgroundJobs;
+namespace LinKit.Core.BackgroundJobs;
 
 public static class Scheduler
 {
@@ -27,6 +27,35 @@ public static class Scheduler
         }
     }
 
+    private static TimeZoneInfo ResolveTimeZone(JobConfig config)
+    {
+        if (!string.IsNullOrWhiteSpace(config.TimeZoneId))
+        {
+            try
+            {
+                return TimeZoneInfo.FindSystemTimeZoneById(config.TimeZoneId);
+            }
+            catch (TimeZoneNotFoundException) { }
+            catch (InvalidTimeZoneException) { }
+        }
+
+        if (config.UtcOffsetHours is double offsetHours)
+        {
+            var offset = TimeSpan.FromHours(offsetHours);
+            if (offset >= TimeSpan.FromHours(-14) && offset <= TimeSpan.FromHours(14))
+            {
+                return TimeZoneInfo.CreateCustomTimeZone(
+                    id: $"UTC{offset:+hh\\:mm;-hh\\:mm;+00\\:00}",
+                    baseUtcOffset: offset,
+                    displayName: $"UTC{offset:+hh\\:mm;-hh\\:mm;+00\\:00}",
+                    standardDisplayName: $"UTC{offset:+hh\\:mm;-hh\\:mm;+00\\:00}"
+                );
+            }
+        }
+
+        return TimeZoneInfo.Utc;
+    }
+
     private static TimeSpan GetNextDailyDelay(JobConfig config)
     {
         if (!TimeSpan.TryParse(config.TimeOfDay, out var timeOfDay))
@@ -34,13 +63,16 @@ public static class Scheduler
             return DefaultErrorDelay;
         }
 
-        var now = DateTime.UtcNow;
-        var todayScheduledTime = now.Date + timeOfDay;
+        var nowUtc = DateTime.UtcNow;
+        var timeZone = ResolveTimeZone(config);
+        var nowLocal = TimeZoneInfo.ConvertTimeFromUtc(nowUtc, timeZone);
+        var todayScheduledTime = nowLocal.Date + timeOfDay;
 
-        DateTime nextRunTime =
-            now >= todayScheduledTime ? todayScheduledTime.AddDays(1) : todayScheduledTime;
+        DateTime nextRunLocal =
+            nowLocal >= todayScheduledTime ? todayScheduledTime.AddDays(1) : todayScheduledTime;
+        DateTime nextRunUtc = TimeZoneInfo.ConvertTimeToUtc(nextRunLocal, timeZone);
 
-        return nextRunTime - now;
+        return nextRunUtc - nowUtc;
     }
 
     private static TimeSpan GetNextWeeklyDelay(JobConfig config)
@@ -50,24 +82,27 @@ public static class Scheduler
             return DefaultErrorDelay;
         }
 
-        var now = DateTime.UtcNow;
-        var scheduledTimeToday = now.Date + timeOfDay;
+        var nowUtc = DateTime.UtcNow;
+        var timeZone = ResolveTimeZone(config);
+        var nowLocal = TimeZoneInfo.ConvertTimeFromUtc(nowUtc, timeZone);
+        var scheduledTimeToday = nowLocal.Date + timeOfDay;
 
         // .NET DayOfWeek: Sunday = 0, Monday = 1, ..., Saturday = 6
-        int currentDayOfWeek = (int)now.DayOfWeek;
+        int currentDayOfWeek = (int)nowLocal.DayOfWeek;
         int targetDayOfWeek = (int)config.DayOfWeek.Value;
 
         int daysToAdd = (targetDayOfWeek - currentDayOfWeek + 7) % 7;
 
-        if (daysToAdd == 0 && now >= scheduledTimeToday)
+        if (daysToAdd == 0 && nowLocal >= scheduledTimeToday)
         {
             daysToAdd = 7; // Nếu là hôm nay nhưng đã qua giờ, lên lịch cho tuần sau
         }
 
-        var nextRunDate = now.Date.AddDays(daysToAdd);
-        var nextRunTime = nextRunDate + timeOfDay;
+        var nextRunDate = nowLocal.Date.AddDays(daysToAdd);
+        var nextRunLocal = nextRunDate + timeOfDay;
+        var nextRunUtc = TimeZoneInfo.ConvertTimeToUtc(nextRunLocal, timeZone);
 
-        return nextRunTime - now;
+        return nextRunUtc - nowUtc;
     }
 
     private static TimeSpan GetNextMonthlyDelay(JobConfig config)
@@ -77,18 +112,21 @@ public static class Scheduler
             return DefaultErrorDelay;
         }
 
-        var now = DateTime.UtcNow;
-        var nextRunTime = GetNextMonthlyOccurrence(now, config.DayOfMonth.Value, timeOfDay);
+        var nowUtc = DateTime.UtcNow;
+        var timeZone = ResolveTimeZone(config);
+        var nowLocal = TimeZoneInfo.ConvertTimeFromUtc(nowUtc, timeZone);
+        var nextRunLocal = GetNextMonthlyOccurrence(nowLocal, config.DayOfMonth.Value, timeOfDay);
 
         // Nếu lần chạy tính được đã qua, tính cho tháng tiếp theo
-        if (now >= nextRunTime)
+        if (nowLocal >= nextRunLocal)
         {
             // Bắt đầu tìm kiếm từ ngày đầu tiên của tháng sau để tránh lỗi lặp vô hạn
-            var searchFrom = new DateTime(now.Year, now.Month, 1).AddMonths(1);
-            nextRunTime = GetNextMonthlyOccurrence(searchFrom, config.DayOfMonth.Value, timeOfDay);
+            var searchFrom = new DateTime(nowLocal.Year, nowLocal.Month, 1).AddMonths(1);
+            nextRunLocal = GetNextMonthlyOccurrence(searchFrom, config.DayOfMonth.Value, timeOfDay);
         }
 
-        return nextRunTime - now;
+        var nextRunUtc = TimeZoneInfo.ConvertTimeToUtc(nextRunLocal, timeZone);
+        return nextRunUtc - nowUtc;
     }
 
     private static DateTime GetNextMonthlyOccurrence(
@@ -110,7 +148,14 @@ public static class Scheduler
             targetDay = Math.Min(targetDay, DateTime.DaysInMonth(startTime.Year, startTime.Month));
         }
 
-        return new DateTime(startTime.Year, startTime.Month, targetDay, 0, 0, 0, DateTimeKind.Utc)
-            + timeOfDay;
+        return new DateTime(
+                startTime.Year,
+                startTime.Month,
+                targetDay,
+                0,
+                0,
+                0,
+                DateTimeKind.Unspecified
+            ) + timeOfDay;
     }
 }

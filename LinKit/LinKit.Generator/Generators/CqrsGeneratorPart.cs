@@ -444,7 +444,7 @@ namespace LinKit.Generated.Cqrs
         }
 
         sb.AppendLine(
-            @"            _ => Task.CompletedTask // Cho phép Publish Notification không có handler
+            @"            _ => Task.CompletedTask
         };"
         );
 

@@ -1,4 +1,4 @@
-﻿namespace LinKit.Core.BackgroundJobs;
+namespace LinKit.Core.BackgroundJobs;
 
 public class BackgroundJobConfig
 {
@@ -9,6 +9,18 @@ public class JobConfig : IEquatable<JobConfig>
 {
     public string Name { get; set; } = string.Empty;
     public bool IsActive { get; set; }
+
+    /// <summary>
+    /// ID timezone hệ điều hành (ví dụ: "SE Asia Standard Time", "Asia/Ho_Chi_Minh").
+    /// Ưu tiên dùng trường này khi có thể.
+    /// </summary>
+    public string? TimeZoneId { get; set; }
+
+    /// <summary>
+    /// UTC offset theo giờ (ví dụ: 7, -7, 5.5).
+    /// Chỉ dùng khi không cấu hình TimeZoneId.
+    /// </summary>
+    public double? UtcOffsetHours { get; set; }
 
     #region Scheduling Configuration
 
@@ -85,6 +97,8 @@ public class JobConfig : IEquatable<JobConfig>
 
         return Name == other.Name
             && IsActive == other.IsActive
+            && TimeZoneId == other.TimeZoneId
+            && UtcOffsetHours == other.UtcOffsetHours
             && ScheduleType == other.ScheduleType
             && TimeIntervalSeconds == other.TimeIntervalSeconds
             && TimeOfDay == other.TimeOfDay
@@ -106,6 +120,8 @@ public class JobConfig : IEquatable<JobConfig>
         var hashCode = new HashCode();
         hashCode.Add(Name);
         hashCode.Add(IsActive);
+        hashCode.Add(TimeZoneId);
+        hashCode.Add(UtcOffsetHours);
         hashCode.Add(ScheduleType);
         hashCode.Add(TimeIntervalSeconds);
         hashCode.Add(TimeOfDay);

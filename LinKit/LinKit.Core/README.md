@@ -1,4 +1,4 @@
-﻿# LinKit.Core
+# LinKit.Core
 
 [![NuGet Version](https://img.shields.io/nuget/v/LinKit.Core.svg)](https://www.nuget.org/packages/LinKit.Core/)
 [![NuGet Downloads](https://img.shields.io/nuget/dt/LinKit.Core.svg)](https://www.nuget.org/packages/LinKit.Core/)
@@ -34,13 +34,17 @@ Most .NET libraries rely on runtime reflection, which is slow, memory-intensive,
 
 ## Installation
 
-````shell
+```shell
 dotnet add package LinKit.Core
-```Add other packages as needed:
+```
+
+Add other packages as needed:
+
 ```shell
 dotnet add package LinKit.Grpc
 dotnet add package LinKit.Messaging.RabbitMQ
-````
+dotnet add package LinKit.Messaging.Kafka
+```
 
 ---
 
@@ -158,6 +162,44 @@ public class MyApi(IMediator mediator)
     }
 }
 ```
+
+---
+
+#### Notifications (`INotification`)
+
+LinKit also supports publish/subscribe style notifications through `INotification` and `INotificationHandler<TNotification>`.
+
+```csharp
+public record UserCreatedNotification(int UserId) : INotification;
+
+[CqrsHandler]
+public class SendWelcomeEmailHandler : INotificationHandler<UserCreatedNotification>
+{
+    public Task HandleAsync(UserCreatedNotification notification, CancellationToken ct)
+        => Task.CompletedTask;
+}
+
+[CqrsHandler]
+public class PushAuditLogHandler : INotificationHandler<UserCreatedNotification>
+{
+    public Task HandleAsync(UserCreatedNotification notification, CancellationToken ct)
+        => Task.CompletedTask;
+}
+```
+
+Publish from `IMediator`:
+
+```csharp
+await mediator.PublishAsync(new UserCreatedNotification(userId)); // default: Sequential
+await mediator.PublishAsync(new UserCreatedNotification(userId), PublishStrategy.Parallel);
+```
+
+**Current notification behavior:**
+
+- Default strategy is `Sequential` (handlers run one-by-one).
+- `Parallel` runs all handlers concurrently (`Task.WhenAll`).
+- Pipeline behaviors (`IPipelineBehavior<,>`) apply to command/query, not notification.
+- If a notification type has no discovered handler (`[CqrsHandler]` or `[CqrsContext]`), publish is a no-op (`Task.CompletedTask`).
 
 ---
 
@@ -401,7 +443,7 @@ public class ProcessEndOfDayReportHandler : ICommandHandler<ProcessEndOfDayRepor
         _logger = logger;
     }
 
-    public Task Handle(ProcessEndOfDayReportCommand command, CancellationToken cancellationToken)
+    public Task HandleAsync(ProcessEndOfDayReportCommand command, CancellationToken cancellationToken)
     {
         _logger.LogInformation("Processing end-of-day report of type: {Type}", command.ReportType ?? "Standard");
         // ... your business logic here ...
@@ -431,12 +473,14 @@ Create a section in your `appsettings.json` or a separate JSON file to define th
         "IsActive": true,
         "RunOnStart": true,
         "ScheduleType": "Daily",
+        "UtcOffsetHours": 7,
         "TimeOfDay": "08:00:00"
       },
       {
         "Name": "WeeklyDatabaseCleanup",
         "IsActive": true,
         "ScheduleType": "Weekly",
+        "TimeZoneId": "SE Asia Standard Time",
         "TimeOfDay": "03:30:00",
         "DayOfWeek": "Sunday"
       },
@@ -461,12 +505,10 @@ In your `Program.cs`, call the `AddBackgroundJobs` extension method.
 ```csharp
 var builder = WebApplication.CreateBuilder(args);
 
-// Register the Background Job hosted service
-builder.AddBackgroundJobs(<path to config file>));
+// Register Background Job hosted service + generated mapper
+builder.AddBackgroundJobs("BackgroundJobsConfig.json");
 
 var app = builder.Build();
-
-// ...
 ```
 
 This registers the `BackgroundJobManager` which will automatically start, stop, and reload jobs based on your configuration.
@@ -484,11 +526,18 @@ Below is a detailed description of each property available in the job configurat
 | `RunOnStart`          | `bool`            | If `true`, the job will execute once immediately upon application start (or when the job is activated via config change), and then follow its regular schedule. Defaults to `false`.                      |
 | `ScheduleType`        | `string`          | **Required.** The scheduling mode. Can be one of four values: `Interval`, `Daily`, `Weekly`, `Monthly`.                                                                                                  |
 | `TimeIntervalSeconds` | `int`             | Used only when `ScheduleType` is `Interval`. Defines the number of seconds to wait between each job execution.                                                                                         |
-| `TimeOfDay`           | `string`          | Used for `Daily`, `Weekly`, and `Monthly` schedules. Defines the time of day (in **UTC**) to run the job. Format: `"HH:mm:ss"`. Example: `"14:30:00"` for 2:30 PM UTC.                                    |
+| `TimeZoneId`          | `string`          | Optional. Preferred timezone identifier (for example: `SE Asia Standard Time`, `Asia/Ho_Chi_Minh`). If valid, this takes precedence. |
+| `UtcOffsetHours`      | `double`          | Optional fallback when `TimeZoneId` is not set/invalid. Supports values like `7`, `-7`, `5.5`. Valid range is `-14` to `+14`. |
+| `TimeOfDay`           | `string`          | Used for `Daily`, `Weekly`, and `Monthly` schedules. Defines local run time in the resolved timezone (`TimeZoneId` -> `UtcOffsetHours` -> UTC). Format: `"HH:mm:ss"`. |
 | `DayOfWeek`           | `string`          | Used only when `ScheduleType` is `Weekly`. The day of the week to run the job. Examples: `"Monday"`, `"Tuesday"`, etc.                                                                                  |
 | `DayOfMonth`          | `int`             | Used only when `ScheduleType` is `Monthly`. The day of the month to run (1-31). **Special Value:** Use a large number (e.g., `99`) to signify the **last day** of the current month.                   |
 | `MaxParallel`         | `int`             | The maximum number of instances of this job that can run concurrently. Defaults to `1`. Useful for long-running jobs to prevent overlap.                                                              |
 | `EmbeddedData`        | `string` (JSON)   | An optional string value that is passed directly to the EmbeddedData property of your command. This can be a simple string, a JSON object, or any other format you wish to parse in your handler.      |
+
+**Timezone precedence for schedule calculation (`Daily`/`Weekly`/`Monthly`):**
+1. Use `TimeZoneId` when it is provided and valid.
+2. Otherwise use `UtcOffsetHours` when valid.
+3. Otherwise fallback to `UTC`.
 
 ### 5. Mapping Kit
 

@@ -4,6 +4,7 @@
       {
         "Name": "AutoCreateUser",
         "IsActive": true,
+        "UtcOffsetHours": 7,
         "TimeIntervalSeconds": 5,
         "RunOnStart": true,
         "AssemblyName": "SampleWebApp",

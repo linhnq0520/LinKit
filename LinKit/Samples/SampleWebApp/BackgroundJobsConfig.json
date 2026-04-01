@@ -2,13 +2,16 @@
   "BackgroundJobConfig": {
     "BackgroundJobs": [
       {
-        "Name": "AutoCreateUser",
+        "Name": "TestBackgroundJob",
         "IsActive": true,
-        "UtcOffsetHours": 7,
-        "TimeIntervalSeconds": 5,
+        //"TimeIntervalSeconds": 5,
         "RunOnStart": true,
         "AssemblyName": "SampleWebApp",
-        "EmbeddedData": "hello Linh nè"
+        "EmbeddedData": "hello Linh nè",
+        "ScheduleType": "Daily",
+        //"UtcOffsetHours": 7,
+        "TimeZoneId": "Asia/Ho_Chi_Minh",
+        "TimeOfDay": "08:00:00"
       }
     ]
   }

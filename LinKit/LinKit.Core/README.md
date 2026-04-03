@@ -13,11 +13,11 @@ Most .NET libraries rely on runtime reflection, which is slow, memory-intensive,
 
 **Key Benefits:**
 
-- 🚀 **Zero Reflection:** No runtime scanning or reflection.
-- ⚡ **Fast Startup:** No assembly scanning.
-- 🗑️ **AOT & Trimming Safe:** Works with Blazor, MAUI, NativeAOT.
-- ✍️ **Clean API:** Intent-driven, explicit, and easy to use.
-- 🤖 **Automated Boilerplate:** For DI, API endpoints, background jobs, gRPC, messaging, and mapping.
+- **Zero Reflection:** No runtime scanning or reflection.
+- **Fast Startup:** No assembly scanning.
+- **AOT & Trimming Safe:** Works with Blazor, MAUI, NativeAOT.
+- **Clean API:** Intent-driven, explicit, and easy to use.
+- **Automated Boilerplate:** For DI, API endpoints, background jobs, gRPC, messaging, and mapping.
 
 ---
 
@@ -84,25 +84,54 @@ public class CreateUserHandler : ICommandHandler<CreateUserCommand, int>
 
 ---
 
-#### Step 2: Modular Registration (CqrsContext)
+#### Step 2: Multi-Assembly Registration (`[CqrsContext]`)
 
-Instead of marking every handler with an attribute, you can group them into a **Context**. This is ideal for Modular Monolith architectures to keep registration centralized and explicit.
+In real-world applications (Clean Architecture, Modular Monoliths), your requests, handlers, and pipeline behaviors usually reside in different class libraries (e.g., `Application.dll`, `Infrastructure.dll`). Since Source Generators run *per-project*, generating multiple `IMediator` instances across different projects would cause Dependency Injection conflicts.
+
+LinKit solves this elegantly with `[CqrsContext]`. It acts as a **centralized registry** using **Assembly Marker Types**. You define it once in your Host project (e.g., `WebAPI`), and the generator will automatically dive into the referenced assemblies, discover all handlers **AND pipeline behaviors**, and generate a single, unified, highly-optimized Mediator.
+
+**1. Create Marker Classes in your target projects:**
+Create an empty class in any project that contains your CQRS logic. This class acts as an anchor for the generator.
 
 ```csharp
-[CqrsContext(
-    typeof(CreateUserHandler),
-    typeof(GetUserHandler),
-    typeof(UpdateOrderHandler)
-)]
-public partial class UserModuleContext { }
-```
-*Note: The generator combines handlers found via both `[CqrsHandler]` and `[CqrsContext]`.*
+// In your Application layer project
+namespace MyApp.Application;
+public sealed class ApplicationAssemblyMarker { }
 
----
+// In your Infrastructure layer project
+namespace MyApp.Infrastructure;
+public sealed class InfrastructureAssemblyMarker { }
+```
+
+**2. Define the Context in your Host project (WebAPI):**
+In your startup project, apply `[CqrsContext]` to any class (even `Program.cs`) and pass the marker types.
+
+```csharp
+using LinKit.Core.Cqrs;
+using MyApp.Application;
+using MyApp.Infrastructure;
+
+// The LinKit source generator running in the WebAPI project will read this,
+// scan the entire Application and Infrastructure assemblies, 
+// and wire up ALL discovered Handlers AND Pipeline Behaviors automatically!
+[CqrsContext(
+    typeof(ApplicationAssemblyMarker),
+    typeof(InfrastructureAssemblyMarker)
+)]
+public partial class GlobalCqrsRegistry 
+{ 
+}
+```
+
+*Note: You can still use `[CqrsHandler]` or `[CqrsBehavior]` on individual classes for explicit local discovery in the host project. The generator will seamlessly combine local classes with the context-discovered ones.*
+
+--- 
 
 #### Step 3: Advanced Pipeline Behaviors
 
 LinKit's pipeline is generated at compile-time using a **Clean Name matching engine**. This means a behavior targeting `ICommand` will automatically match both `ICommand` and `ICommand<TResponse>`.
+
+*(Tip: If your behaviors are located in external assemblies, just ensure their assembly marker is included in your `[CqrsContext]` as shown in Step 2. LinKit will find them automatically!)*
 
 ##### A. Global & Contract Behaviors (`[CqrsBehavior]`)
 Use this for cross-cutting concerns. You can target a specific marker interface or use `typeof(object)` for a truly global behavior.
@@ -200,18 +229,6 @@ await mediator.PublishAsync(new UserCreatedNotification(userId), PublishStrategy
 - `Parallel` runs all handlers concurrently (`Task.WhenAll`).
 - Pipeline behaviors (`IPipelineBehavior<,>`) apply to command/query, not notification.
 - If a notification type has no discovered handler (`[CqrsHandler]` or `[CqrsContext]`), publish is a no-op (`Task.CompletedTask`).
-
----
-
-#### Why LinKit Mediator is Different?
-
-| Feature | LinKit (Source Gen) | MediatR (Reflection) |
-| :--- | :--- | :--- |
-| **Performance** | Direct method calls (Zero Reflection) | Reflection-based `Activator.CreateInstance` |
-| **Startup Time** | Instant (Static registration) | Slow (Assembly scanning) |
-| **NativeAOT** | Fully Compatible | Requires complex workarounds |
-| **Pipeline** | Compile-time static graph | Runtime dynamic construction |
-| **Error Messages** | Compile-time errors | Runtime exceptions |
 
 ---
 

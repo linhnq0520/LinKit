@@ -14,9 +14,9 @@ public sealed class CqrsHandlerAttribute : Attribute { }
 [AttributeUsage(AttributeTargets.Class, Inherited = false, AllowMultiple = true)]
 public sealed class CqrsContextAttribute : Attribute
 {
-    public Type[] HandlerTypes { get; }
+    public Type[] AssemblyMarkerTypes { get; }
 
-    public CqrsContextAttribute(params Type[] handlerTypes) => HandlerTypes = handlerTypes;
+    public CqrsContextAttribute(params Type[] assemblyMarkerTypes) => AssemblyMarkerTypes = assemblyMarkerTypes;
 }
 
 /// <summary>

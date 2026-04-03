@@ -70,8 +70,14 @@ internal static class CqrsGeneratorPart
         IncrementalGeneratorInitializationContext context
     )
     {
-        var collectedHandlers = GetCollectedHandlers(context);
-        var collectedBehaviors = GetCollectedBehaviors(context);
+        // 1. Tạo luồng dùng chung: Quét tất cả các class từ các Assembly được đánh dấu trong [CqrsContext]
+        var scannedClassesFromContext = GetScannedClassesFromContext(context);
+
+        // 2. Gom Handlers = Local + Scanned
+        var collectedHandlers = GetCollectedHandlers(context, scannedClassesFromContext);
+
+        // 3. Gom Behaviors = Local + Scanned
+        var collectedBehaviors = GetCollectedBehaviors(context, scannedClassesFromContext);
 
         return collectedHandlers
             .Combine(collectedBehaviors)
@@ -90,13 +96,11 @@ internal static class CqrsGeneratorPart
                         );
 
                         if (handler.IsNotification)
-                        {
                             continue;
-                        }
 
                         var registeredForThisHandler = new HashSet<string>();
 
-                        // 1. Đăng ký Specific Behaviors (ApplyBehavior)
+                        // 1. Specific Behaviors
                         foreach (var sbType in handler.SpecificBehaviors)
                         {
                             string closedType =
@@ -109,14 +113,15 @@ internal static class CqrsGeneratorPart
                                 );
                         }
 
-                        // 2. Đăng ký Global Behaviors
+                        // 2. Global Behaviors
                         var applicable = behaviors
-                            .Where(b => b != null && IsBehaviorApplicable(b!, handler))
-                            .OrderBy(b => b!.Order);
+                            .Where(b => IsBehaviorApplicable(b, handler))
+                            .OrderBy(b => b.Order);
+
                         foreach (var b in applicable)
                         {
                             string closedType =
-                                $"{b!.UnboundBehaviorType}<{handler.RequestType}, {handler.ResponseType}>";
+                                $"{b.UnboundBehaviorType}<{handler.RequestType}, {handler.ResponseType}>";
                             if (registeredForThisHandler.Add(closedType))
                                 services.Add(
                                     new CqrsServiceInfo($"services.AddTransient<{closedType}>();")
@@ -130,8 +135,10 @@ internal static class CqrsGeneratorPart
 
     public static void Initialize(IncrementalGeneratorInitializationContext context)
     {
-        var collectedHandlers = GetCollectedHandlers(context);
-        var collectedBehaviors = GetCollectedBehaviors(context);
+        var scannedClassesFromContext = GetScannedClassesFromContext(context);
+        var collectedHandlers = GetCollectedHandlers(context, scannedClassesFromContext);
+        var collectedBehaviors = GetCollectedBehaviors(context, scannedClassesFromContext);
+
         var combined = collectedHandlers.Combine(collectedBehaviors);
 
         context.RegisterSourceOutput(
@@ -140,7 +147,7 @@ internal static class CqrsGeneratorPart
             {
                 if (!source.Left.Any())
                     return;
-                string mediatorSource = GenerateMediatorClass(source.Left, source.Right!);
+                string mediatorSource = GenerateMediatorClass(source.Left, source.Right);
                 spc.AddSource("Cqrs.Mediator.g.cs", SourceText.From(mediatorSource, Encoding.UTF8));
             }
         );
@@ -148,21 +155,14 @@ internal static class CqrsGeneratorPart
 
     #endregion
 
-    #region Data Collection (Handlers & Context)
+    #region Data Collection (Handlers, Behaviors & Context)
 
-    private static IncrementalValueProvider<IReadOnlyList<HandlerInfo>> GetCollectedHandlers(
+    // [MỚI] Luồng quét Assembly dùng chung cho cả Handler và Behavior
+    private static IncrementalValuesProvider<INamedTypeSymbol> GetScannedClassesFromContext(
         IncrementalGeneratorInitializationContext context
     )
     {
-        // Source 1: Từ [CqrsHandler] trên từng class
-        var fromAttribute = context.SyntaxProvider.ForAttributeWithMetadataName(
-            HandlerAttributeName,
-            (n, _) => n is ClassDeclarationSyntax,
-            (c, _) => (INamedTypeSymbol)c.TargetSymbol
-        );
-
-        // Source 2: Từ [CqrsContext(typeof(A), typeof(B))]
-        var fromContext = context
+        return context
             .SyntaxProvider.ForAttributeWithMetadataName(
                 ContextAttributeName,
                 (n, _) => n is ClassDeclarationSyntax,
@@ -179,17 +179,65 @@ internal static class CqrsGeneratorPart
                     if (arg.Kind != TypedConstantKind.Array)
                         return ImmutableArray<INamedTypeSymbol>.Empty;
 
-                    return arg
+                    var markerSymbols = arg
                         .Values.Select(v => v.Value as INamedTypeSymbol)
-                        .Where(s => s != null)
-                        .ToImmutableArray()!;
+                        .Where(s => s != null);
+                    var scannedTypes = new HashSet<INamedTypeSymbol>(
+                        SymbolEqualityComparer.Default
+                    );
+
+                    foreach (var marker in markerSymbols)
+                    {
+                        if (marker?.ContainingAssembly != null)
+                        {
+                            CollectClassTypes(
+                                marker.ContainingAssembly.GlobalNamespace,
+                                scannedTypes
+                            );
+                        }
+                    }
+                    return scannedTypes.ToImmutableArray();
                 }
             )
             .SelectMany((symbols, _) => symbols);
+    }
 
-        return fromAttribute
+    private static void CollectClassTypes(
+        INamespaceSymbol namespaceSymbol,
+        HashSet<INamedTypeSymbol> scannedTypes
+    )
+    {
+        foreach (var type in namespaceSymbol.GetTypeMembers())
+        {
+            if (
+                type.TypeKind == TypeKind.Class
+                && !type.IsAbstract
+                && type.DeclaredAccessibility == Accessibility.Public
+            )
+            {
+                scannedTypes.Add(type);
+            }
+        }
+        foreach (var childNamespace in namespaceSymbol.GetNamespaceMembers())
+        {
+            CollectClassTypes(childNamespace, scannedTypes);
+        }
+    }
+
+    private static IncrementalValueProvider<IReadOnlyList<HandlerInfo>> GetCollectedHandlers(
+        IncrementalGeneratorInitializationContext context,
+        IncrementalValuesProvider<INamedTypeSymbol> scannedClassesFromContext
+    )
+    {
+        var localHandlers = context.SyntaxProvider.ForAttributeWithMetadataName(
+            HandlerAttributeName,
+            (n, _) => n is ClassDeclarationSyntax,
+            (c, _) => (INamedTypeSymbol)c.TargetSymbol
+        );
+
+        return localHandlers
             .Collect()
-            .Combine(fromContext.Collect())
+            .Combine(scannedClassesFromContext.Collect())
             .Select(
                 (tuple, _) =>
                 {
@@ -207,51 +255,80 @@ internal static class CqrsGeneratorPart
             );
     }
 
-    private static IncrementalValueProvider<ImmutableArray<BehaviorInfo?>> GetCollectedBehaviors(
-        IncrementalGeneratorInitializationContext context
+    private static IncrementalValueProvider<IReadOnlyList<BehaviorInfo>> GetCollectedBehaviors(
+        IncrementalGeneratorInitializationContext context,
+        IncrementalValuesProvider<INamedTypeSymbol> scannedClassesFromContext
     )
     {
-        return context
-            .SyntaxProvider.ForAttributeWithMetadataName(
-                BehaviorAttributeName,
-                (n, _) => n is ClassDeclarationSyntax,
-                (c, _) =>
+        var localBehaviors = context.SyntaxProvider.ForAttributeWithMetadataName(
+            BehaviorAttributeName,
+            (n, _) => n is ClassDeclarationSyntax,
+            (c, _) => (INamedTypeSymbol)c.TargetSymbol
+        );
+
+        return localBehaviors
+            .Collect()
+            .Combine(scannedClassesFromContext.Collect())
+            .Select(
+                (tuple, _) =>
                 {
-                    var symbol = (INamedTypeSymbol)c.TargetSymbol;
-                    var attr = symbol
-                        .GetAttributes()
-                        .First(ad =>
-                            GetCleanName(ad.AttributeClass?.ToDisplayString() ?? "")
-                            == GetCleanName(BehaviorAttributeName)
-                        );
-                    var targetType = attr.ConstructorArguments[0].Value as INamedTypeSymbol;
-                    if (targetType == null)
-                        return null;
-
-                    var constraints = new List<string>();
-                    var tRequest = symbol.TypeParameters.FirstOrDefault(tp =>
-                        tp.Name == "TRequest"
+                    var uniqueSymbols = new HashSet<INamedTypeSymbol>(
+                        SymbolEqualityComparer.Default
                     );
-                    if (tRequest != null)
-                        foreach (var ct in tRequest.ConstraintTypes)
-                            constraints.Add(
-                                ct.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat)
-                            );
+                    foreach (var s in tuple.Left)
+                        uniqueSymbols.Add(s);
+                    foreach (var s in tuple.Right)
+                        uniqueSymbols.Add(s);
 
-                    string unboundName = symbol.IsGenericType
-                        ? symbol.OriginalDefinition.ToDisplayString(
-                            SymbolDisplayFormat.FullyQualifiedFormat
-                        )
-                        : symbol.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
-                    return new BehaviorInfo(
-                        unboundName.Split('<')[0],
-                        (int)(attr.ConstructorArguments[1].Value ?? 0),
-                        targetType.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat),
-                        constraints
-                    );
+                    // [MỚI] Dùng hàm GetBehaviorInfo để bóc tách attribute, tự động bỏ qua các class không phải Behavior
+                    return (IReadOnlyList<BehaviorInfo>)
+                        uniqueSymbols.Select(GetBehaviorInfo).Where(x => x != null).ToList()!;
                 }
-            )
-            .Collect();
+            );
+    }
+
+    // [MỚI] Hàm kiểm tra và lấy thông tin Behavior từ bất kỳ Class nào (từ Local hoặc từ quét Assembly)
+    private static BehaviorInfo? GetBehaviorInfo(INamedTypeSymbol symbol)
+    {
+        var attr = symbol
+            .GetAttributes()
+            .FirstOrDefault(ad =>
+                GetCleanName(ad.AttributeClass?.ToDisplayString() ?? "")
+                == GetCleanName(BehaviorAttributeName)
+            );
+
+        if (attr == null || attr.ConstructorArguments.Length == 0)
+            return null;
+
+        var targetType = attr.ConstructorArguments[0].Value as INamedTypeSymbol;
+        if (targetType == null)
+            return null;
+
+        int order =
+            attr.ConstructorArguments.Length > 1 && attr.ConstructorArguments[1].Value is int o
+                ? o
+                : 0;
+
+        var constraints = new List<string>();
+        var tRequest = symbol.TypeParameters.FirstOrDefault(tp => tp.Name == "TRequest");
+        if (tRequest != null)
+        {
+            foreach (var ct in tRequest.ConstraintTypes)
+            {
+                constraints.Add(ct.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat));
+            }
+        }
+
+        string unboundName = symbol.IsGenericType
+            ? symbol.OriginalDefinition.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat)
+            : symbol.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
+
+        return new BehaviorInfo(
+            unboundName.Split('<')[0],
+            order,
+            targetType.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat),
+            constraints
+        );
     }
 
     private static HandlerInfo? GetHandlerInfo(INamedTypeSymbol classSymbol)

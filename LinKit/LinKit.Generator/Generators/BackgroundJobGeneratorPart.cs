@@ -191,10 +191,13 @@ internal static class BackgroundJobGeneratorPart
 using Microsoft.AspNetCore.Builder;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Options;
 using LinKit.Core.BackgroundJobs;
 using System.Linq;
+using System.IO;
+using System;
 using LinKit.Core;
 
 namespace {namespaceName}
@@ -215,10 +218,15 @@ namespace {namespaceName}
             else
             {{
                 Console.WriteLine($""[Warning] BackgroundJobConfig section not found in '{{jsonFile}}'. Using default configuration."");
-                builder.Services.Configure<BackgroundJobConfig>(config =>
-                {{
-                }});
+                builder.Services.Configure<BackgroundJobConfig>(config => {{ }});
             }}
+
+            string absoluteConfigPath = Path.GetFullPath(jsonFile);
+            string directory = Path.GetDirectoryName(absoluteConfigPath) ?? Directory.GetCurrentDirectory();
+            string historyFileName = Path.GetFileNameWithoutExtension(jsonFile) + ""_History.json"";
+            string historyFilePath = Path.Combine(directory, historyFileName);
+
+            builder.Services.TryAddSingleton<IJobHistoryLogger>(sp => new FileJobHistoryLogger(historyFilePath));
 
             builder.Services.AddKeyedSingleton<IBackgroundJobMapper, BackgroundJobMapper>(""{assemblyName}"");
 

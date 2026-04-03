@@ -2,6 +2,7 @@ namespace LinKit.Core.BackgroundJobs;
 
 public class BackgroundJobConfig
 {
+    public string? HistoryConnectionString { get; set; }
     public List<JobConfig> BackgroundJobs { get; set; } = [];
 }
 
@@ -9,6 +10,7 @@ public class JobConfig : IEquatable<JobConfig>
 {
     public string Name { get; set; } = string.Empty;
     public bool IsActive { get; set; }
+    public bool IsLogHistory { get; set; }
 
     /// <summary>
     /// ID timezone hệ điều hành (ví dụ: "SE Asia Standard Time", "Asia/Ho_Chi_Minh").

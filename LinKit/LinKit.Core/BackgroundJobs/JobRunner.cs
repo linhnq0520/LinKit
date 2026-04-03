@@ -38,6 +38,15 @@ public class JobRunner(JobConfig config, IServiceProvider sp)
     private async Task ExecuteJobLogicAsync()
     {
         using IServiceScope scope = _serviceProvider.CreateScope();
+
+        var history = new JobExecutionHistory
+        {
+            JobName = CurrentConfig.Name,
+            StartTime = DateTime.UtcNow,
+            EmbeddedData = CurrentConfig.EmbeddedData,
+            IsSuccess = false,
+        };
+
         try
         {
             _logger?.LogDebug("Executing job instance for [{Job}].", CurrentConfig.Name);
@@ -52,23 +61,46 @@ public class JobRunner(JobConfig config, IServiceProvider sp)
             );
             if (executor == null)
             {
+                history.ErrorMessage = "Job executor not found.";
                 _logger?.LogWarning("Job executor not found for job: {Job}", CurrentConfig.Name);
                 return;
             }
 
-            IMediator mediator = scope.ServiceProvider.GetRequiredKeyedService<IMediator>(
-                CurrentConfig.AssemblyName
-            );
+            IMediator mediator =
+                scope.ServiceProvider.GetKeyedService<IMediator>(CurrentConfig.AssemblyName)
+                ?? scope.ServiceProvider.GetService<IMediator>()
+                ?? throw new InvalidOperationException(
+                    $"IMediator is not registered for Assembly: {CurrentConfig.AssemblyName}"
+                );
+
             await executor(mediator, _cts.Token);
 
+            history.IsSuccess = true;
             _logger?.LogDebug("Finished job instance for [{Job}].", CurrentConfig.Name);
         }
         catch (Exception ex)
         {
+            history.IsSuccess = false;
+            history.ErrorMessage = ex.ToString();
             _logger?.LogError(ex, "Error executing job instance for {Job}", CurrentConfig.Name);
         }
         finally
         {
+            history.EndTime = DateTime.UtcNow;
+            try
+            {
+                // Lấy ra Logger (Có thể là DB do User tự viết, hoặc File mặc định)
+                var historyLogger = scope.ServiceProvider.GetService<IJobHistoryLogger>();
+                if (historyLogger != null && CurrentConfig.IsLogHistory)
+                {
+                    await historyLogger.LogAsync(history, _cts.Token);
+                }
+            }
+            catch (Exception exLog)
+            {
+                _logger?.LogError(exLog, "Error saving job history for {Job}", CurrentConfig.Name);
+            }
+
             _parallelLimiter?.Release();
         }
     }

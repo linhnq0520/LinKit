@@ -488,6 +488,7 @@ Create a section in your `appsettings.json` or a separate JSON file to define th
       {
         "Name": "SendDailyNewsletter",
         "IsActive": true,
+        "IsLogHistory": true,
         "RunOnStart": true,
         "ScheduleType": "Daily",
         "UtcOffsetHours": 7,
@@ -496,6 +497,7 @@ Create a section in your `appsettings.json` or a separate JSON file to define th
       {
         "Name": "WeeklyDatabaseCleanup",
         "IsActive": true,
+        "IsLogHistory": true,
         "ScheduleType": "Weekly",
         "TimeZoneId": "SE Asia Standard Time",
         "TimeOfDay": "03:30:00",
@@ -540,6 +542,7 @@ Below is a detailed description of each property available in the job configurat
 | --------------------- | ----------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | `Name`                | `string`          | **Required.** The unique identifier for the job. This must exactly match the name provided in the `[BackgroundJob("MyUniqueJobName")]` attribute.                                                       |
 | `IsActive`            | `bool`            | Determines if the job is enabled. If set to `false`, the job will not run. Changes are detected at runtime.                                                                                              |
+| `IsLogHistory`        | `bool`            | Optional. If `true`, the job's execution history (start time, end time, success status, and errors) will be logged. Defaults to `false`.                                                                |
 | `RunOnStart`          | `bool`            | If `true`, the job will execute once immediately upon application start (or when the job is activated via config change), and then follow its regular schedule. Defaults to `false`.                      |
 | `ScheduleType`        | `string`          | **Required.** The scheduling mode. Can be one of four values: `Interval`, `Daily`, `Weekly`, `Monthly`.                                                                                                  |
 | `TimeIntervalSeconds` | `int`             | Used only when `ScheduleType` is `Interval`. Defines the number of seconds to wait between each job execution.                                                                                         |
@@ -551,10 +554,48 @@ Below is a detailed description of each property available in the job configurat
 | `MaxParallel`         | `int`             | The maximum number of instances of this job that can run concurrently. Defaults to `1`. Useful for long-running jobs to prevent overlap.                                                              |
 | `EmbeddedData`        | `string` (JSON)   | An optional string value that is passed directly to the EmbeddedData property of your command. This can be a simple string, a JSON object, or any other format you wish to parse in your handler.      |
 
-**Timezone precedence for schedule calculation (`Daily`/`Weekly`/`Monthly`):**
-1. Use `TimeZoneId` when it is provided and valid.
-2. Otherwise use `UtcOffsetHours` when valid.
-3. Otherwise fallback to `UTC`.
+---
+
+#### Execution History Logging
+
+LinKit provides built-in support for tracking the execution status of your background jobs. When `"IsLogHistory": true` is set in the job configuration, LinKit captures the start time, end time, execution success, and any exception messages.
+
+**1. Default File Logging**
+Out of the box, LinKit logs histories to a highly optimized, memory-safe JSON-Lines file. This file is automatically created in the same directory as your configuration file (e.g., if you load `JobsConfig.json`, the history file will be `JobsConfig_History.json`).
+
+**2. Custom Database Logging**
+For enterprise applications, you likely want to store this history in a Database (SQL Server, PostgreSQL, MongoDB, etc.) instead of a file. LinKit's architecture makes this extremely easy via standard Dependency Injection.
+
+Simply implement the `IJobHistoryLogger` interface and register it in your `Program.cs`. LinKit will automatically bypass the default file logger and use yours instead:
+
+```csharp
+using LinKit.Core.BackgroundJobs;
+
+// 1. Create your custom logger implementation
+public class MyDbJobHistoryLogger : IJobHistoryLogger
+{
+    private readonly ApplicationDbContext _dbContext;
+
+    public MyDbJobHistoryLogger(ApplicationDbContext dbContext)
+    {
+        _dbContext = dbContext;
+    }
+
+    public async Task LogAsync(JobExecutionHistory history, CancellationToken cancellationToken = default)
+    {
+        // Save the execution data to your database using EF Core, Dapper, etc.
+        _dbContext.JobHistories.Add(history);
+        await _dbContext.SaveChangesAsync(cancellationToken);
+    }
+}
+
+// 2. Register it in Program.cs BEFORE AddBackgroundJobs
+builder.Services.AddScoped<IJobHistoryLogger, MyDbJobHistoryLogger>();
+
+// 3. Register the Background Jobs
+builder.AddBackgroundJobs("BackgroundJobsConfig.json");
+```
+---
 
 ### 5. Mapping Kit
 

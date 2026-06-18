@@ -1,5 +1,4 @@
-﻿using LinKit.Core.Cqrs;
-using Microsoft.Extensions.DependencyInjection;
+﻿using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 
 namespace LinKit.Core.BackgroundJobs;
@@ -16,6 +15,7 @@ public class JobRunner(JobConfig config, IServiceProvider sp)
 
     public void Start()
     {
+        _parallelLimiter = new SemaphoreSlim(CurrentConfig.MaxParallel);
         _runnerTask = Task.Run(RunAsync);
     }
 
@@ -32,77 +32,55 @@ public class JobRunner(JobConfig config, IServiceProvider sp)
         {
             _cts.Dispose();
             _parallelLimiter?.Dispose();
+            _parallelLimiter = null;
         }
     }
 
-    private async Task ExecuteJobLogicAsync()
+    public async Task TriggerNowAsync(
+        string? embeddedDataOverride,
+        CancellationToken cancellationToken = default
+    )
     {
-        using IServiceScope scope = _serviceProvider.CreateScope();
-
-        var history = new JobExecutionHistory
+        if (_parallelLimiter == null)
         {
-            JobName = CurrentConfig.Name,
-            StartTime = DateTime.UtcNow,
-            EmbeddedData = CurrentConfig.EmbeddedData,
-            IsSuccess = false,
-        };
+            throw new InvalidOperationException(
+                $"Job [{CurrentConfig.Name}] is not running and cannot be triggered."
+            );
+        }
 
+        using var linked = CancellationTokenSource.CreateLinkedTokenSource(
+            cancellationToken,
+            _cts.Token
+        );
+
+        await _parallelLimiter.WaitAsync(linked.Token);
         try
         {
-            _logger?.LogDebug("Executing job instance for [{Job}].", CurrentConfig.Name);
-            IBackgroundJobMapper? backgroundJobMapper =
-                scope.ServiceProvider.GetKeyedService<IBackgroundJobMapper>(
-                    CurrentConfig.AssemblyName
-                );
-
-            var executor = backgroundJobMapper?.GetExecutor(
-                CurrentConfig.Name,
-                CurrentConfig.EmbeddedData
+            string embeddedData = embeddedDataOverride ?? CurrentConfig.EmbeddedData;
+            await BackgroundJobExecution.ExecuteAsync(
+                CurrentConfig,
+                embeddedData,
+                _serviceProvider,
+                linked.Token,
+                _logger
             );
-            if (executor == null)
-            {
-                history.ErrorMessage = "Job executor not found.";
-                _logger?.LogWarning("Job executor not found for job: {Job}", CurrentConfig.Name);
-                return;
-            }
-
-            IMediator mediator =
-                scope.ServiceProvider.GetKeyedService<IMediator>(CurrentConfig.AssemblyName)
-                ?? scope.ServiceProvider.GetService<IMediator>()
-                ?? throw new InvalidOperationException(
-                    $"IMediator is not registered for Assembly: {CurrentConfig.AssemblyName}"
-                );
-
-            await executor(mediator, _cts.Token);
-
-            history.IsSuccess = true;
-            _logger?.LogDebug("Finished job instance for [{Job}].", CurrentConfig.Name);
-        }
-        catch (Exception ex)
-        {
-            history.IsSuccess = false;
-            history.ErrorMessage = ex.ToString();
-            _logger?.LogError(ex, "Error executing job instance for {Job}", CurrentConfig.Name);
         }
         finally
         {
-            history.EndTime = DateTime.UtcNow;
-            try
-            {
-                // Lấy ra Logger (Có thể là DB do User tự viết, hoặc File mặc định)
-                var historyLogger = scope.ServiceProvider.GetService<IJobHistoryLogger>();
-                if (historyLogger != null && CurrentConfig.IsLogHistory)
-                {
-                    await historyLogger.LogAsync(history, _cts.Token);
-                }
-            }
-            catch (Exception exLog)
-            {
-                _logger?.LogError(exLog, "Error saving job history for {Job}", CurrentConfig.Name);
-            }
-
-            _parallelLimiter?.Release();
+            _parallelLimiter.Release();
         }
+    }
+
+    private Task ExecuteJobLogicAsync()
+    {
+        return BackgroundJobExecution.ExecuteAsync(
+            CurrentConfig,
+            CurrentConfig.EmbeddedData,
+            _serviceProvider,
+            _cts.Token,
+            _logger,
+            onComplete: () => _parallelLimiter?.Release()
+        );
     }
 
     private async Task RunAsync()
@@ -112,7 +90,6 @@ public class JobRunner(JobConfig config, IServiceProvider sp)
             CurrentConfig.Name,
             CurrentConfig.ScheduleType
         );
-        _parallelLimiter = new SemaphoreSlim(CurrentConfig.MaxParallel);
 
         if (CurrentConfig.RunOnStart)
         {
@@ -122,7 +99,7 @@ public class JobRunner(JobConfig config, IServiceProvider sp)
             );
             try
             {
-                await _parallelLimiter.WaitAsync(_cts.Token);
+                await _parallelLimiter!.WaitAsync(_cts.Token);
                 _ = Task.Run(ExecuteJobLogicAsync, _cts.Token);
             }
             catch (OperationCanceledException) { }
@@ -176,7 +153,7 @@ public class JobRunner(JobConfig config, IServiceProvider sp)
 
             try
             {
-                await _parallelLimiter.WaitAsync(_cts.Token);
+                await _parallelLimiter!.WaitAsync(_cts.Token);
                 _ = Task.Run(ExecuteJobLogicAsync, _cts.Token);
             }
             catch (OperationCanceledException)

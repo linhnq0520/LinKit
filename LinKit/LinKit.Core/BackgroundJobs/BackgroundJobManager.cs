@@ -5,7 +5,7 @@ using Microsoft.Extensions.Options;
 
 namespace LinKit.Core.BackgroundJobs;
 
-public class BackgroundJobManager : IHostedService
+public class BackgroundJobManager : IHostedService, IBackgroundJobTrigger
 {
     private readonly IOptionsMonitor<BackgroundJobConfig> _monitor;
     private readonly IServiceProvider _sp;
@@ -40,6 +40,50 @@ public class BackgroundJobManager : IHostedService
             _jobs.Clear();
         }
         return Task.CompletedTask;
+    }
+
+    public Task TriggerAsync(string jobName, CancellationToken cancellationToken = default) =>
+        TriggerAsync(jobName, embeddedData: null, cancellationToken);
+
+    public async Task TriggerAsync(
+        string jobName,
+        string? embeddedData,
+        CancellationToken cancellationToken = default
+    )
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(jobName);
+
+        JobRunner? runner;
+        lock (_lock)
+        {
+            _jobs.TryGetValue(jobName, out runner);
+        }
+
+        if (runner != null)
+        {
+            _logger?.LogInformation("Manually triggering active job [{Job}].", jobName);
+            await runner.TriggerNowAsync(embeddedData, cancellationToken);
+            return;
+        }
+
+        JobConfig? jobConfig = _monitor.CurrentValue.BackgroundJobs.FirstOrDefault(j =>
+            string.Equals(j.Name, jobName, StringComparison.OrdinalIgnoreCase)
+        );
+
+        if (jobConfig == null)
+        {
+            throw new InvalidOperationException(
+                $"Background job '{jobName}' was not found in configuration."
+            );
+        }
+
+        _logger?.LogInformation(
+            "Manually triggering job [{Job}] from configuration (not currently scheduled).",
+            jobName
+        );
+
+        string data = embeddedData ?? jobConfig.EmbeddedData;
+        await BackgroundJobExecution.ExecuteAsync(jobConfig, data, _sp, cancellationToken, _logger);
     }
 
     private void OnConfigChanged(BackgroundJobConfig newConfig)

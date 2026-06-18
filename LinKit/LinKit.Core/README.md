@@ -437,6 +437,7 @@ The Background Job Kit provides a powerful, configuration-driven system for exec
 1.  The `[BackgroundJob]` attribute tells the source generator to map a unique, human-readable name to a specific CQRS request type.
 2.  At runtime, the registered `BackgroundJobManager` (an `IHostedService`) reads your JSON configuration.
 3.  It uses the generated map to find the correct CQRS request for each configured job and uses the Mediator to execute it according to the specified schedule. The entire process is type-safe and performant.
+4.  When you need to run a job immediately from application code (without waiting for the next schedule), inject `IBackgroundJobTrigger` and call `TriggerAsync` with the same job name as in configuration.
 
 #### Usage
 
@@ -530,7 +531,41 @@ builder.AddBackgroundJobs("BackgroundJobsConfig.json");
 var app = builder.Build();
 ```
 
-This registers the `BackgroundJobManager` which will automatically start, stop, and reload jobs based on your configuration.
+This registers the `BackgroundJobManager` and `IBackgroundJobTrigger`, which will automatically start, stop, and reload jobs based on your configuration.
+
+**Step 4 (Optional): Trigger a Job On Demand**
+
+Use `IBackgroundJobTrigger` when you want to run a configured background job immediately from a handler, endpoint, or admin action — without changing the schedule or waiting for the next tick.
+
+```csharp
+using LinKit.Core.BackgroundJobs;
+
+public class OrderCompletedHandler(IBackgroundJobTrigger jobTrigger)
+{
+    public async Task HandleAsync(OrderCompletedEvent notification, CancellationToken cancellationToken)
+    {
+        // Uses EmbeddedData from JSON config for this job
+        await jobTrigger.TriggerAsync("ProcessEndOfDayReport", cancellationToken);
+
+        // Or override EmbeddedData for this run only
+        await jobTrigger.TriggerAsync(
+            "ProcessEndOfDayReport",
+            embeddedData: "{\"ReportType\": \"AdHoc\"}",
+            cancellationToken);
+    }
+}
+```
+
+**Behavior notes:**
+
+| Scenario | What happens |
+| -------- | ------------ |
+| Job is **active** (`IsActive: true`) | Runs through the live `JobRunner`, respects `MaxParallel` with scheduled runs, and does **not** reset the next scheduled delay. |
+| Job exists in config but is **inactive** | Runs once via the same execution pipeline (mapper, mediator, optional history). Useful for admin "run now" on disabled jobs. |
+| Job name **not in config** | Throws `InvalidOperationException`. |
+| `embeddedData` argument | Pass `null` to use `EmbeddedData` from JSON; pass a string to override it for that execution only. |
+
+> **Note:** For logic that is not tied to a configured background job, you can still call `IMediator.SendAsync` with your command directly. Use `IBackgroundJobTrigger` when you want the same path as scheduled jobs (generated mapper, `EmbeddedData`, and `IJobHistoryLogger` when `IsLogHistory` is enabled).
 
 ---
 

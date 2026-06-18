@@ -230,11 +230,7 @@ namespace {namespaceName}
 
             builder.Services.AddKeyedSingleton<IBackgroundJobMapper, BackgroundJobMapper>(""{assemblyName}"");
 
-            if (!builder.Services.Any(d =>
-                d.ImplementationType == typeof(BackgroundJobManager)))
-            {{
-                builder.Services.AddHostedService<BackgroundJobManager>();
-            }}
+            builder.Services.AddBackgroundJobManager();
 
             builder.Services.AddKeyedScoped<LinKit.Core.Cqrs.IMediator, LinKit.Generated.Cqrs.Mediator>(""{assemblyName}"");
             builder.Services.AddLinKitCqrs();

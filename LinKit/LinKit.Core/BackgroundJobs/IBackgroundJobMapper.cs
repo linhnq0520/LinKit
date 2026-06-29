@@ -6,5 +6,9 @@ public interface IBackgroundJobMapper
 {
     JobInfo GetJobInfoByName(string jobName);
 
-    Func<IMediator, CancellationToken, Task>? GetExecutor(string jobName, string embededData);
+    Func<IMediator, CancellationToken, Task>? GetExecutor(
+        string jobName,
+        string embeddedData,
+        string executionId
+    );
 }

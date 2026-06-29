@@ -2,6 +2,7 @@ namespace LinKit.Core.BackgroundJobs;
 
 public class JobExecutionHistory
 {
+    public string ExecutionId { get; set; } = string.Empty;
     public string JobName { get; set; } = string.Empty;
     public DateTime StartTime { get; set; }
     public DateTime? EndTime { get; set; }

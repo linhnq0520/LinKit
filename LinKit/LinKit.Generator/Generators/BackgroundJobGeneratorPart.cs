@@ -152,7 +152,7 @@ internal static class BackgroundJobGeneratorPart
         sb.AppendLine("        }");
         sb.AppendLine();
         sb.AppendLine(
-            "        public Func<IMediator, CancellationToken, Task>? GetExecutor(string jobName, string embeddedData)"
+            "        public Func<IMediator, CancellationToken, Task>? GetExecutor(string jobName, string embeddedData, string executionId)"
         );
         sb.AppendLine("        {");
         sb.AppendLine("            return jobName switch");
@@ -162,8 +162,8 @@ internal static class BackgroundJobGeneratorPart
         {
             var executorCall =
                 job.IsCommand == true
-                    ? $"mediator.SendAsync(new {job.FullTypeName}(){{ EmbeddedData = embeddedData }}, token)"
-                    : $"mediator.QueryAsync(new {job.FullTypeName}(){{ EmbeddedData = embeddedData }}, token)";
+                    ? $"mediator.SendAsync(new {job.FullTypeName}(){{ EmbeddedData = embeddedData, ExecutionId = executionId }}, token)"
+                    : $"mediator.QueryAsync(new {job.FullTypeName}(){{ EmbeddedData = embeddedData, ExecutionId = executionId }}, token)";
 
             sb.AppendLine(
                 $$"""

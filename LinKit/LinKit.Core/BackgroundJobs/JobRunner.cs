@@ -57,12 +57,14 @@ public class JobRunner(JobConfig config, IServiceProvider sp)
         try
         {
             string embeddedData = embeddedDataOverride ?? CurrentConfig.EmbeddedData;
+            string executionId = Guid.NewGuid().ToString("N");
             await BackgroundJobExecution.ExecuteAsync(
                 CurrentConfig,
                 embeddedData,
                 _serviceProvider,
                 linked.Token,
-                _logger
+                _logger,
+                executionId
             );
         }
         finally
@@ -73,12 +75,20 @@ public class JobRunner(JobConfig config, IServiceProvider sp)
 
     private Task ExecuteJobLogicAsync()
     {
+        string executionId = Guid.NewGuid().ToString("N");
+        _logger?.LogDebug(
+            "Scheduling job execution for [{Job}] with ExecutionId [{ExecutionId}].",
+            CurrentConfig.Name,
+            executionId
+        );
+
         return BackgroundJobExecution.ExecuteAsync(
             CurrentConfig,
             CurrentConfig.EmbeddedData,
             _serviceProvider,
             _cts.Token,
             _logger,
+            executionId,
             onComplete: () => _parallelLimiter?.Release()
         );
     }

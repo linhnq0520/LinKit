@@ -437,13 +437,14 @@ The Background Job Kit provides a powerful, configuration-driven system for exec
 1.  The `[BackgroundJob]` attribute tells the source generator to map a unique, human-readable name to a specific CQRS request type.
 2.  At runtime, the registered `BackgroundJobManager` (an `IHostedService`) reads your JSON configuration.
 3.  It uses the generated map to find the correct CQRS request for each configured job and uses the Mediator to execute it according to the specified schedule. The entire process is type-safe and performant.
-4.  When you need to run a job immediately from application code (without waiting for the next schedule), inject `IBackgroundJobTrigger` and call `TriggerAsync` with the same job name as in configuration.
+4.  Each execution receives a unique `ExecutionId` (`Guid.NewGuid().ToString("N")`), assigned before the handler runs. It is passed to your command, included in structured logs, and stored in execution history when `IsLogHistory` is enabled. This is especially useful when `MaxParallel` > 1 or when the same job is triggered manually while a scheduled run is in progress.
+5.  When you need to run a job immediately from application code (without waiting for the next schedule), inject `IBackgroundJobTrigger` and call `TriggerAsync` with the same job name as in configuration.
 
 #### Usage
 
 **Step 1: Decorate a CQRS Request**
 
-Mark any `BackgroundJobCommand` that you want to be available as a background job with the `[BackgroundJob]` attribute, providing a unique name.
+Mark any `BackgroundJobCommand` that you want to be available as a background job with the `[BackgroundJob]` attribute, providing a unique name. The base class exposes `EmbeddedData` (from config or trigger override) and `ExecutionId` (auto-generated for each run).
 
 ```csharp
 [BackgroundJob("ProcessEndOfDayReport")]
@@ -463,7 +464,10 @@ public class ProcessEndOfDayReportHandler : ICommandHandler<ProcessEndOfDayRepor
 
     public Task HandleAsync(ProcessEndOfDayReportCommand command, CancellationToken cancellationToken)
     {
-        _logger.LogInformation("Processing end-of-day report of type: {Type}", command.ReportType ?? "Standard");
+        _logger.LogInformation(
+            "Processing end-of-day report. ExecutionId: {ExecutionId}, Type: {Type}",
+            command.ExecutionId,
+            command.ReportType ?? "Standard");
         // ... your business logic here ...
         return Task.CompletedTask;
     }
@@ -564,8 +568,9 @@ public class OrderCompletedHandler(IBackgroundJobTrigger jobTrigger)
 | Job exists in config but is **inactive** | Runs once via the same execution pipeline (mapper, mediator, optional history). Useful for admin "run now" on disabled jobs. |
 | Job name **not in config** | Throws `InvalidOperationException`. |
 | `embeddedData` argument | Pass `null` to use `EmbeddedData` from JSON; pass a string to override it for that execution only. |
+| `ExecutionId` | Automatically generated per run. Available on `command.ExecutionId` in your handler and in `JobExecutionHistory` when history logging is enabled. Not configurable in JSON. |
 
-> **Note:** For logic that is not tied to a configured background job, you can still call `IMediator.SendAsync` with your command directly. Use `IBackgroundJobTrigger` when you want the same path as scheduled jobs (generated mapper, `EmbeddedData`, and `IJobHistoryLogger` when `IsLogHistory` is enabled).
+> **Note:** For logic that is not tied to a configured background job, you can still call `IMediator.SendAsync` with your command directly. Use `IBackgroundJobTrigger` when you want the same path as scheduled jobs (generated mapper, `EmbeddedData`, `ExecutionId`, and `IJobHistoryLogger` when `IsLogHistory` is enabled).
 
 ---
 
@@ -589,14 +594,22 @@ Below is a detailed description of each property available in the job configurat
 | `MaxParallel`         | `int`             | The maximum number of instances of this job that can run concurrently. Defaults to `1`. Useful for long-running jobs to prevent overlap.                                                              |
 | `EmbeddedData`        | `string` (JSON)   | An optional string value that is passed directly to the EmbeddedData property of your command. This can be a simple string, a JSON object, or any other format you wish to parse in your handler.      |
 
+> **Note:** `ExecutionId` is **not** a configuration property. LinKit generates a new 32-character identifier for every execution and sets it on `BackgroundJobCommand.ExecutionId` before invoking your handler.
+
 ---
 
 #### Execution History Logging
 
-LinKit provides built-in support for tracking the execution status of your background jobs. When `"IsLogHistory": true` is set in the job configuration, LinKit captures the start time, end time, execution success, and any exception messages.
+LinKit provides built-in support for tracking the execution status of your background jobs. When `"IsLogHistory": true` is set in the job configuration, LinKit captures the execution ID, start time, end time, execution success, embedded data, and any exception messages.
 
 **1. Default File Logging**
 Out of the box, LinKit logs histories to a highly optimized, memory-safe JSON-Lines file. This file is automatically created in the same directory as your configuration file (e.g., if you load `JobsConfig.json`, the history file will be `JobsConfig_History.json`).
+
+Each line includes an `ExecutionId` you can use to correlate a history record with logs and handler output:
+
+```json
+{"ExecutionId":"a1b2c3d4e5f6478990abcdef12345678","JobName":"SendDailyNewsletter","StartTime":"2026-06-29T08:00:00Z","EndTime":"2026-06-29T08:00:02Z","IsSuccess":true,"EmbeddedData":""}
+```
 
 **2. Custom Database Logging**
 For enterprise applications, you likely want to store this history in a Database (SQL Server, PostgreSQL, MongoDB, etc.) instead of a file. LinKit's architecture makes this extremely easy via standard Dependency Injection.

@@ -367,13 +367,43 @@ public class UpdateRoleCommand : ICommand
 }
 ```
 
-#### Step 2: Route Grouping (Optional)
+**Example 4: Endpoint Filters (`IEndpointFilter`) & Custom Response Type**
 
-Define global prefixes and shared security policies for a group of endpoints using the `[ApiRouteGroup]` attribute at the **Assembly** level.
+Intercept and enrich endpoint responses with zero middleware buffering overhead, while keeping OpenAPI/Swagger documentation 100% accurate:
+
+```csharp
+public class EntityAuditEndpointFilter : IEndpointFilter
+{
+    public async ValueTask<object?> InvokeAsync(EndpointFilterInvocationContext context, EndpointFilterDelegate next)
+    {
+        var result = await next(context);
+        // Enrich data directly on C# objects before JSON serialization
+        return result;
+    }
+}
+
+// Maps to: POST /api/entity-audit/get
+[ApiEndpoint(
+    ApiMethod.Post, 
+    "api/entity-audit/get",
+    ResponseType = typeof(IList<EntityAuditResponseModelExtend>), // Custom Swagger schema
+    SuccessStatusCode = 200,
+    ProducesStatusCodes = [StatusCodes.Status400BadRequest]
+)]
+[EndpointFilter(typeof(EntityAuditEndpointFilter), Order = 1)]
+public class GetEntityAuditQuery : IQuery<IList<EntityAuditResponseModel>>
+{
+    public string EntityName { get; set; } = string.Empty;
+}
+```
+
+#### Step 2: Route Grouping & Group Filters (Optional)
+
+Define global prefixes, shared security policies, and group-wide filters for a group of endpoints using the `[ApiRouteGroup]` attribute at the **Assembly** level.
 
 ```csharp
 // In Program.cs or AssemblyInfo.cs
-[assembly: ApiRouteGroup("/api/v1", Tag = "V1 API", RequireAuthorization = true)]
+[assembly: ApiRouteGroup("/api/v1", Tag = "V1 API", RequireAuthorization = true, Filters = [typeof(CommonAuditFilter)])]
 ```
 
 Associate an endpoint with a group using the `Group` property (it can be the prefix or the feature name):
@@ -594,7 +624,7 @@ Below is a detailed description of each property available in the job configurat
 | `MaxParallel`         | `int`             | The maximum number of instances of this job that can run concurrently. Defaults to `1`. Useful for long-running jobs to prevent overlap.                                                              |
 | `EmbeddedData`        | `string` (JSON)   | An optional string value that is passed directly to the EmbeddedData property of your command. This can be a simple string, a JSON object, or any other format you wish to parse in your handler.      |
 
-> **Note:** `ExecutionId` is **not** a configuration property. LinKit generates a new 32-character identifier for every execution and sets it on `BackgroundJobCommand.ExecutionId` before invoking your handler.
+> **Note:** `ExecutionId` is **not** a configuration property. LinKit generates a new 32-character identifier for every execution, sets it on `BackgroundJobCommand.ExecutionId` before invoking your handler, and exposes the same value via `JobExecutionContextAccessor.CurrentExecutionId` for the duration of the run.
 
 ---
 

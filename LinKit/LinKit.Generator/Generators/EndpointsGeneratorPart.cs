@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text;
@@ -14,12 +14,14 @@ internal record RouteGroupInfo(
     string? Tag,
     string? Feature,
     bool RequireAuthorization,
-    string? Policies
+    string? Policies,
+    IReadOnlyList<string> Filters
 );
 
 internal record EndpointInfo(
     string RequestType,
     string ResponseType,
+    string? CustomResponseType,
     string HttpMethod,
     string Route,
     bool IsCommandWithoutResult,
@@ -37,7 +39,14 @@ internal record EndpointInfo(
     string? CorsPolicy,
     string? Version,
     string? Tag,
-    string? MediatorKey
+    string? MediatorKey,
+    IReadOnlyList<string> Filters,
+    int SuccessStatusCode,
+    IReadOnlyList<int> ProducesStatusCodes,
+    bool AsParameters,
+    bool Deprecated,
+    bool ExcludeFromDescription,
+    string? OperationId
 );
 
 internal record ExceptionMappingInfo(
@@ -55,6 +64,8 @@ internal static class EndpointsGeneratorPart
     private const string RouteGroupAttributeName = "LinKit.Core.Endpoints.ApiRouteGroupAttribute";
     private const string ExceptionMappingAttributeName =
         "LinKit.Core.Endpoints.ApiExceptionMappingAttribute";
+    private const string EndpointFilterAttributeName =
+        "LinKit.Core.Endpoints.EndpointFilterAttribute";
     private const string ICommandInterfaceName = "LinKit.Core.Cqrs.ICommand";
     private const string IQueryInterfaceName = "LinKit.Core.Cqrs.IQuery";
 
@@ -67,6 +78,19 @@ internal static class EndpointsGeneratorPart
                 (compilation, _) =>
                 {
                     List<RouteGroupInfo> groups = [];
+                    List<string> assemblyFilters = [];
+
+                    foreach (AttributeData attr in compilation.Assembly.GetAttributes())
+                    {
+                        if (attr.AttributeClass?.ToDisplayString() == EndpointFilterAttributeName)
+                        {
+                            if (attr.ConstructorArguments.Length > 0 && attr.ConstructorArguments[0].Value is ITypeSymbol filterSymbol)
+                            {
+                                assemblyFilters.Add(filterSymbol.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat));
+                            }
+                        }
+                    }
+
                     foreach (AttributeData attr in compilation.Assembly.GetAttributes())
                     {
                         if (attr.AttributeClass?.ToDisplayString() == RouteGroupAttributeName)
@@ -74,6 +98,16 @@ internal static class EndpointsGeneratorPart
                             RouteGroupInfo? group = ExtractRouteGroupInfo(attr);
                             if (group != null)
                             {
+                                if (assemblyFilters.Count > 0)
+                                {
+                                    var combinedFilters = new List<string>(group.Filters);
+                                    foreach (var af in assemblyFilters)
+                                    {
+                                        if (!combinedFilters.Contains(af))
+                                            combinedFilters.Add(af);
+                                    }
+                                    group = group with { Filters = combinedFilters };
+                                }
                                 groups.Add(group);
                             }
                         }
@@ -148,6 +182,7 @@ internal static class EndpointsGeneratorPart
             feature = null,
             policies = null;
         bool requireAuth = false;
+        List<string> filters = [];
 
         foreach (KeyValuePair<string, TypedConstant> named in attr.NamedArguments)
         {
@@ -165,9 +200,21 @@ internal static class EndpointsGeneratorPart
                 case "Policies":
                     policies = named.Value.Value as string;
                     break;
+                case "Filters":
+                    if (named.Value.Kind == TypedConstantKind.Array)
+                    {
+                        foreach (var item in named.Value.Values)
+                        {
+                            if (item.Value is ITypeSymbol filterSymbol)
+                            {
+                                filters.Add(filterSymbol.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat));
+                            }
+                        }
+                    }
+                    break;
             }
         }
-        return new RouteGroupInfo(prefix!, tag, feature, requireAuth, policies);
+        return new RouteGroupInfo(prefix!, tag, feature, requireAuth, policies, filters);
     }
 
     private static EndpointInfo? GetEndpointInfo(GeneratorAttributeSyntaxContext context)
@@ -228,15 +275,23 @@ internal static class EndpointsGeneratorPart
             corsPolicy = null,
             version = null,
             tag = null,
-            mediatorKey = null;
+            mediatorKey = null,
+            customResponseType = null,
+            operationId = null;
         bool requireAuth = false,
-            allowAnonymous = false;
+            allowAnonymous = false,
+            asParameters = false,
+            deprecated = false,
+            excludeFromDescription = false;
+        int successStatusCode = 200;
+        List<int> producesStatusCodes = [];
+        List<(string FilterType, int Order)> orderedFilters = [];
 
         foreach (KeyValuePair<string, TypedConstant> named in attributeData.NamedArguments)
         {
             switch (named.Key)
             {
-                case "Tag": // Thêm case này
+                case "Tag":
                     tag = named.Value.Value as string;
                     break;
                 case "Name":
@@ -275,12 +330,90 @@ internal static class EndpointsGeneratorPart
                 case "MediatorKey":
                     mediatorKey = named.Value.Value as string;
                     break;
+                case "ResponseType":
+                    if (named.Value.Value is ITypeSymbol resType)
+                    {
+                        customResponseType = resType.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
+                    }
+                    break;
+                case "SuccessStatusCode":
+                    if (named.Value.Value is int sc)
+                    {
+                        successStatusCode = sc;
+                    }
+                    break;
+                case "ProducesStatusCodes":
+                    if (named.Value.Kind == TypedConstantKind.Array)
+                    {
+                        foreach (var val in named.Value.Values)
+                        {
+                            if (val.Value is int pCode)
+                                producesStatusCodes.Add(pCode);
+                        }
+                    }
+                    break;
+                case "AsParameters":
+                    asParameters = (bool)(named.Value.Value ?? false);
+                    break;
+                case "Deprecated":
+                    deprecated = (bool)(named.Value.Value ?? false);
+                    break;
+                case "ExcludeFromDescription":
+                    excludeFromDescription = (bool)(named.Value.Value ?? false);
+                    break;
+                case "OperationId":
+                    operationId = named.Value.Value as string;
+                    break;
+                case "Filters":
+                    if (named.Value.Kind == TypedConstantKind.Array)
+                    {
+                        int idx = 0;
+                        foreach (var val in named.Value.Values)
+                        {
+                            if (val.Value is ITypeSymbol fType)
+                            {
+                                orderedFilters.Add((fType.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat), idx++));
+                            }
+                        }
+                    }
+                    break;
             }
         }
+
+        // Also collect [EndpointFilter(typeof(MyFilter), Order = ...)] attributes from requestSymbol
+        foreach (var attr in requestSymbol.GetAttributes())
+        {
+            if (attr.AttributeClass?.ToDisplayString() == EndpointFilterAttributeName)
+            {
+                if (attr.ConstructorArguments.Length > 0 && attr.ConstructorArguments[0].Value is ITypeSymbol filterType)
+                {
+                    int order = 0;
+                    if (attr.ConstructorArguments.Length > 1 && attr.ConstructorArguments[1].Value is int o)
+                    {
+                        order = o;
+                    }
+                    foreach (var named in attr.NamedArguments)
+                    {
+                        if (named.Key == "Order" && named.Value.Value is int ord)
+                        {
+                            order = ord;
+                        }
+                    }
+                    orderedFilters.Add((filterType.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat), order));
+                }
+            }
+        }
+
+        var sortedFilters = orderedFilters
+            .OrderBy(f => f.Order)
+            .Select(f => f.FilterType)
+            .Distinct()
+            .ToList();
 
         return new EndpointInfo(
             RequestType: requestSymbol.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat),
             ResponseType: responseType,
+            CustomResponseType: customResponseType,
             HttpMethod: httpMethodStr,
             Route: route,
             IsCommandWithoutResult: isCommandWithoutResult,
@@ -298,7 +431,14 @@ internal static class EndpointsGeneratorPart
             CorsPolicy: corsPolicy,
             Version: version,
             Tag: tag,
-            MediatorKey: mediatorKey
+            MediatorKey: mediatorKey,
+            Filters: sortedFilters,
+            SuccessStatusCode: successStatusCode,
+            ProducesStatusCodes: producesStatusCodes,
+            AsParameters: asParameters,
+            Deprecated: deprecated,
+            ExcludeFromDescription: excludeFromDescription,
+            OperationId: operationId
         );
     }
 
@@ -422,10 +562,20 @@ internal static class EndpointsGeneratorPart
         sb.AppendLine("    internal static partial class GeneratedEndpointsExtensions");
         sb.AppendLine("    {");
 
-        // Private helper to handle Ok/NotFound safely for both ValueTypes and ReferenceTypes
+        // Helper to handle Ok/NotFound safely for both ValueTypes and ReferenceTypes, with custom status codes and IResult support
         sb.AppendLine(
-            "        private static IResult ToResult<T>(T result) => result is not null ? Results.Ok(result) : Results.NotFound();"
+            "        private static IResult ToResult<T>(T result, int statusCode = 200)"
         );
+        sb.AppendLine("        {");
+        sb.AppendLine("            if (result is null) return Results.NotFound();");
+        sb.AppendLine("            if (result is IResult r) return r;");
+        sb.AppendLine("            return statusCode switch");
+        sb.AppendLine("            {");
+        sb.AppendLine("                200 => Results.Ok(result),");
+        sb.AppendLine("                201 => Results.Json(result, statusCode: 201),");
+        sb.AppendLine("                _ => Results.Json(result, statusCode: statusCode)");
+        sb.AppendLine("            };");
+        sb.AppendLine("        }");
         sb.AppendLine();
 
         sb.AppendLine(
@@ -465,6 +615,12 @@ internal static class EndpointsGeneratorPart
                         $"                .RequireAuthorization({string.Join(", ", policies)})"
                     );
                 }
+
+                foreach (var filter in groupInfo.Filters)
+                {
+                    sb.AppendLine($"                .AddEndpointFilter<{filter}>()");
+                }
+
                 sb.AppendLine("                ;");
                 sb.AppendLine();
             }
@@ -493,17 +649,18 @@ internal static class EndpointsGeneratorPart
     {
         List<string> handlerParams = [];
         bool isBodyMethod = !new[] { "GET", "DELETE" }.Contains(endpoint.HttpMethod.ToUpper());
+        bool useAsParameters = endpoint.AsParameters || !isBodyMethod;
 
-        if (isBodyMethod)
+        if (useAsParameters)
         {
             handlerParams.Add(
-                $"[Microsoft.AspNetCore.Mvc.FromBody] {endpoint.RequestType} request"
+                $"[Microsoft.AspNetCore.Http.AsParameters] {endpoint.RequestType} request"
             );
         }
         else
         {
             handlerParams.Add(
-                $"[Microsoft.AspNetCore.Http.AsParameters] {endpoint.RequestType} request"
+                $"[Microsoft.AspNetCore.Mvc.FromBody] {endpoint.RequestType} request"
             );
         }
 
@@ -517,7 +674,21 @@ internal static class EndpointsGeneratorPart
 
         string mapMethod = $"Map{endpoint.HttpMethod}";
         string builder = groupInfo != null ? $"group_{SanitizeIdentifier(groupKey)}" : "app";
-        string finalRoute = groupInfo != null ? endpoint.Route.TrimStart('/') : endpoint.Route;
+        string finalRoute;
+        if (groupInfo != null)
+        {
+            string normPrefix = NormalizeRoute(groupInfo.Prefix);
+            string routePath = endpoint.Route;
+            if (routePath.StartsWith(normPrefix, StringComparison.OrdinalIgnoreCase))
+            {
+                routePath = routePath.Substring(normPrefix.Length);
+            }
+            finalRoute = routePath.TrimStart('/');
+        }
+        else
+        {
+            finalRoute = endpoint.Route;
+        }
 
         sb.AppendLine(
             $"            {builder}.{mapMethod}(\"{finalRoute}\", async ({string.Join(", ", handlerParams)}) =>"
@@ -527,7 +698,14 @@ internal static class EndpointsGeneratorPart
         if (endpoint.IsCommandWithoutResult)
         {
             sb.AppendLine("                await mediator.SendAsync(request, cancellationToken);");
-            sb.AppendLine("                return Results.Ok();");
+            string successReturn = endpoint.SuccessStatusCode switch
+            {
+                204 => "Results.NoContent();",
+                201 => "Results.StatusCode(StatusCodes.Status201Created);",
+                200 => "Results.Ok();",
+                _ => $"Results.StatusCode({endpoint.SuccessStatusCode});",
+            };
+            sb.AppendLine($"                return {successReturn}");
         }
         else
         {
@@ -536,14 +714,21 @@ internal static class EndpointsGeneratorPart
                 $"                var result = await mediator.{call}(request, cancellationToken);"
             );
             // Use the ToResult helper to avoid boxing and handle ValueTypes correctly
-            sb.AppendLine("                return ToResult(result);");
+            sb.AppendLine($"                return ToResult(result, {endpoint.SuccessStatusCode});");
         }
 
         sb.AppendLine("            })");
 
+        // Filters
+        foreach (var filter in endpoint.Filters)
+        {
+            sb.AppendLine($"            .AddEndpointFilter<{filter}>()");
+        }
+
         // Metadata preservation
+        string endpointName = endpoint.OperationId ?? endpoint.CustomName ?? GenerateEndpointName(endpoint);
         sb.AppendLine(
-            $"            .WithName(\"{endpoint.CustomName ?? GenerateEndpointName(endpoint)}\")"
+            $"            .WithName(\"{endpointName}\")"
         );
         string finalTag = !string.IsNullOrEmpty(endpoint.Tag)
             ? endpoint.Tag!
@@ -600,17 +785,35 @@ internal static class EndpointsGeneratorPart
             sb.AppendLine($"            .RequireCors(\"{endpoint.CorsPolicy}\")");
         }
 
+        if (endpoint.Deprecated)
+        {
+            sb.AppendLine("            .WithMetadata(new System.ObsoleteAttribute())");
+        }
+
+        if (endpoint.ExcludeFromDescription)
+        {
+            sb.AppendLine("            .ExcludeFromDescription()");
+        }
+
+        string producesType = endpoint.CustomResponseType ?? endpoint.ResponseType;
+
         if (endpoint.IsCommandWithoutResult)
         {
-            sb.AppendLine("            .Produces(StatusCodes.Status200OK)");
+            sb.AppendLine($"            .Produces({endpoint.SuccessStatusCode})");
         }
         else
         {
             sb.AppendLine(
-                $"            .Produces<{endpoint.ResponseType}>(StatusCodes.Status200OK)"
+                $"            .Produces<{producesType}>({endpoint.SuccessStatusCode})"
             );
             sb.AppendLine("            .Produces(StatusCodes.Status404NotFound)");
         }
+
+        foreach (int statusCode in endpoint.ProducesStatusCodes)
+        {
+            sb.AppendLine($"            .Produces({statusCode})");
+        }
+
         sb.AppendLine(
             "            .ProducesValidationProblem().ProducesProblem(StatusCodes.Status500InternalServerError);"
         );

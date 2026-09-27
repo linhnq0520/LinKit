@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Collections.Immutable;
 using System.Linq;
@@ -178,10 +178,11 @@ public static class MapperGeneratorPart
         var settableAssignments = new List<(string Name, string Expr)>();
         var extraNs = new HashSet<string>();
 
-        var rules = cfg.Rules.ToDictionary(
-            r => r.DestinationMember,
-            StringComparer.OrdinalIgnoreCase
-        );
+        var rules = new Dictionary<string, ForMemberRule>(StringComparer.OrdinalIgnoreCase);
+        foreach (var rule in cfg.Rules)
+        {
+            rules[rule.DestinationMember] = rule;
+        }
         var srcProps = GetReadableProps(cfg.SourceSymbol).ToList();
         var mappedMembers = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 

@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 
 namespace LinKit.Core.Endpoints;
 
@@ -89,10 +89,77 @@ public sealed class ApiEndpointAttribute : Attribute
     /// </summary>
     public string? Tag { get; set; }
 
+    /// <summary>
+    /// Custom response type for OpenAPI/Swagger documentation.
+    /// If not specified, inferred from CQRS response type.
+    /// </summary>
+    public Type? ResponseType { get; set; }
+
+    /// <summary>
+    /// List of endpoint filter types (must implement Microsoft.AspNetCore.Http.IEndpointFilter).
+    /// </summary>
+    public Type[]? Filters { get; set; }
+
+    /// <summary>
+    /// Success HTTP status code (default: 200 OK). E.g., 201 for Created, 204 for NoContent.
+    /// </summary>
+    public int SuccessStatusCode { get; set; } = 200;
+
+    /// <summary>
+    /// Additional HTTP status codes produced by this endpoint for OpenAPI documentation.
+    /// E.g. [StatusCodes.Status400BadRequest, StatusCodes.Status409Conflict]
+    /// </summary>
+    public int[]? ProducesStatusCodes { get; set; }
+
+    /// <summary>
+    /// Whether to bind request parameters using [AsParameters] instead of [FromBody].
+    /// Useful for POST/PUT requests with mixed route, query, or header parameters.
+    /// </summary>
+    public bool AsParameters { get; set; }
+
+    /// <summary>
+    /// Marks the endpoint as deprecated in OpenAPI / Swagger documentation.
+    /// </summary>
+    public bool Deprecated { get; set; }
+
+    /// <summary>
+    /// Exclude this endpoint from OpenAPI / Swagger documentation.
+    /// </summary>
+    public bool ExcludeFromDescription { get; set; }
+
+    /// <summary>
+    /// Custom OperationId for OpenAPI documentation.
+    /// </summary>
+    public string? OperationId { get; set; }
+
     public ApiEndpointAttribute(ApiMethod method, string route)
     {
         Method = method;
         Route = route;
+    }
+}
+
+/// <summary>
+/// Applies an endpoint filter (IEndpointFilter) to the endpoint or route group.
+/// Can be specified multiple times; filters execute in order.
+/// </summary>
+[AttributeUsage(AttributeTargets.Class | AttributeTargets.Assembly, AllowMultiple = true, Inherited = false)]
+public sealed class EndpointFilterAttribute : Attribute
+{
+    /// <summary>
+    /// The type of filter, which must implement Microsoft.AspNetCore.Http.IEndpointFilter
+    /// </summary>
+    public Type FilterType { get; }
+
+    /// <summary>
+    /// Execution order of the filter (lower numbers execute first)
+    /// </summary>
+    public int Order { get; set; }
+
+    public EndpointFilterAttribute(Type filterType, int order = 0)
+    {
+        FilterType = filterType;
+        Order = order;
     }
 }
 
@@ -128,6 +195,11 @@ public sealed class ApiRouteGroupAttribute : Attribute
     /// Default policies for all endpoints in this group
     /// </summary>
     public string? Policies { get; set; }
+
+    /// <summary>
+    /// List of endpoint filter types applied to all endpoints in this group.
+    /// </summary>
+    public Type[]? Filters { get; set; }
 
     public ApiRouteGroupAttribute(string prefix)
     {

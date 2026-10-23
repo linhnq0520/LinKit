@@ -1,0 +1,23 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFrameworks>net8.0;net9.0;net10.0</TargetFrameworks>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <PackageId>LinKit.Outbox.Data</PackageId>
+    <Version>1.1.0</Version>
+    <Authors>Linh Nguyen</Authors>
+    <Description>Provider-neutral ADO.NET durable stores for LinKit Outbox and Inbox.</Description>
+    <PackageTags>linkit;outbox;inbox;ado.net;durable;aot</PackageTags>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+    <PackageLicenseExpression>MIT</PackageLicenseExpression>
+    <RepositoryUrl>https://github.com/linhnq0520/LinKit</RepositoryUrl>
+    <RepositoryType>git</RepositoryType>
+    <IncludeSymbols>true</IncludeSymbols>
+    <SymbolPackageFormat>snupkg</SymbolPackageFormat>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\LinKit.Outbox\LinKit.Outbox.csproj" />
+    <ProjectReference Include="..\LinKit.Data\LinKit.Data.csproj" />
+    <None Include="README.md" Pack="true" PackagePath="\" />
+  </ItemGroup>
+</Project>

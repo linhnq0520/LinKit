@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text;
@@ -139,14 +139,17 @@ internal static class GrpcClientGeneratorPart
             return new TransformationResult { Diagnostic = diagnostic };
         }
 
-        var rpcMethod = grpcClientSymbol
-            .GetMembers(methodName)
+        var methodCandidates = grpcClientSymbol
+            .GetMembers()
             .OfType<IMethodSymbol>()
-            .FirstOrDefault(m =>
-                m.Parameters.Length >= 1
-                && m.Name == methodName
-                && m.ReturnType.Name.Contains("AsyncUnaryCall")
-            );
+            .Where(m => m.Parameters.Length >= 1 && m.ReturnType.Name.Contains("AsyncUnaryCall"))
+            .ToList();
+
+        var rpcMethod = methodCandidates.FirstOrDefault(m => string.Equals(m.Name, methodName, StringComparison.OrdinalIgnoreCase))
+            ?? methodCandidates.FirstOrDefault(m => string.Equals(m.Name, methodName + "Async", StringComparison.OrdinalIgnoreCase))
+            ?? (methodName.EndsWith("Async", StringComparison.OrdinalIgnoreCase)
+                ? methodCandidates.FirstOrDefault(m => string.Equals(m.Name, methodName.Substring(0, methodName.Length - 5), StringComparison.OrdinalIgnoreCase))
+                : null);
 
         if (rpcMethod is null)
         {
@@ -279,7 +282,7 @@ internal static class GrpcClientGeneratorPart
                 GrpcClientType: grpcClientSymbol.ToDisplayString(
                     SymbolDisplayFormat.FullyQualifiedFormat
                 ),
-                GrpcMethodName: methodName,
+                GrpcMethodName: rpcMethod.Name,
                 GrpcRequestType: grpcRequestSymbol.ToDisplayString(
                     SymbolDisplayFormat.FullyQualifiedFormat
                 ),
@@ -311,20 +314,43 @@ using Grpc.Core.Interceptors;
 "
         );
 
-        sb.AppendLine(
-            @"
+        var distinctClients = endpoints.Select(e => e.GrpcClientType).Distinct().ToList();
+        var clientFieldNames = new Dictionary<string, string>();
+        int clientIndex = 0;
+        foreach (var clientType in distinctClients)
+        {
+            var rawName = clientType.Split('.').Last();
+            var fieldName = "_" + char.ToLowerInvariant(rawName[0]) + rawName.Substring(1);
+            if (clientFieldNames.ContainsValue(fieldName))
+            {
+                fieldName += (++clientIndex).ToString();
+            }
+            clientFieldNames[clientType] = fieldName;
+        }
+
+        sb.AppendLine(@"
 namespace LinKit.Generated.Grpc
 {
     public sealed class GrpcClientMediator : IGrpcMediator
     {
-        private readonly IGrpcClientFactory _factory;
+        private readonly IGrpcClientFactory _factory;");
 
+        foreach (var kvp in clientFieldNames)
+        {
+            sb.AppendLine($"        private readonly {kvp.Key} {kvp.Value};");
+        }
+
+        sb.AppendLine(@"
         public GrpcClientMediator(IGrpcClientFactory factory)
         {
-            _factory = factory;
+            _factory = factory;");
+
+        foreach (var kvp in clientFieldNames)
+        {
+            sb.AppendLine($"            {kvp.Value} = new {kvp.Key}(factory.GetCallInvokerFor<{kvp.Key}>());");
         }
-"
-        );
+
+        sb.AppendLine("        }");
 
         var voidCommands = endpoints.Where(e => e.IsVoidCommand).ToList();
         sb.AppendLine(
@@ -430,25 +456,19 @@ namespace LinKit.Generated.Grpc
                 responseInitialization = "()";
             }
 
+            var clientField = clientFieldNames[endpoint.GrpcClientType];
             sb.AppendLine(
                 $@"
         private async Task<{endpoint.CqrsResponseType}> Handle{endpoint.GrpcMethodName}({endpoint.CqrsRequestType} request, CancellationToken cancellationToken)
         {{
-            var channel = _factory.GetChannelFor<{endpoint.GrpcClientType}>();
-            var interceptors = _factory.GetInterceptorsFor<{endpoint.GrpcClientType}>();
-            var invoker = channel.CreateCallInvoker();
-            if(interceptors.Length > 0)
-            {{
-                invoker = invoker.Intercept(interceptors);
-            }}
-            var client = new {endpoint.GrpcClientType}(invoker);
-
             var grpcRequest = new {endpoint.GrpcRequestType}{requestMappings};
 
             var headers = _factory.GetMetadata();
-            var callOptions = new CallOptions(headers: headers, cancellationToken: cancellationToken);
+            var callOptions = headers != null && headers.Count > 0
+                ? new CallOptions(headers: headers, cancellationToken: cancellationToken)
+                : new CallOptions(cancellationToken: cancellationToken);
 
-            var grpcResponse = await client.{endpoint.GrpcMethodName}(grpcRequest, callOptions);
+            var grpcResponse = await {clientField}.{endpoint.GrpcMethodName}(grpcRequest, callOptions);
 "
             );
 
@@ -482,10 +502,20 @@ namespace LinKit.Generated.Grpc
             }
         }
 
-        sb.AppendLine(
-            @"    }
-}"
-        );
+        sb.AppendLine("    }");
+        sb.AppendLine();
+        sb.AppendLine("    internal static class GrpcClientActivatorRegistration");
+        sb.AppendLine("    {");
+        sb.AppendLine("        [System.Runtime.CompilerServices.ModuleInitializer]");
+        sb.AppendLine("        internal static void Register()");
+        sb.AppendLine("        {");
+        foreach (var clientType in distinctClients)
+        {
+            sb.AppendLine($"            GrpcClientActivator<{clientType}>.Register(invoker => new {clientType}(invoker));");
+        }
+        sb.AppendLine("        }");
+        sb.AppendLine("    }");
+        sb.AppendLine("}");
         return sb.ToString();
     }
 }

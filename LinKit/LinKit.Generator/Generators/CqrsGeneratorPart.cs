@@ -1,4 +1,4 @@
-﻿using System.Collections.Generic;
+using System.Collections.Generic;
 using System.Collections.Immutable;
 using System.Linq;
 using System.Text;
@@ -12,6 +12,7 @@ internal record HandlerInfo(
     string HandlerType,
     string RequestType,
     string ResponseType,
+    Location HandlerLocation,
     IReadOnlyList<string> MarkerInterfaces,
     IReadOnlyList<string> UnboundMarkerInterfaces,
     string HandlerInterface,
@@ -36,6 +37,14 @@ internal static class CqrsGeneratorPart
     private const string BehaviorAttributeName = "LinKit.Core.Cqrs.CqrsBehaviorAttribute";
     private const string ApplyBehaviorAttributeName = "LinKit.Core.Cqrs.ApplyBehaviorAttribute";
     private const string UnitTypeName = "global::LinKit.Core.Cqrs.Unit";
+    private static readonly DiagnosticDescriptor DuplicateHandler = new(
+        id: "LNKCQRS001",
+        title: "Duplicate request handler",
+        messageFormat: "Request '{0}' has multiple handlers: '{1}' and '{2}'. Commands and queries must have exactly one handler.",
+        category: "CQRS",
+        defaultSeverity: DiagnosticSeverity.Error,
+        isEnabledByDefault: true
+    );
 
     private static string GetCleanName(string fullName)
     {
@@ -66,88 +75,88 @@ internal static class CqrsGeneratorPart
 
     #region Pipeline & Services Setup
 
-    public static IncrementalValueProvider<IReadOnlyList<CqrsServiceInfo>> GetServices(
+    public static IncrementalValueProvider<(IReadOnlyList<HandlerInfo> Handlers, IReadOnlyList<BehaviorInfo> Behaviors)> CreatePipeline(
         IncrementalGeneratorInitializationContext context
     )
     {
-        // 1. Tạo luồng dùng chung: Quét tất cả các class từ các Assembly được đánh dấu trong [CqrsContext]
         var scannedClassesFromContext = GetScannedClassesFromContext(context);
-
-        // 2. Gom Handlers = Local + Scanned
         var collectedHandlers = GetCollectedHandlers(context, scannedClassesFromContext);
-
-        // 3. Gom Behaviors = Local + Scanned
         var collectedBehaviors = GetCollectedBehaviors(context, scannedClassesFromContext);
-
-        return collectedHandlers
-            .Combine(collectedBehaviors)
-            .Select(
-                (source, _) =>
-                {
-                    var (handlers, behaviors) = source;
-                    var services = new List<CqrsServiceInfo>();
-
-                    foreach (var handler in handlers)
-                    {
-                        services.Add(
-                            new CqrsServiceInfo(
-                                $"services.AddTransient<{handler.HandlerInterface}, {handler.HandlerType}>();"
-                            )
-                        );
-
-                        if (handler.IsNotification)
-                            continue;
-
-                        var registeredForThisHandler = new HashSet<string>();
-
-                        // 1. Specific Behaviors
-                        foreach (var sbType in handler.SpecificBehaviors)
-                        {
-                            string closedType =
-                                $"{GetCleanName(sbType)}<{handler.RequestType}, {handler.ResponseType}>";
-                            if (registeredForThisHandler.Add(closedType))
-                                services.Add(
-                                    new CqrsServiceInfo(
-                                        $"services.AddTransient<global::{closedType}>();"
-                                    )
-                                );
-                        }
-
-                        // 2. Global Behaviors
-                        var applicable = behaviors
-                            .Where(b => IsBehaviorApplicable(b, handler))
-                            .OrderBy(b => b.Order);
-
-                        foreach (var b in applicable)
-                        {
-                            string closedType =
-                                $"{b.UnboundBehaviorType}<{handler.RequestType}, {handler.ResponseType}>";
-                            if (registeredForThisHandler.Add(closedType))
-                                services.Add(
-                                    new CqrsServiceInfo($"services.AddTransient<{closedType}>();")
-                                );
-                        }
-                    }
-                    return (IReadOnlyList<CqrsServiceInfo>)services;
-                }
-            );
+        return collectedHandlers.Combine(collectedBehaviors);
     }
 
-    public static void Initialize(IncrementalGeneratorInitializationContext context)
+    public static IncrementalValueProvider<IReadOnlyList<CqrsServiceInfo>> GetServices(
+        IncrementalValueProvider<(IReadOnlyList<HandlerInfo> Handlers, IReadOnlyList<BehaviorInfo> Behaviors)> combined
+    )
     {
-        var scannedClassesFromContext = GetScannedClassesFromContext(context);
-        var collectedHandlers = GetCollectedHandlers(context, scannedClassesFromContext);
-        var collectedBehaviors = GetCollectedBehaviors(context, scannedClassesFromContext);
+        return combined.Select(
+            (source, _) =>
+            {
+                var (handlers, behaviors) = source;
+                var services = new List<CqrsServiceInfo>();
 
-        var combined = collectedHandlers.Combine(collectedBehaviors);
+                foreach (var handler in handlers)
+                {
+                    services.Add(
+                        new CqrsServiceInfo(
+                            $"services.AddTransient<{handler.HandlerInterface}, {handler.HandlerType}>();"
+                        )
+                    );
 
+                    if (handler.IsNotification)
+                        continue;
+
+                    var registeredForThisHandler = new HashSet<string>();
+
+                    // 1. Specific Behaviors
+                    foreach (var sbType in handler.SpecificBehaviors)
+                    {
+                        string closedType =
+                            $"{GetCleanName(sbType)}<{handler.RequestType}, {handler.ResponseType}>";
+                        if (registeredForThisHandler.Add(closedType))
+                            services.Add(
+                                new CqrsServiceInfo(
+                                    $"services.AddTransient<global::{closedType}>();"
+                                )
+                            );
+                    }
+
+                    // 2. Global Behaviors
+                    var applicable = behaviors
+                        .Where(b => IsBehaviorApplicable(b, handler))
+                        .OrderBy(b => b.Order);
+
+                    foreach (var b in applicable)
+                    {
+                        string closedType =
+                            $"{b.UnboundBehaviorType}<{handler.RequestType}, {handler.ResponseType}>";
+                        if (registeredForThisHandler.Add(closedType))
+                            services.Add(
+                                new CqrsServiceInfo($"services.AddTransient<{closedType}>();")
+                            );
+                    }
+                }
+                return (IReadOnlyList<CqrsServiceInfo>)services;
+            }
+        );
+    }
+
+    public static void Initialize(
+        IncrementalGeneratorInitializationContext context,
+        IncrementalValueProvider<(IReadOnlyList<HandlerInfo> Handlers, IReadOnlyList<BehaviorInfo> Behaviors)> combined
+    )
+    {
         context.RegisterSourceOutput(
             combined,
             (spc, source) =>
             {
-                if (!source.Left.Any())
+                if (!source.Handlers.Any())
                     return;
-                string mediatorSource = GenerateMediatorClass(source.Left, source.Right);
+                ReportDuplicateHandlers(spc, source.Handlers);
+                IReadOnlyList<HandlerInfo> dispatchHandlers = GetUniqueDispatchHandlers(
+                    source.Handlers
+                );
+                string mediatorSource = GenerateMediatorClass(dispatchHandlers, source.Behaviors);
                 spc.AddSource("Cqrs.Mediator.g.cs", SourceText.From(mediatorSource, Encoding.UTF8));
             }
         );
@@ -414,12 +423,65 @@ internal static class CqrsGeneratorPart
             classSymbol.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat),
             requestType.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat),
             responseType,
+            classSymbol.Locations.FirstOrDefault(location => location.IsInSource) ?? Location.None,
             new List<string>(),
             unboundMarkers.Distinct().ToList(),
             handlerInterface.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat),
             specificBehaviors,
             isNotification
         );
+    }
+
+    private static IEnumerable<IGrouping<(string RequestType, string HandlerKind), HandlerInfo>>
+        GetDispatchHandlerGroups(IEnumerable<HandlerInfo> handlers) =>
+        handlers
+            .Where(handler => !handler.IsNotification)
+            .GroupBy(handler =>
+                (
+                    handler.RequestType,
+                    GetCleanName(handler.HandlerInterface).StartsWith(
+                        ICommandHandlerName,
+                        System.StringComparison.Ordinal
+                    )
+                        ? ICommandHandlerName
+                        : IQueryHandlerName
+                )
+            );
+
+    private static void ReportDuplicateHandlers(
+        SourceProductionContext context,
+        IReadOnlyList<HandlerInfo> handlers
+    )
+    {
+        foreach (var group in GetDispatchHandlerGroups(handlers))
+        {
+            HandlerInfo[] ordered = group.OrderBy(handler => handler.HandlerType).ToArray();
+            for (int i = 1; i < ordered.Length; i++)
+            {
+                context.ReportDiagnostic(
+                    Diagnostic.Create(
+                        DuplicateHandler,
+                        ordered[i].HandlerLocation,
+                        ordered[i].RequestType,
+                        ordered[0].HandlerType,
+                        ordered[i].HandlerType
+                    )
+                );
+            }
+        }
+    }
+
+    private static IReadOnlyList<HandlerInfo> GetUniqueDispatchHandlers(
+        IReadOnlyList<HandlerInfo> handlers
+    )
+    {
+        var duplicateDispatchHandlers = new HashSet<HandlerInfo>(
+            GetDispatchHandlerGroups(handlers)
+                .SelectMany(group =>
+                    group.OrderBy(handler => handler.HandlerType).Skip(1)
+                )
+        );
+        return handlers.Where(handler => !duplicateDispatchHandlers.Contains(handler)).ToList();
     }
 
     #endregion
@@ -448,7 +510,7 @@ namespace LinKit.Generated.Cqrs
         private readonly IServiceProvider _serviceProvider;
         public Mediator(IServiceProvider serviceProvider) => _serviceProvider = serviceProvider;
 
-        public Task SendAsync(ICommand command, CancellationToken cancellationToken = default) => (object)command switch {"
+        public Task SendAsync(ICommand command, CancellationToken cancellationToken = default) => (object)command! switch {"
         );
 
         foreach (
@@ -458,15 +520,17 @@ namespace LinKit.Generated.Cqrs
                 && x.ResponseType == UnitTypeName
             )
         )
+        {
             sb.AppendLine(
                 $"            {h.RequestType} c => HandleVoidRequest(c, cancellationToken),"
             );
+        }
 
         sb.AppendLine(
             @"            _ => throw new HandlerNotFoundException(command.GetType())
         };
 
-        public Task<TResponse> SendAsync<TResponse>(ICommand<TResponse> command, CancellationToken cancellationToken = default) => (object)command switch {"
+        public Task<TResponse> SendAsync<TResponse>(ICommand<TResponse> command, CancellationToken cancellationToken = default) => (object)command! switch {"
         );
 
         foreach (
@@ -476,15 +540,17 @@ namespace LinKit.Generated.Cqrs
                 && x.ResponseType != UnitTypeName
             )
         )
+        {
             sb.AppendLine(
                 $"            {h.RequestType} c => (Task<TResponse>)(object)HandleResultRequest(c, cancellationToken),"
             );
+        }
 
         sb.AppendLine(
             @"            _ => throw new HandlerNotFoundException(command.GetType())
         };
 
-        public Task<TResponse> QueryAsync<TResponse>(IQuery<TResponse> query, CancellationToken cancellationToken = default) => (object)query switch {"
+        public Task<TResponse> QueryAsync<TResponse>(IQuery<TResponse> query, CancellationToken cancellationToken = default) => (object)query! switch {"
         );
 
         foreach (
@@ -492,18 +558,17 @@ namespace LinKit.Generated.Cqrs
                 !x.IsNotification && GetCleanName(x.HandlerInterface) == IQueryHandlerName
             )
         )
+        {
             sb.AppendLine(
                 $"            {h.RequestType} q => (Task<TResponse>)(object)HandleResultRequest(q, cancellationToken),"
             );
+        }
 
         sb.AppendLine(
             @"            _ => throw new HandlerNotFoundException(query.GetType())
-        };"
-        );
+        };
 
-        sb.AppendLine(
-            @"
-        public Task PublishAsync<TNotification>(TNotification notification, PublishStrategy strategy = PublishStrategy.Sequential, CancellationToken ct = default) => (object)notification switch {"
+        public Task PublishAsync<TNotification>(TNotification notification, PublishStrategy strategy = PublishStrategy.Sequential, CancellationToken ct = default) => (object)notification! switch {"
         );
 
         var notificationGroups = handlers
@@ -528,27 +593,59 @@ namespace LinKit.Generated.Cqrs
         // Gen logic Command/Query Handler Private methods
         foreach (var h in handlers.Where(h => !h.IsNotification))
         {
+            var applicableBehaviors = GetApplicableBehaviorTypes(h, behaviors!);
+
             if (h.ResponseType == UnitTypeName)
             {
-                sb.AppendLine(
-                    $@"
+                if (applicableBehaviors.Count == 0)
+                {
+                    // Zero-allocation Fast-path: Direct call without delegate/closure or async state machine
+                    sb.AppendLine(
+                        $@"
+        private Task HandleVoidRequest({h.RequestType} request, CancellationToken cancellationToken)
+            => _serviceProvider.GetRequiredService<{h.HandlerInterface}>().HandleAsync(request, cancellationToken);"
+                    );
+                }
+                else
+                {
+                    sb.AppendLine(
+                        $@"
         private async Task HandleVoidRequest({h.RequestType} request, CancellationToken cancellationToken)
         {{
             Func<Task> next = () => _serviceProvider.GetRequiredService<{h.HandlerInterface}>().HandleAsync(request, cancellationToken);"
-                );
-                GeneratePipelineLogic(sb, h, behaviors!, false);
-                sb.AppendLine("            await next();\n        }");
+                    );
+                    foreach (var closedType in applicableBehaviors)
+                    {
+                        AppendBehaviorWrap(sb, closedType, false);
+                    }
+                    sb.AppendLine("            await next();\n        }");
+                }
             }
             else
             {
-                sb.AppendLine(
-                    $@"
+                if (applicableBehaviors.Count == 0)
+                {
+                    // Zero-allocation Fast-path: Direct call without delegate/closure or async state machine
+                    sb.AppendLine(
+                        $@"
+        private Task<{h.ResponseType}> HandleResultRequest({h.RequestType} request, CancellationToken cancellationToken)
+            => _serviceProvider.GetRequiredService<{h.HandlerInterface}>().HandleAsync(request, cancellationToken);"
+                    );
+                }
+                else
+                {
+                    sb.AppendLine(
+                        $@"
         private Task<{h.ResponseType}> HandleResultRequest({h.RequestType} request, CancellationToken cancellationToken)
         {{
             RequestHandlerDelegate<{h.ResponseType}> next = () => _serviceProvider.GetRequiredService<{h.HandlerInterface}>().HandleAsync(request, cancellationToken);"
-                );
-                GeneratePipelineLogic(sb, h, behaviors!, true);
-                sb.AppendLine("            return next();\n        }");
+                    );
+                    foreach (var closedType in applicableBehaviors)
+                    {
+                        AppendBehaviorWrap(sb, closedType, true);
+                    }
+                    sb.AppendLine("            return next();\n        }");
+                }
             }
         }
 
@@ -592,11 +689,9 @@ namespace LinKit.Generated.Cqrs
         return sb.ToString();
     }
 
-    private static void GeneratePipelineLogic(
-        StringBuilder sb,
+    private static List<string> GetApplicableBehaviorTypes(
         HandlerInfo handler,
-        IReadOnlyList<BehaviorInfo> availableBehaviors,
-        bool hasResult
+        IReadOnlyList<BehaviorInfo> availableBehaviors
     )
     {
         var globalBehaviors = availableBehaviors
@@ -617,12 +712,7 @@ namespace LinKit.Generated.Cqrs
         );
 
         // Specific wrap trước (reverse), global wrap sau (reverse)
-        var allClosedTypes = specificClosedTypes.Reverse().Concat(globalClosedTypes.Reverse());
-
-        foreach (var closedType in allClosedTypes)
-        {
-            AppendBehaviorWrap(sb, closedType, hasResult);
-        }
+        return specificClosedTypes.Reverse().Concat(globalClosedTypes.Reverse()).ToList();
     }
 
     private static void AppendBehaviorWrap(StringBuilder sb, string closedType, bool hasResult)

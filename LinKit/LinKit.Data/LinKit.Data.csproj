@@ -1,0 +1,42 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFrameworks>net8.0;net9.0;net10.0</TargetFrameworks>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <PackageId>LinKit.Data</PackageId>
+    <Version>1.1.0</Version>
+    <Authors>Linh Nguyen</Authors>
+    <Description>Source-generated ADO.NET data access and additive schema synchronization for LinKit; selected paths are covered by Native AOT smoke tests.</Description>
+    <PackageTags>linkit;data;repository;schema-synchronization;ado-net;aot;cqrs</PackageTags>
+    <PackageLicenseExpression>MIT</PackageLicenseExpression>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+    <RepositoryUrl>https://github.com/linhnq0520/LinKit</RepositoryUrl>
+    <RepositoryType>git</RepositoryType>
+    <IncludeSymbols>true</IncludeSymbols>
+    <SymbolPackageFormat>snupkg</SymbolPackageFormat>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <None Include="README.md" Pack="true" PackagePath="\" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\LinKit.Core\LinKit.Core.csproj" />
+    <ProjectReference Include="..\LinKit.Data.Generator\LinKit.Data.Generator.csproj" ReferenceOutputAssembly="false" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Extensions.DependencyInjection.Abstractions" Version="8.0.0" />
+    <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="8.0.0" />
+    <PackageReference Include="Microsoft.Extensions.Hosting.Abstractions" Version="8.0.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <None
+      Include="..\LinKit.Data.Generator\bin\$(Configuration)\netstandard2.0\LinKit.Data.Generator.dll"
+      Pack="true"
+      PackagePath="analyzers/dotnet/cs"
+      Visible="false"
+    />
+  </ItemGroup>
+</Project>

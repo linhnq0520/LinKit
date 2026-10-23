@@ -4,5 +4,6 @@
 
 Rule ID | Category | Severity | Notes
 --------|----------|----------|-------
-LKM001 | Mapping | Warning | MapperGeneratorPart
 LKM002 | Mapping | Error | MapperGeneratorPart
+LKM003 | Usage | Warning | UnsupportedPolicyAttributePart
+LNKCQRS001 | CQRS | Error | CqrsGeneratorPart

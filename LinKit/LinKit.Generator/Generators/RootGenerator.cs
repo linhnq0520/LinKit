@@ -1,4 +1,4 @@
-﻿using System.Collections.Generic;
+using System.Collections.Generic;
 using System.Linq;
 using System.Text;
 using LinKit.Core.Abstractions;
@@ -12,18 +12,20 @@ public class RootGenerator : IIncrementalGenerator
 {
     public void Initialize(IncrementalGeneratorInitializationContext context)
     {
+        var cqrsPipeline = CqrsGeneratorPart.CreatePipeline(context);
         IncrementalValueProvider<IReadOnlyList<CqrsServiceInfo>> cqrsServices =
-            CqrsGeneratorPart.GetServices(context);
+            CqrsGeneratorPart.GetServices(cqrsPipeline);
         IncrementalValueProvider<IReadOnlyList<ServiceInfo>> diServices =
             DependencyInjectionGeneratorPart.GetServices(context);
         IncrementalValueProvider<IReadOnlyList<MessagingServiceInfo>> messagingServices =
             MessagingGeneratorPart.GetServices(context);
 
-        CqrsGeneratorPart.Initialize(context);
+        CqrsGeneratorPart.Initialize(context, cqrsPipeline);
         EndpointsGeneratorPart.Initialize(context);
         MessagingGeneratorPart.Initialize(context);
         MapperGeneratorPart.Initialize(context);
         BackgroundJobGeneratorPart.Initialize(context);
+        UnsupportedPolicyAttributePart.Initialize(context);
 
         IncrementalValueProvider<AllServicesInfo> allServices = cqrsServices
             .Combine(diServices)
@@ -176,7 +178,7 @@ using LinKit.Core.Abstractions;"
         sb.AppendLine($"namespace {@namespace}");
         sb.AppendLine(
             @"{
-    internal static partial class ServicesExtensions
+    public static partial class ServicesExtensions
     {"
         );
         sb.AppendLine(
@@ -217,7 +219,7 @@ using LinKit.Core.Abstractions;"
         sb.AppendLine($"namespace {@namespace}");
         sb.AppendLine(
             @"{
-    internal static partial class ServicesExtensions
+    public static partial class ServicesExtensions
     {"
         );
         sb.AppendLine(

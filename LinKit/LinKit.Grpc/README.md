@@ -1,290 +1,185 @@
-﻿# LinKit.Grpc
+# LinKit.Grpc
 
-[![NuGet Version](https://img.shields.io/nuget/v/LinKit.Grpc.svg)](https://www.nuget.org/packages/LinKit.Grpc/)
-[![NuGet Downloads](https://img.shields.io/nuget/dt/LinKit.Grpc.svg)](https://www.nuget.org/packages/LinKit.Grpc/)
+[![NuGet](https://img.shields.io/nuget/v/LinKit.Grpc.svg)](https://www.nuget.org/packages/LinKit.Grpc/)
 
-**LinKit.Grpc** is a powerful extension for **LinKit.Core** that bridges the gap between your internal CQRS architecture and the high-performance world of gRPC. It uses source generators to **completely automate the creation of gRPC server and client code**, eliminating boilerplate, preventing manual mapping errors, and letting you focus purely on your business logic.
+`LinKit.Grpc` packages a Roslyn generator and runtime adapters that connect CQRS request types to protobuf-generated gRPC service/client types. You still define and compile `.proto` contracts with the gRPC tooling; LinKit generates adapters and property mapping for supported shapes.
 
----
+## Install
 
-## 🚀 Features
-
--   **Zero Boilerplate:** No more manually implementing gRPC service classes or writing client call logic. Just decorate your CQRS requests and LinKit does the rest.
--   **Intelligent Mapping:** Automatically maps properties between your Protobuf-generated messages and your C# CQRS DTOs, including nested lists and `snake_case` to `PascalCase` conventions.
--   **Seamless CQRS Integration:** The generated server code directly uses your local `IMediator` to execute existing handlers, ensuring your business logic is the single source of truth.
--   **Transparent Client Calls:** The generated `IGrpcMediator` client makes remote gRPC calls look exactly like local Mediator calls, simplifying your client-side code.
--   **Robust & Extensible:** Built-in support for centralized gRPC channel management, interceptors (for logging, auth, retries), and metadata (header) injection.
--   **NativeAOT & Trimming Ready:** Built from the ground up to be fully compatible with modern .NET deployment targets.
-
----
-
-## 📦 Installation
-
-First, ensure you have `LinKit.Core` installed. Then, add the gRPC package:
-
-```sh
+```shell
+dotnet add package LinKit.Core
 dotnet add package LinKit.Grpc
-```
-
-You will also need the standard gRPC packages for ASP.NET Core:
-```sh
 dotnet add package Grpc.AspNetCore
 ```
 
----
+The application also needs generated C# code for its protobuf contracts, usually produced by `Grpc.Tools` in the contract/server project. Add the required gRPC tooling package to that project.
 
-## 🖥️ gRPC Server Generation
+## Expose a CQRS query as a server RPC
 
-Turn your CQRS handlers into gRPC services automatically.
+Given a protobuf service:
 
-### Step 1: Define your `.proto` file
-
-Create your gRPC service contract as you normally would.
-
-**Example `users.proto`:**
 ```protobuf
 syntax = "proto3";
-option csharp_namespace = "MyApi.GrpcContracts";
-package users;
+option csharp_namespace = "MyApp.Contracts";
 
-service UserService {
-  rpc GetUserById (GetUserRequest) returns (GetUserResponse);
+service InventoryService {
+  rpc CheckStock (CheckStockRequest) returns (CheckStockResponse);
 }
 
-message GetUserRequest {
-  int32 user_id = 1;
+message CheckStockRequest {
+  string product_code = 1;
+  int32 quantity = 2;
 }
 
-message UserMessage {
-    int32 id = 1;
-    string user_name = 2;
-}
-
-message GetUserResponse {
-  UserMessage user = 1;
+message CheckStockResponse {
+  bool available = 1;
+  int32 remaining = 2;
 }
 ```
 
-### Step 2: Decorate Your CQRS Request
-
-Find the CQRS request that corresponds to your RPC method and decorate it with the `[GrpcEndpoint]` attribute.
+Declare the CQRS request and handler:
 
 ```csharp
+using LinKit.Core.Cqrs;
 using LinKit.Grpc;
-using MyApi.GrpcContracts; // Use the namespace from your .proto
+using MyApp.Contracts;
 
-// This attribute links the CQRS query to the gRPC method.
-[GrpcEndpoint(typeof(UserService.UserServiceBase), "GetUserById")]
-public class GetUserQuery : IQuery<UserDto> 
+[GrpcEndpoint(typeof(InventoryService.InventoryServiceBase), "CheckStock")]
+public sealed class CheckStockQuery : IQuery<CheckStockResponse>
 {
-    // LinKit automatically maps 'user_id' from the proto to this property.
-    public int UserId { get; set; } 
-}
-
-// Ensure your C# DTO and handler exist
-public class UserDto {
-    public int Id { get; set; }
-    public string UserName { get; set; }
+    public string ProductCode { get; set; } = string.Empty;
+    public int Quantity { get; set; }
 }
 
 [CqrsHandler]
-public class GetUserHandler : IQueryHandler<GetUserQuery, UserDto>
+public sealed class CheckStockHandler : IQueryHandler<CheckStockQuery, CheckStockResponse>
 {
-    public Task<UserDto> HandleAsync(GetUserQuery query, CancellationToken ct)
-        => Task.FromResult(new UserDto { Id = query.UserId, UserName = "Demo User" });
+    public Task<CheckStockResponse> HandleAsync(
+        CheckStockQuery query,
+        CancellationToken cancellationToken) =>
+        Task.FromResult(new CheckStockResponse
+        {
+            Available = query.Quantity <= 50,
+            Remaining = Math.Max(0, 50 - query.Quantity)
+        });
 }
 ```
-*   `typeof(UserService.UserServiceBase)` is the base class generated by `protoc`.
-*   `"GetUserById"` is the exact RPC method name from your service.
 
-### Step 3: Register and Map the Service
-
-In your server's `Program.cs`, register the core CQRS services and then map the generated gRPC service.
+Register the gRPC server and map generated services:
 
 ```csharp
-var builder = WebApplication.CreateBuilder(args);
-
-// Register standard LinKit CQRS and your handlers
-builder.Services.AddLinKitCqrs();
 builder.Services.AddGrpc();
+builder.Services.AddLinKitCqrs();
+builder.Services.AddLinKitGrpcServer();
 
 var app = builder.Build();
-
-// Map the source-generated gRPC service.
-// The name is always "LinKit" + [YourServiceName].
-app.MapGrpcService<LinKitUserService>();
-
+app.MapLinKitGrpcServices();
 app.Run();
 ```
-That's it! Your `GetUserById` gRPC endpoint is now live, fully implemented, and ready to serve requests.
 
----
+The generated service adapter maps the protobuf request into the CQRS request, invokes the mediator, and maps the handler response back to the protobuf response. Validate property names/types and generated source for nested or custom mappings; the generator supports defined property/list mapping patterns, not arbitrary object mapping.
 
-## 💻 gRPC Client Generation
+## Call a remote RPC through `IGrpcMediator`
 
-Call your gRPC services with the same clean Mediator API you use for local requests.
-
-### Step 1: Decorate the CQRS Request (in your Client Project)
-
-In your client application, reference the shared CQRS request classes and decorate them with the `[GrpcClient]` attribute.
+In a client compilation, annotate the CQRS request with the generated protobuf client and RPC method name:
 
 ```csharp
+using LinKit.Core.Cqrs;
 using LinKit.Grpc;
-using MyApi.GrpcContracts;
+using MyApp.Contracts;
 
-// This attribute links the CQRS query to the gRPC client method.
-[GrpcClient(typeof(UserService.UserClient), "GetUserByIdAsync")]
-public class GetUserQuery : IQuery<UserDto> 
+[GrpcClient(typeof(InventoryService.InventoryServiceClient), "CheckStockAsync")]
+public sealed class CheckStockRemoteQuery : IQuery<CheckStockResponse>
 {
-    public int UserId { get; set; } 
+    public string ProductCode { get; set; } = string.Empty;
+    public int Quantity { get; set; }
 }
 ```
-*   `typeof(UserService.UserClient)` is the client class generated by `protoc`.
-*   `"GetUserByIdAsync"` is the name of the async client method.
 
-### Step 2: Register the gRPC Client Kit
-
-In your client's `Program.cs`, register the `IGrpcMediator` and provide the necessary infrastructure for creating channels and interceptors.
+Register the generated mediator and a channel provider. `AddLinKitGrpcClient()` supplies defaults for interceptor/metadata providers and the client factory; an `IGrpcChannelProvider` is required:
 
 ```csharp
-var builder = WebApplication.CreateBuilder(args);
-
-// 1. Registers the generated GrpcClientMediator
+builder.Services.AddLinKitCqrs();
 builder.Services.AddLinKitGrpcClient();
-
-// 2. --- Required: Provide a gRPC channel ---
-//    This registers a provider that creates and reuses gRPC channels.
-builder.Services.AddSingleton<IGrpcChannelProvider, MyChannelProvider>();
-
-// 3. --- Optional: Add cross-cutting concerns ---
-builder.Services.AddSingleton<IGrpcInterceptorProvider, MyInterceptorProvider>();
-builder.Services.AddScoped<IGrpcMetadataProvider, MyMetadataProvider>();
+builder.Services.AddGrpcChannel("https://inventory.example.net");
 ```
 
-### Step 3: Send Requests via `IGrpcMediator`
-
-Inject `IGrpcMediator` and use it. The API is identical to the local `IMediator`, making the remote call transparent.
+`AddGrpcChannel` registers `DefaultGrpcChannelProvider`, which reuses a channel for each generated gRPC client type. For multiple service addresses, implement the provider:
 
 ```csharp
-public class MyService
+using System.Collections.Concurrent;
+using Grpc.Core;
+using Grpc.Net.Client;
+using LinKit.Grpc;
+
+public sealed class ServiceChannelProvider(IConfiguration configuration) :
+    IGrpcChannelProvider, IDisposable
 {
-    private readonly IGrpcMediator _grpcMediator;
+    private readonly ConcurrentDictionary<Type, GrpcChannel> _channels = new();
 
-    public MyService(IGrpcMediator grpcMediator)
-    {
-        _grpcMediator = grpcMediator;
-    }
-
-    public async Task<UserDto> GetUserFromRemoteApi(int id)
-    {
-        var query = new GetUserQuery { UserId = id };
-
-        // This looks like a local call, but it's making a gRPC request under the hood!
-        return await _grpcMediator.QueryAsync(query);
-    }
-}
-```
-
----
-
-## 🔧 Advanced Client Configuration
-
-LinKit provides simple, powerful interfaces to control how gRPC clients are created and behave.
-
-### 1. Centralized Channel Management (`IGrpcChannelProvider`)
-
-**Best Practice:** Do not create `GrpcChannel` instances on every request. Channels are expensive and should be reused. `IGrpcChannelProvider` solves this by centralizing channel creation.
-
-The generated client will call `GetChannel(Type clientType)` to get the appropriate channel for the service it needs to call.
-
-```csharp
-public class MyChannelProvider : IGrpcChannelProvider
-{
-    // Use a dictionary for service discovery or read from configuration
-    private readonly Dictionary<Type, GrpcChannel> _channels = new();
-    private readonly IConfiguration _config;
-
-    public MyChannelProvider(IConfiguration config)
-    {
-        _config = config;
-    }
-
-    public GrpcChannel GetChannel(Type clientType)
-    {
-        // Lazy-initialize and cache channels
-        return _channels.GetOrAdd(clientType, type =>
+    public GrpcChannel GetChannelFor<TClient>() where TClient : ClientBase =>
+        _channels.GetOrAdd(typeof(TClient), clientType =>
         {
-            var serviceName = type.Name.Replace("Client", ""); // e.g., "UserService"
-            var url = _config.GetValue<string>($"GrpcEndpoints:{serviceName}");
-            if (string.IsNullOrEmpty(url))
-            {
-                throw new InvalidOperationException($"No gRPC URL configured for {serviceName}");
-            }
-            return GrpcChannel.ForAddress(url);
+            var address = configuration[$"GrpcClients:{clientType.Name}"]
+                ?? throw new InvalidOperationException(
+                    $"No gRPC address configured for {clientType.Name}.");
+            return GrpcChannel.ForAddress(address);
         });
+
+    public void Dispose()
+    {
+        foreach (var channel in _channels.Values)
+        {
+            channel.Dispose();
+        }
     }
 }
 ```
-
-### 2. Applying Interceptors (`IGrpcInterceptorProvider`)
-
-Interceptors are the gRPC equivalent of middleware. Use them for logging, authentication, retries, etc.
-
-The provider returns an array of interceptors for a given client type, allowing you to apply different interceptors to different services.
 
 ```csharp
-public class MyInterceptorProvider : IGrpcInterceptorProvider
-{
-    private readonly LoggingInterceptor _loggingInterceptor;
-    private readonly AuthInterceptor _authInterceptor;
-
-    public MyInterceptorProvider(ILoggerFactory loggerFactory, ITokenService tokenService)
-    {
-        _loggingInterceptor = new LoggingInterceptor(loggerFactory);
-        _authInterceptor = new AuthInterceptor(tokenService);
-    }
-
-    public Interceptor[] GetInterceptors(Type clientType)
-    {
-        // Apply logging to all services
-        if (clientType == typeof(UserService.UserClient))
-        {
-            // Apply auth only to the user service
-            return new Interceptor[] { _loggingInterceptor, _authInterceptor };
-        }
-        
-        return new Interceptor[] { _loggingInterceptor };
-    }
-}
+builder.Services.AddGrpcChannelProvider<ServiceChannelProvider>();
 ```
-*LinKit correctly uses `invoker.Intercept(interceptors)` to apply your interceptors for optimal performance.*
 
-### 3. Injecting Metadata/Headers (`IGrpcMetadataProvider`)
-
-Use this to add request headers, such as authentication tokens or tracing IDs. This provider is often registered with a `Scoped` lifetime.
+Then use the generated remote mediator:
 
 ```csharp
-public class MyMetadataProvider : IGrpcMetadataProvider
+var response = await grpcMediator.QueryAsync(
+    new CheckStockRemoteQuery { ProductCode = "SKU-42", Quantity = 3 },
+    cancellationToken);
+```
+
+## Interceptors and metadata
+
+Providers are per client type and use the actual public interfaces:
+
+```csharp
+public sealed class AppInterceptorProvider : IGrpcInterceptorProvider
 {
-    private readonly IHttpContextAccessor _httpContextAccessor;
+    public Interceptor[] GetInterceptorsFor<TClient>() => [];
+}
 
-    public MyMetadataProvider(IHttpContextAccessor httpContextAccessor)
-    {
-        _httpContextAccessor = httpContextAccessor;
-    }
-
-    public Metadata GetMetadata()
-    {
-        var headers = new Metadata();
-        
-        // Forward the authorization header from the incoming HTTP request
-        var authHeader = _httpContextAccessor.HttpContext?.Request.Headers["Authorization"];
-        if (!string.IsNullOrEmpty(authHeader))
-        {
-            headers.Add("Authorization", authHeader);
-        }
-        
-        return headers;
-    }
+public sealed class AppMetadataProvider : IMetadataProvider
+{
+    public Metadata? GetMetadata() => new Metadata();
 }
 ```
+
+Register them with the service collection helpers:
+
+```csharp
+builder.Services.AddGrpcInterceptorProvider<AppInterceptorProvider>();
+builder.Services.AddGrpcMetadataProvider<AppMetadataProvider>();
+```
+
+Metadata is requested for each outgoing RPC. Do not put untrusted or secret values into logs. Configure authentication/TLS and deadlines using application-specific gRPC options/interceptors.
+
+## Runtime and AOT considerations
+
+- Reuse channels and dispose the provider with the host; do not create a channel per request.
+- Keep client/server protobuf contracts compatible across deployments.
+- Client factory activation uses generated activators when available; a reflection-based activation fallback may remain for unregistered client types.
+- This package's source generation does not certify AOT safety for every gRPC runtime, protobuf type, interceptor, or application configuration. Enable trim/AOT analyzers and publish/run the target application for its RID.
+
+## License
+
+MIT. See the [repository license](https://github.com/linhnq0520/LinKit/blob/main/LICENSE).

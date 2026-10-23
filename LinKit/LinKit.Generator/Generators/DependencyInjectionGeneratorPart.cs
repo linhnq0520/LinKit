@@ -18,43 +18,73 @@ internal static class DependencyInjectionGeneratorPart
 {
     private const string RegisterServiceAttributeName =
         "LinKit.Core.Abstractions.RegisterServiceAttribute";
+    private const string AddTransientAttributeName = "LinKit.Core.Abstractions.AddTransientAttribute";
+    private const string AddScopedAttributeName = "LinKit.Core.Abstractions.AddScopedAttribute";
+    private const string AddSingletonAttributeName = "LinKit.Core.Abstractions.AddSingletonAttribute";
 
     public static IncrementalValueProvider<IReadOnlyList<ServiceInfo>> GetServices(
         IncrementalGeneratorInitializationContext context
     )
     {
+        // FixedLifetime < 0 means the attribute carries its own Lifetime argument ([RegisterService]).
         IncrementalValuesProvider<(
             INamedTypeSymbol Implementation,
-            AttributeData Attribute
-        )> serviceDeclarations = context
-            .SyntaxProvider.ForAttributeWithMetadataName(
-                RegisterServiceAttributeName,
-                predicate: (node, _) => node is ClassDeclarationSyntax,
-                transform: (ctx, _) =>
-                    ctx.Attributes.Select(attr =>
-                        (Implementation: (INamedTypeSymbol)ctx.TargetSymbol, Attribute: attr)
-                    )
-            )
-            .SelectMany((items, _) => items)
-            .Where(x => x.Implementation is not null);
+            AttributeData Attribute,
+            int FixedLifetime
+        )> Declare(string attributeName, int fixedLifetime) =>
+            context
+                .SyntaxProvider.ForAttributeWithMetadataName(
+                    attributeName,
+                    predicate: (node, _) => node is ClassDeclarationSyntax,
+                    transform: (ctx, _) =>
+                        ctx.Attributes.Select(attr =>
+                            (
+                                Implementation: (INamedTypeSymbol)ctx.TargetSymbol,
+                                Attribute: attr,
+                                FixedLifetime: fixedLifetime
+                            )
+                        )
+                )
+                .SelectMany((items, _) => items)
+                .Where(x => x.Implementation is not null);
+
+        var serviceDeclarations = Declare(RegisterServiceAttributeName, -1)
+            .Collect()
+            .Combine(Declare(AddTransientAttributeName, 0).Collect())
+            .Combine(Declare(AddScopedAttributeName, 1).Collect())
+            .Combine(Declare(AddSingletonAttributeName, 2).Collect())
+            .Select(
+                (all, _) =>
+                    all.Left.Left.Left.Concat(all.Left.Left.Right)
+                        .Concat(all.Left.Right)
+                        .Concat(all.Right)
+                        .ToList()
+            );
 
         return serviceDeclarations
-            .Collect()
             .Select(
                 (services, _) =>
                 {
                     var serviceInfos = new List<ServiceInfo>();
-                    foreach (var (implementation, attribute) in services)
+                    foreach (var (implementation, attribute, fixedLifetime) in services)
                     {
-                        var lifetime = GetParameter<int>(attribute, 0, "Lifetime", 0);
+                        bool shorthand = fixedLifetime >= 0;
+                        var lifetime = shorthand
+                            ? fixedLifetime
+                            : GetParameter<int>(attribute, 0, "Lifetime", 0);
                         var serviceTypeSymbol = GetParameter<INamedTypeSymbol>(
                             attribute,
-                            1,
+                            shorthand ? 0 : 1,
                             "ServiceType",
                             null
                         );
-                        var key = GetParameter<string>(attribute, 2, "Key", null);
-                        var isGeneric = GetParameter<bool>(attribute, 3, "IsGeneric", false);
+                        var key = GetParameter<string>(attribute, shorthand ? -1 : 2, "Key", null);
+                        var isGeneric = GetParameter<bool>(
+                            attribute,
+                            shorthand ? -1 : 3,
+                            "IsGeneric",
+                            false
+                        );
 
                         if (serviceTypeSymbol == null)
                         {
@@ -122,7 +152,8 @@ internal static class DependencyInjectionGeneratorPart
     )
     {
         if (
-            constructorArgIndex < attribute.ConstructorArguments.Length
+            constructorArgIndex >= 0
+            && constructorArgIndex < attribute.ConstructorArguments.Length
             && !attribute.ConstructorArguments[constructorArgIndex].IsNull
         )
         {

@@ -15,7 +15,7 @@ public enum ApiMethod
 /// Defines an API endpoint with routing, naming, and authorization metadata
 /// </summary>
 [AttributeUsage(AttributeTargets.Class, Inherited = false, AllowMultiple = false)]
-public sealed class ApiEndpointAttribute : Attribute
+public class ApiEndpointAttribute : Attribute
 {
     /// <summary>
     /// HTTP method for the endpoint

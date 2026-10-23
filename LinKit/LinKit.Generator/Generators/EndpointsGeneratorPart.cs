@@ -58,6 +58,68 @@ internal record ExceptionMappingInfo(
     string LogLevel
 );
 
+internal sealed class RouteGroupListComparer : IEqualityComparer<List<RouteGroupInfo>>
+{
+    public static readonly RouteGroupListComparer Instance = new();
+
+    public bool Equals(List<RouteGroupInfo>? left, List<RouteGroupInfo>? right)
+    {
+        if (ReferenceEquals(left, right))
+            return true;
+        if (left is null || right is null || left.Count != right.Count)
+            return false;
+
+        for (int i = 0; i < left.Count; i++)
+        {
+            RouteGroupInfo a = left[i];
+            RouteGroupInfo b = right[i];
+            if (
+                a.Prefix != b.Prefix
+                || a.Tag != b.Tag
+                || a.Feature != b.Feature
+                || a.RequireAuthorization != b.RequireAuthorization
+                || a.Policies != b.Policies
+                || !a.Filters.SequenceEqual(b.Filters, StringComparer.Ordinal)
+            )
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    public int GetHashCode(List<RouteGroupInfo> groups)
+    {
+        unchecked
+        {
+            int hash = 17;
+            foreach (RouteGroupInfo group in groups)
+            {
+                hash = (hash * 31) + StringComparer.Ordinal.GetHashCode(group.Prefix);
+                hash =
+                    (hash * 31)
+                    + (group.Tag is null ? 0 : StringComparer.Ordinal.GetHashCode(group.Tag));
+                hash =
+                    (hash * 31)
+                    + (group.Feature is null
+                        ? 0
+                        : StringComparer.Ordinal.GetHashCode(group.Feature));
+                hash = (hash * 31) + group.RequireAuthorization.GetHashCode();
+                hash =
+                    (hash * 31)
+                    + (group.Policies is null
+                        ? 0
+                        : StringComparer.Ordinal.GetHashCode(group.Policies));
+                foreach (string filter in group.Filters)
+                    hash = (hash * 31) + StringComparer.Ordinal.GetHashCode(filter);
+                hash = (hash * 31) + group.Filters.Count;
+            }
+            return (hash * 31) + groups.Count;
+        }
+    }
+}
+
 internal static class EndpointsGeneratorPart
 {
     private const string EndpointAttributeName = "LinKit.Core.Endpoints.ApiEndpointAttribute";
@@ -66,6 +128,11 @@ internal static class EndpointsGeneratorPart
         "LinKit.Core.Endpoints.ApiExceptionMappingAttribute";
     private const string EndpointFilterAttributeName =
         "LinKit.Core.Endpoints.EndpointFilterAttribute";
+    private const string HttpGetAttributeName = "LinKit.Core.Endpoints.HttpGetAttribute";
+    private const string HttpPostAttributeName = "LinKit.Core.Endpoints.HttpPostAttribute";
+    private const string HttpPutAttributeName = "LinKit.Core.Endpoints.HttpPutAttribute";
+    private const string HttpDeleteAttributeName = "LinKit.Core.Endpoints.HttpDeleteAttribute";
+    private const string HttpPatchAttributeName = "LinKit.Core.Endpoints.HttpPatchAttribute";
     private const string ICommandInterfaceName = "LinKit.Core.Cqrs.ICommand";
     private const string IQueryInterfaceName = "LinKit.Core.Cqrs.IQuery";
 
@@ -114,15 +181,10 @@ internal static class EndpointsGeneratorPart
                     }
                     return groups;
                 }
-            );
+            ).WithComparer(RouteGroupListComparer.Instance);
 
-        IncrementalValuesProvider<EndpointInfo?> endpointDeclarations = context
-            .SyntaxProvider.ForAttributeWithMetadataName(
-                EndpointAttributeName,
-                predicate: (node, _) => node is ClassDeclarationSyntax or RecordDeclarationSyntax,
-                transform: (ctx, _) => GetEndpointInfo(ctx)
-            )
-            .Where(info => info is not null);
+        IncrementalValuesProvider<EndpointInfo?> endpointDeclarations =
+            GetEndpointDeclarations(context);
 
         IncrementalValuesProvider<ExceptionMappingInfo?> exceptionMappings = context
             .SyntaxProvider.ForAttributeWithMetadataName(
@@ -149,9 +211,17 @@ internal static class EndpointsGeneratorPart
         );
 
         context.RegisterSourceOutput(
-            exceptionMappings.Collect(),
-            (spc, mappings) =>
+            exceptionMappings.Collect().Combine(context.CompilationProvider),
+            (spc, data) =>
             {
+                var (mappings, compilation) = data;
+
+                // Console/worker apps do not reference ASP.NET Core; emitting the middleware there would not compile.
+                if (compilation.GetTypeByMetadataName("Microsoft.AspNetCore.Builder.IApplicationBuilder") is null)
+                {
+                    return;
+                }
+
                 List<ExceptionMappingInfo> validMappings = mappings
                     .OfType<ExceptionMappingInfo>()
                     .ToList();
@@ -164,6 +234,101 @@ internal static class EndpointsGeneratorPart
     #endregion
 
     #region Data Collection
+
+    private static IncrementalValuesProvider<EndpointInfo?> GetEndpointDeclarations(
+        IncrementalGeneratorInitializationContext context
+    )
+    {
+        var endpoints = context
+            .SyntaxProvider.ForAttributeWithMetadataName(
+                EndpointAttributeName,
+                static (node, _) =>
+                    node is ClassDeclarationSyntax or RecordDeclarationSyntax,
+                static (attributeContext, _) =>
+                    GetEndpointInfoFromSymbol(
+                        (INamedTypeSymbol)attributeContext.TargetSymbol,
+                        EndpointAttributeName
+                    )
+            )
+            .Collect()
+            .Combine(
+                context
+                    .SyntaxProvider.ForAttributeWithMetadataName(
+                        HttpGetAttributeName,
+                        static (node, _) =>
+                            node is ClassDeclarationSyntax or RecordDeclarationSyntax,
+                        static (attributeContext, _) =>
+                            GetEndpointInfoFromSymbol(
+                                (INamedTypeSymbol)attributeContext.TargetSymbol,
+                                HttpGetAttributeName
+                            )
+                    )
+                    .Collect()
+            )
+            .Select((pair, _) => pair.Left.AddRange(pair.Right))
+            .Combine(
+                context
+                    .SyntaxProvider.ForAttributeWithMetadataName(
+                        HttpPostAttributeName,
+                        static (node, _) =>
+                            node is ClassDeclarationSyntax or RecordDeclarationSyntax,
+                        static (attributeContext, _) =>
+                            GetEndpointInfoFromSymbol(
+                                (INamedTypeSymbol)attributeContext.TargetSymbol,
+                                HttpPostAttributeName
+                            )
+                    )
+                    .Collect()
+            )
+            .Select((pair, _) => pair.Left.AddRange(pair.Right))
+            .Combine(
+                context
+                    .SyntaxProvider.ForAttributeWithMetadataName(
+                        HttpPutAttributeName,
+                        static (node, _) =>
+                            node is ClassDeclarationSyntax or RecordDeclarationSyntax,
+                        static (attributeContext, _) =>
+                            GetEndpointInfoFromSymbol(
+                                (INamedTypeSymbol)attributeContext.TargetSymbol,
+                                HttpPutAttributeName
+                            )
+                    )
+                    .Collect()
+            )
+            .Select((pair, _) => pair.Left.AddRange(pair.Right))
+            .Combine(
+                context
+                    .SyntaxProvider.ForAttributeWithMetadataName(
+                        HttpDeleteAttributeName,
+                        static (node, _) =>
+                            node is ClassDeclarationSyntax or RecordDeclarationSyntax,
+                        static (attributeContext, _) =>
+                            GetEndpointInfoFromSymbol(
+                                (INamedTypeSymbol)attributeContext.TargetSymbol,
+                                HttpDeleteAttributeName
+                            )
+                    )
+                    .Collect()
+            )
+            .Select((pair, _) => pair.Left.AddRange(pair.Right))
+            .Combine(
+                context
+                    .SyntaxProvider.ForAttributeWithMetadataName(
+                        HttpPatchAttributeName,
+                        static (node, _) =>
+                            node is ClassDeclarationSyntax or RecordDeclarationSyntax,
+                        static (attributeContext, _) =>
+                            GetEndpointInfoFromSymbol(
+                                (INamedTypeSymbol)attributeContext.TargetSymbol,
+                                HttpPatchAttributeName
+                            )
+                    )
+                    .Collect()
+            )
+            .Select((pair, _) => pair.Left.AddRange(pair.Right));
+
+        return endpoints.SelectMany((items, _) => items);
+    }
 
     private static RouteGroupInfo? ExtractRouteGroupInfo(AttributeData attr)
     {
@@ -217,19 +382,50 @@ internal static class EndpointsGeneratorPart
         return new RouteGroupInfo(prefix!, tag, feature, requireAuth, policies, filters);
     }
 
-    private static EndpointInfo? GetEndpointInfo(GeneratorAttributeSyntaxContext context)
+    private static EndpointInfo? GetEndpointInfoFromSymbol(
+        INamedTypeSymbol symbol,
+        string expectedAttributeName
+    )
     {
-        if (context.TargetSymbol is not INamedTypeSymbol requestSymbol)
+        var attributeData = symbol.GetAttributes().FirstOrDefault(a =>
         {
-            return null;
-        }
+            var name = a.AttributeClass?.ToDisplayString();
+            return name != null && (name == EndpointAttributeName ||
+                   name == HttpGetAttributeName ||
+                   name == HttpPostAttributeName ||
+                   name == HttpPutAttributeName ||
+                   name == HttpDeleteAttributeName ||
+                   name == HttpPatchAttributeName);
+        });
 
-        AttributeData attributeData = context.Attributes[0];
-        var methodValue = attributeData.ConstructorArguments[0].Value;
-        string httpMethodStr = methodValue is int i
-            ? ((LinKit.Core.Endpoints.ApiMethod)i).ToString()
-            : "Get";
-        string route = attributeData.ConstructorArguments[1].Value as string ?? "";
+        if (
+            attributeData?.AttributeClass?.ToDisplayString() != expectedAttributeName
+        )
+            return null;
+
+        INamedTypeSymbol requestSymbol = symbol;
+        string httpMethodStr = "Get";
+        string route = "";
+
+        string attrName = attributeData.AttributeClass?.Name ?? "";
+        if (attrName.StartsWith("HttpGet")) httpMethodStr = "Get";
+        else if (attrName.StartsWith("HttpPost")) httpMethodStr = "Post";
+        else if (attrName.StartsWith("HttpPut")) httpMethodStr = "Put";
+        else if (attrName.StartsWith("HttpDelete")) httpMethodStr = "Delete";
+        else if (attrName.StartsWith("HttpPatch")) httpMethodStr = "Patch";
+
+        if (attributeData.ConstructorArguments.Length >= 2)
+        {
+            var methodValue = attributeData.ConstructorArguments[0].Value;
+            httpMethodStr = methodValue is int i
+                ? ((LinKit.Core.Endpoints.ApiMethod)i).ToString()
+                : "Get";
+            route = attributeData.ConstructorArguments[1].Value as string ?? "";
+        }
+        else if (attributeData.ConstructorArguments.Length == 1)
+        {
+            route = attributeData.ConstructorArguments[0].Value as string ?? "";
+        }
 
         route = NormalizeRoute(route);
 
@@ -511,11 +707,7 @@ internal static class EndpointsGeneratorPart
             route = route.TrimEnd('/');
         }
 
-        if (!IsValidRoute(route))
-        {
-            throw new InvalidOperationException($"Invalid route: {route}");
-        }
-
+        // Never throw inside Source Generator to prevent compiler crash (CS8785)
         return route;
     }
 
@@ -555,25 +747,72 @@ internal static class EndpointsGeneratorPart
         sb.AppendLine("using Microsoft.AspNetCore.Http;");
         sb.AppendLine("using Microsoft.AspNetCore.Routing;");
         sb.AppendLine("using Microsoft.Extensions.DependencyInjection;"); // Required for Keyed Services
+        sb.AppendLine("using LinKit.Core.Endpoints;");
         sb.AppendLine("using System.Threading;");
         sb.AppendLine();
         sb.AppendLine("namespace LinKit.Core");
         sb.AppendLine("{");
         sb.AppendLine("    internal static partial class GeneratedEndpointsExtensions");
         sb.AppendLine("    {");
-
-        // Helper to handle Ok/NotFound safely for both ValueTypes and ReferenceTypes, with custom status codes and IResult support
-        sb.AppendLine(
-            "        private static IResult ToResult<T>(T result, int statusCode = 200)"
-        );
+        sb.AppendLine();
+        sb.AppendLine("        private static IResult ToResult<T>(T result, int statusCode = 200)");
         sb.AppendLine("        {");
-        sb.AppendLine("            if (result is null) return Results.NotFound();");
+        sb.AppendLine("            if (result is null) return Microsoft.AspNetCore.Http.Results.NotFound();");
         sb.AppendLine("            if (result is IResult r) return r;");
+        sb.AppendLine();
+        sb.AppendLine("            // 0. Clean Architecture Result / Result<T>");
+        sb.AppendLine("            if (result is LinKit.Core.Results.Result res)");
+        sb.AppendLine("            {");
+        sb.AppendLine("                if (!res.IsSuccess)");
+        sb.AppendLine("                {");
+        sb.AppendLine("                    return res.Status switch");
+        sb.AppendLine("                    {");
+        sb.AppendLine("                        LinKit.Core.Results.ResultStatus.NotFound => Microsoft.AspNetCore.Http.Results.NotFound(new { error = res.ErrorMessage, code = res.ErrorCode }),");
+        sb.AppendLine("                        LinKit.Core.Results.ResultStatus.Conflict => Microsoft.AspNetCore.Http.Results.Conflict(new { error = res.ErrorMessage, code = res.ErrorCode }),");
+        sb.AppendLine("                        LinKit.Core.Results.ResultStatus.Unauthorized => Microsoft.AspNetCore.Http.Results.Unauthorized(),");
+        sb.AppendLine("                        LinKit.Core.Results.ResultStatus.Forbidden => Microsoft.AspNetCore.Http.Results.Forbid(),");
+        sb.AppendLine("                        LinKit.Core.Results.ResultStatus.BadRequest => res.ValidationErrors.Count > 0");
+        sb.AppendLine("                            ? Microsoft.AspNetCore.Http.Results.ValidationProblem(System.Linq.Enumerable.ToDictionary(System.Linq.Enumerable.GroupBy(res.ValidationErrors, e => e.PropertyName), g => g.Key, g => System.Linq.Enumerable.ToArray(System.Linq.Enumerable.Select(g, e => e.ErrorMessage))))");
+        sb.AppendLine("                            : Microsoft.AspNetCore.Http.Results.BadRequest(new { error = res.ErrorMessage, code = res.ErrorCode }),");
+        sb.AppendLine("                        _ => Microsoft.AspNetCore.Http.Results.Problem(detail: res.ErrorMessage, statusCode: 500)");
+        sb.AppendLine("                    };");
+        sb.AppendLine("                }");
+        sb.AppendLine("                var val = res.GetRawValue();");
+        sb.AppendLine("                if (val is null) return statusCode switch { 204 => Microsoft.AspNetCore.Http.Results.NoContent(), 201 => Microsoft.AspNetCore.Http.Results.StatusCode(201), _ => Microsoft.AspNetCore.Http.Results.Ok() };");
+        sb.AppendLine("                return statusCode switch { 201 => Microsoft.AspNetCore.Http.Results.Json(val, statusCode: 201), _ => Microsoft.AspNetCore.Http.Results.Ok(val) };");
+        sb.AppendLine("            }");
+        sb.AppendLine();
+        sb.AppendLine("            // 1. Clean Architecture FileResponse");
+        sb.AppendLine("            if (result is FileResponse file)");
+        sb.AppendLine("            {");
+        sb.AppendLine("                if (file.Stream is not null)");
+        sb.AppendLine("                    return Microsoft.AspNetCore.Http.Results.File(file.Stream, file.ContentType, file.FileName, enableRangeProcessing: file.EnableRangeProcessing, lastModified: file.LastModified);");
+        sb.AppendLine("                if (file.Bytes is not null)");
+        sb.AppendLine("                    return Microsoft.AspNetCore.Http.Results.File(file.Bytes, file.ContentType, file.FileName, enableRangeProcessing: file.EnableRangeProcessing, lastModified: file.LastModified);");
+        sb.AppendLine("                if (!string.IsNullOrEmpty(file.FilePath))");
+        sb.AppendLine("                    return Microsoft.AspNetCore.Http.Results.File(file.FilePath, file.ContentType, file.FileName, enableRangeProcessing: file.EnableRangeProcessing, lastModified: file.LastModified);");
+        sb.AppendLine("            }");
+        sb.AppendLine();
+        sb.AppendLine("            // 2. Raw Stream or byte array");
+        sb.AppendLine("            if (result is System.IO.Stream s)");
+        sb.AppendLine("                return Microsoft.AspNetCore.Http.Results.File(s, \"application/octet-stream\");");
+        sb.AppendLine("            if (result is byte[] b)");
+        sb.AppendLine("                return Microsoft.AspNetCore.Http.Results.File(b, \"application/octet-stream\");");
+        sb.AppendLine();
+        sb.AppendLine("            // 3. HTTP Redirects (OAuth, Payment Gateways)");
+        sb.AppendLine("            if (result is RedirectResponse redir)");
+        sb.AppendLine("                return Microsoft.AspNetCore.Http.Results.Redirect(redir.Url, redir.Permanent, redir.PreserveMethod);");
+        sb.AppendLine();
+        sb.AppendLine("            // 4. Raw Text, HTML, or XML (Webhooks, SVG)");
+        sb.AppendLine("            if (result is ContentResponse content)");
+        sb.AppendLine("                return Microsoft.AspNetCore.Http.Results.Content(content.Content, content.ContentType, content.Encoding, content.StatusCode ?? statusCode);");
+        sb.AppendLine();
+        sb.AppendLine("            // 5. Default JSON / StatusCode Response");
         sb.AppendLine("            return statusCode switch");
         sb.AppendLine("            {");
-        sb.AppendLine("                200 => Results.Ok(result),");
-        sb.AppendLine("                201 => Results.Json(result, statusCode: 201),");
-        sb.AppendLine("                _ => Results.Json(result, statusCode: statusCode)");
+        sb.AppendLine("                200 => Microsoft.AspNetCore.Http.Results.Ok(result),");
+        sb.AppendLine("                201 => Microsoft.AspNetCore.Http.Results.Json(result, statusCode: 201),");
+        sb.AppendLine("                _ => Microsoft.AspNetCore.Http.Results.Json(result, statusCode: statusCode)");
         sb.AppendLine("            };");
         sb.AppendLine("        }");
         sb.AppendLine();
@@ -700,10 +939,10 @@ internal static class EndpointsGeneratorPart
             sb.AppendLine("                await mediator.SendAsync(request, cancellationToken);");
             string successReturn = endpoint.SuccessStatusCode switch
             {
-                204 => "Results.NoContent();",
-                201 => "Results.StatusCode(StatusCodes.Status201Created);",
-                200 => "Results.Ok();",
-                _ => $"Results.StatusCode({endpoint.SuccessStatusCode});",
+                204 => "Microsoft.AspNetCore.Http.Results.NoContent();",
+                201 => "Microsoft.AspNetCore.Http.Results.StatusCode(Microsoft.AspNetCore.Http.StatusCodes.Status201Created);",
+                200 => "Microsoft.AspNetCore.Http.Results.Ok();",
+                _ => $"Microsoft.AspNetCore.Http.Results.StatusCode({endpoint.SuccessStatusCode});",
             };
             sb.AppendLine($"                return {successReturn}");
         }
@@ -800,6 +1039,19 @@ internal static class EndpointsGeneratorPart
         if (endpoint.IsCommandWithoutResult)
         {
             sb.AppendLine($"            .Produces({endpoint.SuccessStatusCode})");
+        }
+        else if (producesType.Contains("FileResponse") || producesType.Contains("Stream") || producesType.Contains("byte[]"))
+        {
+            sb.AppendLine($"            .Produces({endpoint.SuccessStatusCode}, contentType: \"application/octet-stream\")");
+            sb.AppendLine("            .Produces(StatusCodes.Status404NotFound)");
+        }
+        else if (producesType.Contains("RedirectResponse"))
+        {
+            sb.AppendLine($"            .Produces(StatusCodes.Status302Found)");
+        }
+        else if (producesType.Contains("ContentResponse"))
+        {
+            sb.AppendLine($"            .Produces<string>({endpoint.SuccessStatusCode}, contentType: \"text/plain\")");
         }
         else
         {

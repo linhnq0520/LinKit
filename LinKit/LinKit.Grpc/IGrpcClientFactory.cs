@@ -1,4 +1,4 @@
-﻿using Grpc.Core;
+using Grpc.Core;
 using Grpc.Core.Interceptors;
 using Grpc.Net.Client;
 
@@ -10,4 +10,10 @@ public interface IGrpcClientFactory
         where TClient : ClientBase;
     Interceptor[] GetInterceptorsFor<TClient>();
     Metadata? GetMetadata();
+
+    CallInvoker GetCallInvokerFor<TClient>()
+        where TClient : ClientBase;
+
+    TClient GetClient<[System.Diagnostics.CodeAnalysis.DynamicallyAccessedMembers(System.Diagnostics.CodeAnalysis.DynamicallyAccessedMemberTypes.PublicConstructors)] TClient>()
+        where TClient : ClientBase;
 }

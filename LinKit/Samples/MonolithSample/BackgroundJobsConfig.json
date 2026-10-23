@@ -1,0 +1,12 @@
+{
+  "BackgroundJobConfig": {
+    "BackgroundJobs": [
+      {
+        "Name": "InventoryAuditJob",
+        "IntervalSeconds": 60,
+        "IsEnabled": true,
+        "IsLogHistory": true
+      }
+    ]
+  }
+}

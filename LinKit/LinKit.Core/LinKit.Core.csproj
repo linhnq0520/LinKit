@@ -1,12 +1,12 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
-    <TargetFrameworks>net8.0;net9.0</TargetFrameworks>
+    <TargetFrameworks>net8.0;net9.0;net10.0</TargetFrameworks>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <PackageId>LinKit.Core</PackageId>
-    <Version>2.3.0</Version>
+    <Version>2.5.0</Version>
     <Authors>Linh Nguyen</Authors>
-    <Description>A toolkit of high-performance, source-generated helpers for modern .NET. Boosts performance and provides AOT/Trimming safety.</Description>
+    <Description>A modular .NET toolkit with source-generated CQRS, endpoints, messaging, mapping, and dependency-injection helpers.</Description>
     <PackageTags>source-generator;performance;aot;cqrs;mediator;di;background;job</PackageTags>
     <PackageLicenseExpression>MIT</PackageLicenseExpression>
     <PackageReadmeFile>README.md</PackageReadmeFile>
@@ -17,6 +17,7 @@
   </PropertyGroup>
   <ItemGroup>
     <None Include="README.md" Pack="true" PackagePath="\" />
+    <ProjectReference Include="..\LinKit.Generator\LinKit.Generator.csproj" ReferenceOutputAssembly="false" />
   </ItemGroup>
   <ItemGroup>
     <PackageReference

@@ -97,7 +97,9 @@ internal static class BackgroundJobExecution
                 var historyLogger = scope.ServiceProvider.GetService<IJobHistoryLogger>();
                 if (historyLogger != null && config.IsLogHistory)
                 {
-                    await historyLogger.LogAsync(history, cancellationToken);
+                    // Host shutdown cancels the job token; history must still be persisted.
+                    using var logCts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+                    await historyLogger.LogAsync(history, logCts.Token);
                 }
             }
             catch (Exception exLog)

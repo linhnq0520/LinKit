@@ -1,0 +1,38 @@
+name: CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+
+jobs:
+  build-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: |
+            8.0.x
+            9.0.x
+            10.0.x
+      - name: Restore
+        run: dotnet restore LinKit/LinKit.sln
+      - name: Build
+        run: dotnet build LinKit/LinKit.sln --no-restore -c Release -warnaserror:RS2002
+      - name: Test
+        run: dotnet test LinKit/LinKit.sln --no-build -c Release
+      - name: Vulnerable packages
+        run: dotnet list LinKit/LinKit.sln package --vulnerable --include-transitive
+
+  native-aot:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+      - name: Publish Native AOT smoke app
+        run: dotnet publish LinKit/Test/LinKit.AotSmoke -c Release -r linux-x64 -o aot-out -warnaserror:IL2026,IL2060,IL2091,IL3050
+      - name: Run Native AOT smoke app
+        run: ./aot-out/LinKit.AotSmoke

@@ -3,19 +3,19 @@
 [![NuGet Version](https://img.shields.io/nuget/v/LinKit.Core.svg)](https://www.nuget.org/packages/LinKit.Core/)
 [![NuGet Downloads](https://img.shields.io/nuget/dt/LinKit.Core.svg)](https://www.nuget.org/packages/LinKit.Core/)
 
-**LinKit.Core** is a high-performance, modular toolkit for .NET, providing source-generated helpers for CQRS, Dependency Injection, Minimal API Endpoints, Background Jobs, Mapping, Messaging, and gRPC. LinKit eliminates boilerplate, maximizes runtime performance, and is fully compatible with NativeAOT and trimming.
+**LinKit.Core** is the runtime and source-generator package for CQRS, dependency injection, Minimal API endpoints, background jobs, mapping, and messaging contracts. It generates static application wiring for supported patterns. Native AOT and trimming support depend on the exact API path and application dependencies; see [AOT & Trimming](#aot--trimming).
 
 ---
 
 ## Why LinKit?
 
-Most .NET libraries rely on runtime reflection, which is slow, memory-intensive, and incompatible with NativeAOT. LinKit uses C# Source Generators to analyze your code and generate optimized, boilerplate-free C# at compile time, linking your application's components together.
+LinKit uses C# source generation to move selected handler discovery and wiring work to compile time. Generated code reduces repetitive registration and dispatch code, while unsupported or dynamic paths remain application-specific.
 
 **Key Benefits:**
 
-- **Zero Reflection:** No runtime scanning or reflection.
-- **Fast Startup:** No assembly scanning.
-- **AOT & Trimming Safe:** Works with Blazor, MAUI, NativeAOT.
+- **Generated wiring:** Static registrations and adapters for supported patterns.
+- **Predictable composition:** Explicit module registration instead of relying exclusively on runtime assembly scanning.
+- **AOT-oriented:** Selected features have smoke coverage; validate the complete application composition.
 - **Clean API:** Intent-driven, explicit, and easy to use.
 - **Automated Boilerplate:** For DI, API endpoints, background jobs, gRPC, messaging, and mapping.
 
@@ -23,12 +23,19 @@ Most .NET libraries rely on runtime reflection, which is slow, memory-intensive,
 
 ## LinKit Ecosystem
 
-| Package                     | Description                                                 | NuGet                                                              |
-| --------------------------- | ----------------------------------------------------------- | ------------------------------------------------------------------ |
-| `LinKit.Core`               | **Required.** Interfaces, attributes, and source generator. | [NuGet](https://www.nuget.org/packages/LinKit.Core/)               |
-| `LinKit.Grpc`               | gRPC server/client codegen for CQRS requests.               | [NuGet](https://www.nuget.org/packages/LinKit.Grpc/)               |
-| `LinKit.Messaging.RabbitMQ` | RabbitMQ implementation for Messaging Kit.                  | [NuGet](https://www.nuget.org/packages/LinKit.Messaging.RabbitMQ/) |
-| `LinKit.Messaging.Kafka`    | Kafka implementation for Messaging Kit.                     | [NuGet](https://www.nuget.org/packages/LinKit.Messaging.Kafka/)    |
+| Package                     | Description                                                          | NuGet                                                              |
+| --------------------------- | -------------------------------------------------------------------- | ------------------------------------------------------------------ |
+| `LinKit.Core`               | **Required.** Core CQRS, Endpoints, DI, Jobs, Mapping & Source Gen.  | [NuGet](https://www.nuget.org/packages/LinKit.Core/)               |
+| `LinKit.Grpc`               | gRPC server/client adapters generated for CQRS requests.             | [NuGet](https://www.nuget.org/packages/LinKit.Grpc/)               |
+| `LinKit.Messaging.RabbitMQ` | RabbitMQ broker implementation for LinKit messaging abstractions.    | [NuGet](https://www.nuget.org/packages/LinKit.Messaging.RabbitMQ/) |
+| `LinKit.Messaging.Kafka`    | Apache Kafka broker implementation for LinKit messaging abstractions.| [NuGet](https://www.nuget.org/packages/LinKit.Messaging.Kafka/)    |
+| `LinKit.Outbox`             | Transactional Outbox & Idempotent Inbox for distributed resilience.  | [NuGet](https://www.nuget.org/packages/LinKit.Outbox/)             |
+| `LinKit.Outbox.Data`        | Durable ADO.NET Outbox/Inbox stores for `LinKit.Data` providers.       | [NuGet](https://www.nuget.org/packages/LinKit.Outbox.Data/)        |
+| `LinKit.Data`               | Source-generated ADO.NET repositories and schema synchronization.      | [NuGet](https://www.nuget.org/packages/LinKit.Data/)               |
+| `LinKit.Caching`            | In-memory cache provider with expiry, capacity management, and single-flight creation. | [NuGet](https://www.nuget.org/packages/LinKit.Caching/) |
+| `LinKit.Resilience`         | Explicit retry, timeout, and circuit-breaker execution pipeline.     | [NuGet](https://www.nuget.org/packages/LinKit.Resilience/)         |
+| `LinKit.Tenancy`            | Async-flow tenant context and explicit message-header helpers.       | [NuGet](https://www.nuget.org/packages/LinKit.Tenancy/)            |
+| `LinKit.Sagas`              | Saga step coordinator and replaceable repository contract.           | [NuGet](https://www.nuget.org/packages/LinKit.Sagas/)              |
 
 ---
 
@@ -38,12 +45,19 @@ Most .NET libraries rely on runtime reflection, which is slow, memory-intensive,
 dotnet add package LinKit.Core
 ```
 
-Add other packages as needed:
+Add modular packages as required by your architecture:
 
 ```shell
 dotnet add package LinKit.Grpc
 dotnet add package LinKit.Messaging.RabbitMQ
 dotnet add package LinKit.Messaging.Kafka
+dotnet add package LinKit.Outbox
+dotnet add package LinKit.Outbox.Data
+dotnet add package LinKit.Data
+dotnet add package LinKit.Caching
+dotnet add package LinKit.Resilience
+dotnet add package LinKit.Tenancy
+dotnet add package LinKit.Sagas
 ```
 
 ---
@@ -52,9 +66,9 @@ dotnet add package LinKit.Messaging.Kafka
 
 ### 1. CQRS Kit
 
-A high-performance, source-generated Mediator for implementing the CQRS (Command Query Responsibility Segregation) pattern with **zero reflection**.
+A source-generated Mediator for implementing CQRS (Command Query Responsibility Segregation) with compile-time handler wiring for supported request/handler patterns.
 
-The LinKit CQRS Kit analyzes your code at compile time to generate a highly optimized `Mediator`. It supports modular registration, advanced pipeline behaviors, and is fully compatible with NativeAOT.
+The LinKit CQRS Kit analyzes the compilation and generates a mediator implementation and registration code. It supports modular registration and pipeline behaviors. Validate trimming and Native AOT for the actual handlers, behaviors, serializers, and dependencies used by your application.
 
 #### Core Interfaces
 
@@ -237,21 +251,22 @@ await mediator.PublishAsync(new UserCreatedNotification(userId), PublishStrategy
 ### Usage Guide
 
 #### 1. Mark Your Services
-Use the `[RegisterService]` attribute to mark a class for automatic registration in the DI Container.
-
-```csharp
-// Automatically registers as IUserService (the Leaf Interface) with Scoped lifetime
-[RegisterService(Lifetime.Scoped)]
+// Shorthand lifetime attributes (Recommended):
+[AddScoped] // Automatically registers as IUserService (leaf interface) with Scoped lifetime
 public class UserService : IUserService { ... }
 
-// Register with a specific interface and Singleton lifetime
-[RegisterService(Lifetime.Singleton, ServiceType = typeof(IDataProvider))]
+[AddSingleton(typeof(IDataProvider))]
 public class MyDataProvider : IDataProvider, IDisposable { ... }
 
-// Keyed Service registration (Native .NET 8+ support)
-[RegisterService(Lifetime.Transient, Key = "excel_report")]
+[AddTransient(Key = "excel_report")]
 public class ExcelReportService : IReportService { ... }
-```
+
+// Or use the explicit [RegisterService] attribute:
+[RegisterService(Lifetime.Scoped)]
+public class LegacyUserService : IUserService { ... }
+
+[RegisterService(Lifetime.Singleton, ServiceType = typeof(IDataProvider))]
+public class LegacyDataProvider : IDataProvider { ... }
 
 #### 2. Open Generics Support
 To register Open Generic types, set the `IsGeneric` property to `true`.
@@ -302,13 +317,13 @@ LinKit is "context-aware"—it understands that you likely want to inject `IUser
 
 ### Pro-Tips:
 * **Multiple Registrations:** If a class implements multiple independent interfaces (e.g., `IServiceA` and `IServiceB`), you can apply the attribute multiple times (requires `AllowMultiple = true` in attribute definition).
-* **Native AOT:** Since all code is generated at compile-time, this library is perfect for high-performance, cloud-native environments where Reflection is restricted.
+* **Native AOT:** Source generation can reduce runtime discovery, but the complete application still needs trimming/AOT analysis and publish-time validation.
 
 --- 
 
 ### 3. Endpoints Kit (Minimal APIs)
 
-The Endpoints Kit transforms your CQRS requests directly into high-performance Minimal API endpoints using Source Generators. It eliminates controllers, manual route mapping, and reflection-based dispatching.
+The Endpoints Kit generates Minimal API mappings for supported, endpoint-decorated CQRS requests, reducing hand-written route and dispatch wiring.
 
 -   **Zero Boilerplate:** The request DTO *is* the API definition.
 -   **Automatic Binding:** Infers `[FromBody]` for command payloads (POST/PUT/PATCH) and `[AsParameters]` for queries (GET/DELETE).
@@ -319,33 +334,28 @@ The Endpoints Kit transforms your CQRS requests directly into high-performance M
 
 #### Step 1: Define Endpoints
 
-Decorate your `ICommand` or `IQuery` classes with the `[ApiEndpoint]` attribute.
+Decorate your `ICommand` or `IQuery` classes with HTTP shorthand attributes (or `[ApiEndpoint]`).
 
-**Example 1: A GET Query with Automatic Binding**
+**Example 1: A GET Query with Shorthand Attribute**
 
 ```csharp
 using LinKit.Core.Endpoints;
-using Microsoft.AspNetCore.Mvc;
 
-// Maps to: GET /users/{Id}
-[ApiEndpoint(ApiMethod.Get, "users/{Id}")]
-public class GetUserQuery : IQuery<UserDto>
-{
-    [FromRoute] public int Id { get; set; }
-}
+// Shorthand: Maps to GET /users/{id}
+[HttpGet("users/{id}")]
+public record GetUserQuery(int Id) : IQuery<UserDto>;
+
+// Or using [ApiEndpoint]:
+[ApiEndpoint(ApiMethod.Get, "users/{id}")]
+public record GetUserLegacyQuery(int Id) : IQuery<UserDto>;
 ```
 
-**Example 2: A POST Command returning a Value Type (`bool`)**
-
-LinKit's generator handles Value Types correctly. A `false` boolean result will still return `200 OK`, while only a true `null` (for nullable types) triggers `404 Not Found`.
+**Example 2: A POST Command with Shorthand Attribute**
 
 ```csharp
-// Maps to: POST /users/check-email
-[ApiEndpoint(ApiMethod.Post, "users/check-email")]
-public class CheckEmailCommand : ICommand<bool>
-{
-    public string Email { get; set; }
-}
+// Shorthand: Maps to POST /users/check-email
+[HttpPost("users/check-email")]
+public record CheckEmailCommand(string Email) : ICommand<bool>;
 ```
 
 **Example 3: Using Keyed Mediator & Security**
@@ -369,7 +379,7 @@ public class UpdateRoleCommand : ICommand
 
 **Example 4: Endpoint Filters (`IEndpointFilter`) & Custom Response Type**
 
-Intercept and enrich endpoint responses with zero middleware buffering overhead, while keeping OpenAPI/Swagger documentation 100% accurate:
+Intercept and enrich endpoint responses with generated endpoint metadata. Verify the emitted OpenAPI document for custom response and binding types:
 
 ```csharp
 public class EntityAuditEndpointFilter : IEndpointFilter
@@ -395,6 +405,40 @@ public class GetEntityAuditQuery : IQuery<IList<EntityAuditResponseModel>>
 {
     public string EntityName { get; set; } = string.Empty;
 }
+```
+
+**Example 5: Specialized Responses (File, Stream, byte[], Redirect, Raw Content)**
+
+LinKit provides response helpers for binary downloads, streams, redirects, and custom content responses:
+
+```csharp
+using LinKit.Core.Endpoints;
+
+// 1. Direct File / Stream / Byte Array response
+[ApiEndpoint(ApiMethod.Get, "catalog/export")]
+public record ExportCatalogQuery : IQuery<FileResponse>;
+
+[CqrsHandler]
+public class ExportCatalogHandler : IQueryHandler<ExportCatalogQuery, FileResponse>
+{
+    public Task<FileResponse> HandleAsync(ExportCatalogQuery query, CancellationToken ct)
+    {
+        var csvBytes = "Id,Name\n1,Product A"u8.ToArray();
+        return Task.FromResult(FileResponse.Bytes(
+            csvBytes, 
+            contentType: "text/csv", 
+            fileDownloadName: "products.csv"
+        ));
+    }
+}
+
+// 2. Redirect Response
+[ApiEndpoint(ApiMethod.Get, "orders/{id}/tracking")]
+public record GetTrackingUrlQuery([FromRoute] int id) : IQuery<RedirectResponse>;
+
+// 3. Raw Content Response (HTML, SVG, XML, plain text)
+[ApiEndpoint(ApiMethod.Get, "health/badge")]
+public record GetHealthBadgeQuery : IQuery<ContentResponse>;
 ```
 
 #### Step 2: Route Grouping & Group Filters (Optional)
@@ -460,7 +504,7 @@ app.Run();
 
 ### 4. Background Job Kit
 
-The Background Job Kit provides a powerful, configuration-driven system for executing CQRS commands and queries on a schedule. It source-generates the necessary infrastructure to link your job definitions to your CQRS handlers, creating a robust background processing system with zero reflection and full support for hot-reloading configurations.
+The Background Job Kit provides a configuration-driven system for executing jobs on a schedule. Generated registration links supported job definitions to runtime scheduling infrastructure. Shutdown waits are bounded; long-running jobs should be idempotent and applications requiring full drain should implement/verify graceful shutdown.
 
 #### How It Works
 
@@ -677,7 +721,7 @@ builder.AddBackgroundJobs("BackgroundJobsConfig.json");
 
 ### 5. Mapping Kit
 
-A high-performance, reflection-free, source-generated object mapper. The Mapping Kit provides a fluent and type-safe API to configure mappings, which are then transformed into highly optimized, direct-assignment code at compile time.
+A source-generated mapper for supported property mappings. The generator emits direct C# mapping code where it can establish compatible source/destination members.
 
 - **Type-Safe API:** Uses lambda expressions (`dest => dest.Property`) to eliminate magic strings and catch errors at compile time.
 - **Fluent Configuration:** Chain `.ForMember()` calls to create readable and maintainable mapping rules.
@@ -798,7 +842,7 @@ builder.Services.AddLinKitRabbitMQ(configuration);
 
 ### 7. gRPC Kit (via `LinKit.Grpc`)
 
-The gRPC Kit transforms your existing CQRS requests into fully functional, high-performance gRPC services with minimal effort. It completely automates the tedious process of writing gRPC service implementations, including request/response mapping, error handling, and CQRS mediator invocation.
+The optional `LinKit.Grpc` package generates adapters between CQRS requests and protobuf-generated gRPC service/client types. It does not generate `.proto` contracts or remove the need to validate RPC mappings and runtime dependencies.
 
 -   **Zero Boilerplate:** No need to manually write gRPC service classes. Just decorate your CQRS requests.
 -   **Automatic Mapping:** Intelligently maps properties between your Protobuf-generated classes and your C# CQRS request/response DTOs.
@@ -1043,7 +1087,16 @@ public class MyFrontendService
 
 ## AOT & Trimming
 
-LinKit is fully compatible with NativeAOT and trimming. For best results, use `System.Text.Json` source generation for DTOs and messages.
+LinKit uses source generation extensively, but a generator in one layer does not make every runtime path reflection-free. The repository's .NET 10 Native AOT smoke app currently covers selected Data, mapper, LINQ, SQLite, and durable Outbox paths. It does not certify every Core feature, gRPC/broker adapter, provider, target framework, operating system, or third-party dependency.
+
+For a trimmed or Native AOT application:
+
+1. Register `System.Text.Json` generated contexts for messages and JSON columns.
+2. Enable trim/AOT analyzers and address warnings in the application project.
+3. Publish for the actual RID and run the published executable.
+4. Re-test when adding providers, interceptors, serializers, or dynamic extension points.
+
+Some paths still contain reflection/dynamic fallbacks, including Data LINQ closure extraction and gRPC client activation when generated activation is unavailable. See [`ARCHITECTURE_AND_CODEGEN_GUIDE.md`](../ARCHITECTURE_AND_CODEGEN_GUIDE.md) for the current feature-by-feature boundaries.
 
 ---
 

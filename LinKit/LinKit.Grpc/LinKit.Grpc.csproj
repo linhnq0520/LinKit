@@ -1,13 +1,13 @@
-﻿<Project Sdk="Microsoft.NET.Sdk">
+<Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
-    <TargetFrameworks>net8.0;net9.0</TargetFrameworks>
+    <TargetFrameworks>net8.0;net9.0;net10.0</TargetFrameworks>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <PackageId>LinKit.Grpc</PackageId>
-    <Version>1.0.5</Version>
+    <Version>1.2.0</Version>
     <Authors>Linh Nguyen</Authors>
-    <Description>gRPC server/client code generation for CQRS requests in LinKit. High-performance, source-generated, AOT/Trimming safe.</Description>
-    <PackageTags>source-generator;grpc;performance;aot;cqrs;mediator</PackageTags>
+    <Description>Source-generated gRPC server and client adapters for LinKit CQRS requests.</Description>
+    <PackageTags>linkit;grpc;source-generator;cqrs;mediator</PackageTags>
     <PackageLicenseExpression>MIT</PackageLicenseExpression>
     <PackageReadmeFile>README.md</PackageReadmeFile>
     <RepositoryUrl>https://github.com/linhnq0520/LinKit</RepositoryUrl>
@@ -28,6 +28,7 @@
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\LinKit.Core\LinKit.Core.csproj" />
+    <ProjectReference Include="..\LinKit.Grpc.Generator\LinKit.Grpc.Generator.csproj" ReferenceOutputAssembly="false" />
   </ItemGroup>
   <ItemGroup>
     <None

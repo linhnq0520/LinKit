@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text;
@@ -21,10 +21,11 @@ internal record GrpcEndpointInfo(
     string? GrpcResponseDtoProperty,
     string? GrpcResponseDtoType,
     bool IsCqrsQuery,
-    bool IsCommandWithoutResult
+    bool IsCommandWithoutResult,
+    string? MediatorKeyedService
 );
 
-internal record PropertyMap(string SourceProperty, string DestProperty);
+internal record PropertyMap(string SourceProperty, string DestProperty, string? TransformTemplate = null);
 
 internal record ListPropertyMap(
     string SourceProperty,
@@ -206,6 +207,9 @@ internal static class GrpcGeneratorPart
             .OriginalDefinition.ToDisplayString()
             .StartsWith(IQueryInterfaceName);
 
+        var mediatorKeyedService = attributeData.NamedArguments
+            .FirstOrDefault(kvp => kvp.Key == "MediatorKeyedService").Value.Value as string;
+
         var endpointInfo = new GrpcEndpointInfo(
             CqrsRequestType: cqrsRequestSymbol.ToDisplayString(
                 SymbolDisplayFormat.FullyQualifiedFormat
@@ -227,7 +231,8 @@ internal static class GrpcGeneratorPart
             GrpcResponseDtoProperty: string.Empty,
             GrpcResponseDtoType: grpcResponseDtoType,
             IsCqrsQuery: isQuery,
-            IsCommandWithoutResult: isCommandWithoutResult
+            IsCommandWithoutResult: isCommandWithoutResult,
+            MediatorKeyedService: mediatorKeyedService
         );
 
         return new ServerTransformationResult { EndpointInfo = endpointInfo };
@@ -288,12 +293,51 @@ internal static class GrpcGeneratorPart
                 }
                 else if (!isSourceList && !isDestList)
                 {
-                    simpleMaps.Add(new PropertyMap(sourceProp.Name, destProp.Name));
+                    var transform = GetTransformTemplate(sourceProp.Type, destProp.Type);
+                    simpleMaps.Add(new PropertyMap(sourceProp.Name, destProp.Name, transform));
                 }
             }
         }
 
         return (simpleMaps, listMaps);
+    }
+
+    private static string? GetTransformTemplate(ITypeSymbol sourceType, ITypeSymbol destType)
+    {
+        var srcStr = sourceType.ToDisplayString();
+        var destStr = destType.ToDisplayString();
+
+        if (srcStr == destStr) return null;
+
+        // Guid <-> string
+        if (srcStr == "System.Guid" && destStr == "string")
+            return "{0}.ToString()";
+        if (srcStr == "string" && destStr == "System.Guid")
+            return "System.Guid.Parse({0})";
+
+        // DateTime / DateTimeOffset <-> Google.Protobuf.WellKnownTypes.Timestamp
+        if (destStr.Contains("Google.Protobuf.WellKnownTypes.Timestamp"))
+        {
+            if (srcStr == "System.DateTimeOffset")
+                return "Google.Protobuf.WellKnownTypes.Timestamp.FromDateTimeOffset({0})";
+            if (srcStr == "System.DateTime")
+                return "Google.Protobuf.WellKnownTypes.Timestamp.FromDateTime({0}.Kind == System.DateTimeKind.Utc ? {0} : {0}.ToUniversalTime())";
+        }
+        if (srcStr.Contains("Google.Protobuf.WellKnownTypes.Timestamp"))
+        {
+            if (destStr == "System.DateTimeOffset")
+                return "{0}.ToDateTimeOffset()";
+            if (destStr == "System.DateTime")
+                return "{0}.ToDateTime()";
+        }
+
+        // Enum <-> int
+        if (sourceType.TypeKind == TypeKind.Enum && destStr == "int")
+            return "(int){0}";
+        if (srcStr == "int" && destType.TypeKind == TypeKind.Enum)
+            return $"({destType.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat)}){{0}}";
+
+        return null;
     }
 
     public static List<PropertyMap> GetPropertyMaps(
@@ -336,7 +380,8 @@ internal static class GrpcGeneratorPart
         {
             if (sourceProps.TryGetValue(destProp.Name, out var sourceProp))
             {
-                maps.Add(new PropertyMap(sourceProp.Name, destProp.Name));
+                var transform = GetTransformTemplate(sourceProp.Type, destProp.Type);
+                maps.Add(new PropertyMap(sourceProp.Name, destProp.Name, transform));
             }
         }
 
@@ -395,6 +440,7 @@ internal static class GrpcGeneratorPart
         sb.AppendLine("using Microsoft.Extensions.DependencyInjection;");
         sb.AppendLine("using Microsoft.Extensions.Logging;");
         sb.AppendLine("using System;");
+        sb.AppendLine("using System.Collections.Generic;");
         sb.AppendLine("using System.ComponentModel.DataAnnotations;");
         sb.AppendLine("using System.Threading.Tasks;");
         sb.AppendLine();
@@ -423,6 +469,7 @@ internal static class GrpcGeneratorPart
             sb.AppendLine($"    public sealed class {generatedClassName} : {serviceBaseType}");
             sb.AppendLine("    {");
             sb.AppendLine("        private readonly IMediator _mediator;");
+            sb.AppendLine("        private readonly IServiceProvider _serviceProvider;");
             sb.AppendLine($"        private readonly ILogger<{generatedClassName}>? _logger;");
             sb.AppendLine();
 
@@ -431,6 +478,7 @@ internal static class GrpcGeneratorPart
             );
             sb.AppendLine("        {");
             sb.AppendLine("            _mediator = mediator;");
+            sb.AppendLine("            _serviceProvider = serviceProvider;");
             sb.AppendLine(
                 $"            _logger = serviceProvider.GetService<ILogger<{generatedClassName}>>();"
             );
@@ -440,16 +488,20 @@ internal static class GrpcGeneratorPart
             foreach (var endpoint in serviceGroup)
             {
                 var requestMappings = endpoint.RequestPropertyMaps.Any()
-                    ? $" {{ {string.Join(", ", endpoint.RequestPropertyMaps.Select(m => $"{m.DestProperty} = request.{m.SourceProperty}"))} }}"
+                    ? $" {{ {string.Join(", ", endpoint.RequestPropertyMaps.Select(m => m.TransformTemplate != null ? $"{m.DestProperty} = {string.Format(m.TransformTemplate, $"request.{m.SourceProperty}")}" : $"{m.DestProperty} = request.{m.SourceProperty}"))} }}"
                     : "()";
                 var mediatorMethod = endpoint.IsCqrsQuery ? "QueryAsync" : "SendAsync";
                 var cqrsResponseIsNullable = endpoint.CqrsResponseType.EndsWith("?");
+
+                var mediatorAccessor = string.IsNullOrEmpty(endpoint.MediatorKeyedService)
+                    ? "_mediator"
+                    : $"(_serviceProvider.GetKeyedService<LinKit.Core.Cqrs.IMediator>(\"{endpoint.MediatorKeyedService}\") ?? _mediator)";
 
                 sb.AppendLine(
                     $"        public override async Task<{endpoint.GrpcResponseType}> {endpoint.GrpcMethodName}({endpoint.GrpcRequestType} request, ServerCallContext context)"
                 );
                 sb.AppendLine("        {");
-                sb.AppendLine("            GrpcContextAccessor.Current = context;");
+                sb.AppendLine("            using var _ = LinKit.Grpc.GrpcContextAccessor.BeginScope(context);");
                 sb.AppendLine("            try");
                 sb.AppendLine("            {");
                 sb.AppendLine(
@@ -457,8 +509,8 @@ internal static class GrpcGeneratorPart
                 );
                 sb.AppendLine(
                     endpoint.IsCommandWithoutResult
-                        ? $"                await _mediator.SendAsync(cqrsRequest, context.CancellationToken);"
-                        : $"                var cqrsResult = await _mediator.{mediatorMethod}<{endpoint.CqrsResponseType.TrimEnd('?')}>(cqrsRequest, context.CancellationToken);"
+                        ? $"                await {mediatorAccessor}.SendAsync(cqrsRequest, context.CancellationToken);"
+                        : $"                var cqrsResult = await {mediatorAccessor}.{mediatorMethod}<{endpoint.CqrsResponseType.TrimEnd('?')}>(cqrsRequest, context.CancellationToken);"
                 );
                 if (cqrsResponseIsNullable)
                 {
@@ -480,7 +532,9 @@ internal static class GrpcGeneratorPart
                         var responseMappings = string.Join(
                             ", ",
                             endpoint.ResponsePropertyMaps.Select(m =>
-                                $"{m.DestProperty} = cqrsResult.{m.SourceProperty}"
+                                m.TransformTemplate != null
+                                    ? $"{m.DestProperty} = {string.Format(m.TransformTemplate, $"cqrsResult.{m.SourceProperty}")}"
+                                    : $"{m.DestProperty} = cqrsResult.{m.SourceProperty}"
                             )
                         );
                         sb.AppendLine(
@@ -497,7 +551,7 @@ internal static class GrpcGeneratorPart
                             );
                             sb.AppendLine("                {");
                             sb.AppendLine(
-                                $"                    var grpcItem = new {listMap.DestItemType} {{ {string.Join(", ", listMap.ItemPropertyMaps.Select(m => $"{m.DestProperty} = item.{m.SourceProperty}"))} }};"
+                                $"                    var grpcItem = new {listMap.DestItemType} {{ {string.Join(", ", listMap.ItemPropertyMaps.Select(m => m.TransformTemplate != null ? $"{m.DestProperty} = {string.Format(m.TransformTemplate, $"item.{m.SourceProperty}")}" : $"{m.DestProperty} = item.{m.SourceProperty}"))} }};"
                             );
                             sb.AppendLine(
                                 $"                    grpcResponse.{listMap.DestProperty}.Add(grpcItem);"
@@ -514,10 +568,44 @@ internal static class GrpcGeneratorPart
                 }
 
                 sb.AppendLine("            }");
+                sb.AppendLine("            catch (RpcException)");
+                sb.AppendLine("            {");
+                sb.AppendLine("                throw;");
+                sb.AppendLine("            }");
                 sb.AppendLine("            catch (ValidationException ex)");
                 sb.AppendLine("            {");
                 sb.AppendLine(
                     "                throw new RpcException(new Status(StatusCode.InvalidArgument, ex.Message));"
+                );
+                sb.AppendLine("            }");
+                sb.AppendLine("            catch (ArgumentException ex)");
+                sb.AppendLine("            {");
+                sb.AppendLine(
+                    "                throw new RpcException(new Status(StatusCode.InvalidArgument, ex.Message));"
+                );
+                sb.AppendLine("            }");
+                sb.AppendLine("            catch (KeyNotFoundException ex)");
+                sb.AppendLine("            {");
+                sb.AppendLine(
+                    "                throw new RpcException(new Status(StatusCode.NotFound, ex.Message));"
+                );
+                sb.AppendLine("            }");
+                sb.AppendLine("            catch (UnauthorizedAccessException ex)");
+                sb.AppendLine("            {");
+                sb.AppendLine(
+                    "                throw new RpcException(new Status(StatusCode.Unauthenticated, ex.Message));"
+                );
+                sb.AppendLine("            }");
+                sb.AppendLine("            catch (InvalidOperationException ex)");
+                sb.AppendLine("            {");
+                sb.AppendLine(
+                    "                throw new RpcException(new Status(StatusCode.FailedPrecondition, ex.Message));"
+                );
+                sb.AppendLine("            }");
+                sb.AppendLine("            catch (OperationCanceledException) when (context.CancellationToken.IsCancellationRequested)");
+                sb.AppendLine("            {");
+                sb.AppendLine(
+                    "                throw new RpcException(new Status(StatusCode.Cancelled, \"The operation was cancelled by client.\"));"
                 );
                 sb.AppendLine("            }");
                 sb.AppendLine("            catch (Exception ex)");
@@ -538,6 +626,37 @@ internal static class GrpcGeneratorPart
             sb.AppendLine();
         }
 
+        // Generate MapLinKitGrpcServices endpoint extension
+        sb.AppendLine("namespace Microsoft.AspNetCore.Builder");
+        sb.AppendLine("{");
+        sb.AppendLine("    public static class LinKitGrpcEndpointRouteBuilderExtensions");
+        sb.AppendLine("    {");
+        sb.AppendLine("        public static Microsoft.AspNetCore.Routing.IEndpointRouteBuilder MapLinKitGrpcServices(this Microsoft.AspNetCore.Routing.IEndpointRouteBuilder endpoints)");
+        sb.AppendLine("        {");
+        foreach (var serviceGroup in endpointsByService)
+        {
+            var serviceBaseType = serviceGroup.Key;
+            var baseClassName = serviceBaseType.Split('.').Last();
+            var generatedClassName = $"LinKit{baseClassName.Replace("Base", "")}";
+
+            var namespaceParts = serviceBaseType.Split('.');
+            var nsWithGlobal = string.Join(".", namespaceParts.Take(namespaceParts.Length - 2));
+            if (string.IsNullOrEmpty(nsWithGlobal))
+            {
+                nsWithGlobal = "LinKit.Generated.Grpc";
+            }
+
+            var ns = nsWithGlobal.StartsWith("global::")
+                ? nsWithGlobal.Substring("global::".Length)
+                : nsWithGlobal;
+
+            sb.AppendLine($"            GrpcEndpointRouteBuilderExtensions.MapGrpcService<{ns}.{generatedClassName}>(endpoints);");
+        }
+        sb.AppendLine("            return endpoints;");
+        sb.AppendLine("        }");
+        sb.AppendLine("    }");
+        sb.AppendLine("}");
+
         return sb.ToString();
     }
 
@@ -551,8 +670,8 @@ internal static class GrpcGeneratorPart
                 predicate: (node, _) => node is ClassDeclarationSyntax or RecordDeclarationSyntax,
                 transform: (ctx, _) => GetGrpcEndpointInfo(ctx)
             )
-            .Where(info => info is not null)
-            .Select((x, _) => x!.EndpointInfo!);
+            .Where(info => info is not null && info.EndpointInfo is not null)
+            .Select((x, _) => x.EndpointInfo!);
 
         return grpcDeclarations
             .Collect()
@@ -560,6 +679,27 @@ internal static class GrpcGeneratorPart
                 (endpoints, _) =>
                 {
                     var services = new List<GrpcServiceInfo>();
+                    var endpointsByService = endpoints.GroupBy(e => e.ServiceBaseType);
+
+                    foreach (var serviceGroup in endpointsByService)
+                    {
+                        var serviceBaseType = serviceGroup.Key;
+                        var baseClassName = serviceBaseType.Split('.').Last();
+                        var generatedClassName = $"LinKit{baseClassName.Replace("Base", "")}";
+
+                        var namespaceParts = serviceBaseType.Split('.');
+                        var nsWithGlobal = string.Join(".", namespaceParts.Take(namespaceParts.Length - 2));
+                        if (string.IsNullOrEmpty(nsWithGlobal))
+                        {
+                            nsWithGlobal = "LinKit.Generated.Grpc";
+                        }
+
+                        var ns = nsWithGlobal.StartsWith("global::")
+                            ? nsWithGlobal.Substring("global::".Length)
+                            : nsWithGlobal;
+
+                        services.Add(new GrpcServiceInfo($"services.AddScoped<{ns}.{generatedClassName}>();"));
+                    }
 
                     return (IReadOnlyList<GrpcServiceInfo>)services;
                 }

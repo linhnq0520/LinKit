@@ -1,0 +1,16 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <LangVersion>latest</LangVersion>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\..\LinKit.Core\LinKit.Core.csproj" />
+    <ProjectReference Include="..\..\..\LinKit.Generator\LinKit.Generator.csproj" OutputItemType="Analyzer" ReferenceOutputAssembly="false" />
+    <ProjectReference Include="..\..\..\LinKit.Grpc\LinKit.Grpc.csproj" />
+    <ProjectReference Include="..\..\..\LinKit.Grpc.Generator\LinKit.Grpc.Generator.csproj" OutputItemType="Analyzer" ReferenceOutputAssembly="false" />
+    <ProjectReference Include="..\SharedContracts\SharedContracts.csproj" />
+  </ItemGroup>
+</Project>

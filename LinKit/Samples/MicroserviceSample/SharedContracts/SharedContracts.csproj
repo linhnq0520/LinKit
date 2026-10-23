@@ -1,0 +1,17 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <LangVersion>latest</LangVersion>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Protobuf Include="Protos\inventory.proto" GrpcServices="Both" />
+    <PackageReference Include="Grpc.AspNetCore" Version="2.71.0" />
+    <ProjectReference Include="..\..\..\LinKit.Core\LinKit.Core.csproj" />
+    <ProjectReference Include="..\..\..\LinKit.Grpc\LinKit.Grpc.csproj" />
+    <ProjectReference Include="..\..\..\LinKit.Generator\LinKit.Generator.csproj" OutputItemType="Analyzer" ReferenceOutputAssembly="false" />
+    <ProjectReference Include="..\..\..\LinKit.Grpc.Generator\LinKit.Grpc.Generator.csproj" OutputItemType="Analyzer" ReferenceOutputAssembly="false" />
+  </ItemGroup>
+</Project>

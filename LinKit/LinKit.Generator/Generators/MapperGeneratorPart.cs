@@ -51,21 +51,14 @@ public static class MapperGeneratorPart
 
     public static void Initialize(IncrementalGeneratorInitializationContext context)
     {
-        IncrementalValuesProvider<ClassDeclarationSyntax> mapperContexts =
-            context.SyntaxProvider.ForAttributeWithMetadataName(
-                MapperContextAttr,
-                static (node, _) => node is ClassDeclarationSyntax,
-                static (ctx, _) => (ClassDeclarationSyntax)ctx.TargetNode
-            );
-
-        var mapConfigsPerClass = mapperContexts
-            .Combine(context.CompilationProvider)
-            .Select(
-                static (tuple, _) =>
-                {
-                    (ClassDeclarationSyntax classSyntax, Compilation compilation) = tuple;
-                    SemanticModel model = compilation.GetSemanticModel(classSyntax.SyntaxTree);
-                    if (model.GetDeclaredSymbol(classSyntax) is not INamedTypeSymbol classSymbol)
+        var mapConfigsPerClass = context.SyntaxProvider.ForAttributeWithMetadataName(
+            MapperContextAttr,
+            static (node, _) => node is ClassDeclarationSyntax,
+            static (ctx, _) =>
+            {
+                var classSyntax = (ClassDeclarationSyntax)ctx.TargetNode;
+                SemanticModel model = ctx.SemanticModel;
+                if (ctx.TargetSymbol is not INamedTypeSymbol classSymbol)
                         return (Namespace: "", Configs: ImmutableArray<MapConfigWithDiags>.Empty);
 
                     string classNamespace = classSymbol.ContainingNamespace.IsGlobalNamespace

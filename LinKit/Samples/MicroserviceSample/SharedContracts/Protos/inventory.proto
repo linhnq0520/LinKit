@@ -1,0 +1,20 @@
+syntax = "proto3";
+
+option csharp_namespace = "MicroserviceSample.SharedContracts.Grpc";
+
+package inventory;
+
+service InventoryService {
+  rpc CheckStock (CheckStockRequest) returns (CheckStockResponse);
+}
+
+message CheckStockRequest {
+  string product_code = 1;
+  int32 quantity = 2;
+}
+
+message CheckStockResponse {
+  bool is_available = 1;
+  int32 remaining_stock = 2;
+  string message = 3;
+}

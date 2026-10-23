@@ -1,4 +1,4 @@
-﻿using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using RabbitMQ.Client;
@@ -17,6 +17,7 @@ internal sealed class RabbitMqConnectionFactory : IDisposable
             UserName = options.Value.UserName,
             Password = options.Value.Password,
             Port = options.Value.Port,
+            VirtualHost = string.IsNullOrEmpty(options.Value.VirtualHost) ? "/" : options.Value.VirtualHost,
             DispatchConsumersAsync = true
         };
         logger?.LogInformation("Connecting to RabbitMQ at {HostName}...", factory.HostName);

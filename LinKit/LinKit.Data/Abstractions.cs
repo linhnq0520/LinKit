@@ -70,37 +70,29 @@ public interface IFluentQuery<TEntity> where TEntity : class
 /// </summary>
 public interface IRepository<TEntity, in TId> where TEntity : class
 {
-    // Single & Bulk read
     Task<TEntity?> GetByIdAsync(TId id, CancellationToken ct = default);
     Task<List<TEntity>> ListAsync(int skip = 0, int take = 100, CancellationToken ct = default);
     Task<PagedResult<TEntity>> GetPagedAsync(int pageNumber, int pageSize, CancellationToken ct = default);
 
-    // Insert
     Task InsertAsync(TEntity entity, CancellationToken ct = default);
     Task InsertRangeAsync(IEnumerable<TEntity> entities, CancellationToken ct = default);
 
-    // Update
     Task UpdateAsync(TEntity entity, CancellationToken ct = default);
     Task UpdateRangeAsync(IEnumerable<TEntity> entities, CancellationToken ct = default);
 
-    // Delete
     Task DeleteAsync(TId id, CancellationToken ct = default);
     Task DeleteRangeAsync(IEnumerable<TId> ids, CancellationToken ct = default);
 
-    // Aggregate & check
     Task<long> CountAsync(CancellationToken ct = default);
     Task<bool> ExistsAsync(TId id, CancellationToken ct = default);
 
-    // Raw SQL Execution & Query
     Task<List<TEntity>> QuerySqlAsync(string sql, object? parameters = null, CancellationToken ct = default);
     Task<TEntity?> QuerySingleSqlAsync(string sql, object? parameters = null, CancellationToken ct = default);
     Task<int> ExecuteSqlAsync(string sql, object? parameters = null, CancellationToken ct = default);
     Task<TScalar?> ExecuteScalarSqlAsync<TScalar>(string sql, object? parameters = null, CancellationToken ct = default);
 
-    // Fluent Query Builder
     IFluentQuery<TEntity> Query();
 
-    // LINQ Queryable (supports 'from a in repo.AsQueryable() where ... select a')
     ILinKitQueryable<TEntity> AsQueryable();
 }
 

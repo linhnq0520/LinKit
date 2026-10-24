@@ -71,4 +71,3 @@ public interface ITableSchemaProvider
 {
     IReadOnlyList<TableSchemaMetadata> GetTables();
 }
-

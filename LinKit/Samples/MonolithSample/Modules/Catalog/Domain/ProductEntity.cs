@@ -42,4 +42,3 @@ public class ProductEntity : BaseEntity
     [Column(Order = 100)]
     public DateTimeOffset CreatedAt { get; set; } = DateTimeOffset.UtcNow;
 }
-

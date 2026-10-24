@@ -246,11 +246,22 @@ public sealed class IndexedAttribute : Attribute
 }
 
 /// <summary>
-/// Marks an interface for automatic source-generated concrete repository implementation.
+/// Generates a partial repository interface for an entity or a concrete repository for an interface.
 /// </summary>
-[AttributeUsage(AttributeTargets.Interface, Inherited = false, AllowMultiple = false)]
+[AttributeUsage(AttributeTargets.Class | AttributeTargets.Interface, Inherited = false, AllowMultiple = false)]
 public sealed class DataRepositoryAttribute : Attribute
 {
+    public string? InterfaceName { get; }
+    public string? Namespace { get; set; }
+
+    public DataRepositoryAttribute()
+    {
+    }
+
+    public DataRepositoryAttribute(string interfaceName)
+    {
+        InterfaceName = interfaceName;
+    }
 }
 
 /// <summary>

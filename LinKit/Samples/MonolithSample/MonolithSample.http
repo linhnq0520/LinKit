@@ -1,0 +1,15 @@
+@baseUrl = http://localhost:51180
+
+### Add a product with stock
+POST {{baseUrl}}/api/catalog/db-products
+Content-Type: application/json
+
+{
+  "name": "Partial Repository Example",
+  "price": 19.99,
+  "stock": 5,
+  "sku": "PARTIAL-REPO-001"
+}
+
+### Count products with stock using the custom partial repository method
+GET {{baseUrl}}/api/catalog/db-products/in-stock/count

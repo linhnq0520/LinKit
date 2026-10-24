@@ -57,7 +57,9 @@ public class DataGenerator : IIncrementalGenerator
         // 2. Discover [DataRepository] interfaces
         var repoDeclarations = context.SyntaxProvider
             .CreateSyntaxProvider(
-                predicate: static (s, _) => s is InterfaceDeclarationSyntax i && i.AttributeLists.Count > 0,
+                predicate: static (s, _) =>
+                    s is InterfaceDeclarationSyntax i &&
+                    (i.AttributeLists.Count > 0 || i.Identifier.ValueText.EndsWith("Repository", StringComparison.Ordinal)),
                 transform: static (ctx, _) => GetRepositorySemanticModel(ctx)
             )
             .Where(static m => m is not null);
@@ -70,16 +72,37 @@ public class DataGenerator : IIncrementalGenerator
             )
             .Where(static m => m is not null);
 
-        // 4. Combine all and generate code
+        var rootNamespace = context.AnalyzerConfigOptionsProvider
+            .Select(static (provider, _) =>
+                provider.GlobalOptions.TryGetValue("build_property.RootNamespace", out var value)
+                    ? value
+                    : string.Empty);
+
         var combined = entityDeclarations.Collect()
             .Combine(repoDeclarations.Collect())
-            .Combine(migrationDeclarations.Collect());
+            .Combine(migrationDeclarations.Collect())
+            .Combine(rootNamespace);
 
         context.RegisterSourceOutput(combined, static (spc, source) =>
         {
-            var entities = source.Left.Left.Where(e => e != null).Select(e => e!).ToList();
-            var repos = source.Left.Right.Where(r => r != null).Select(r => r!).ToList();
-            var migrations = source.Right.Where(m => m != null).Select(m => m!).ToList();
+            var entities = source.Left.Left.Left.Where(e => e != null).Select(e => e!).ToList();
+            var repos = source.Left.Left.Right.Where(r => r != null).Select(r => r!).ToList();
+            var migrations = source.Left.Right.Where(m => m != null).Select(m => m!).ToList();
+            var rootNamespaceValue = string.IsNullOrWhiteSpace(source.Right)
+                ? entities.FirstOrDefault()?.AssemblyName
+                    ?? migrations.FirstOrDefault()?.AssemblyName
+                    ?? string.Empty
+                : source.Right;
+            var generatedNamespace = string.IsNullOrWhiteSpace(rootNamespaceValue)
+                ? "Generated"
+                : $"{rootNamespaceValue}.Generated";
+
+            foreach (var entity in entities)
+            {
+                if (entity.RepositoryInterfaceName is not null &&
+                    string.IsNullOrWhiteSpace(entity.RepositoryInterfaceNamespace))
+                    entity.RepositoryInterfaceNamespace = rootNamespaceValue;
+            }
 
             foreach (var entity in entities)
             {
@@ -120,27 +143,31 @@ public class DataGenerator : IIncrementalGenerator
             if (entities.Count > 0)
             {
                 // Generate Mappers
-                var mappersSrc = GenerateMappers(entities);
+                var mappersSrc = GenerateMappers(entities, generatedNamespace);
                 spc.AddSource("LinKit.Data.Mappers.g.cs", SourceText.From(mappersSrc, Encoding.UTF8));
 
                 // Generate Schema Provider
-                var schemaSrc = GenerateSchemaProvider(entities);
+                var schemaSrc = GenerateSchemaProvider(entities, generatedNamespace);
                 spc.AddSource("LinKit.Data.SchemaProvider.g.cs", SourceText.From(schemaSrc, Encoding.UTF8));
 
+                var repositoryInterfacesSrc = GenerateRepositoryInterfaces(entities);
+                if (entities.Any(entity => entity.RepositoryInterfaceFullName is not null))
+                    spc.AddSource("LinKit.Data.RepositoryInterfaces.g.cs", SourceText.From(repositoryInterfacesSrc, Encoding.UTF8));
+
                 // Generate Repositories
-                var reposSrc = GenerateRepositories(entities, repos);
+                var reposSrc = GenerateRepositories(entities, repos, rootNamespaceValue, generatedNamespace);
                 spc.AddSource("LinKit.Data.Repositories.g.cs", SourceText.From(reposSrc, Encoding.UTF8));
             }
 
             if (migrations.Count > 0)
             {
                 // Generate Migration Registry
-                var migrationsSrc = GenerateMigrationsRegistry(migrations);
+                var migrationsSrc = GenerateMigrationsRegistry(migrations, generatedNamespace);
                 spc.AddSource("LinKit.Data.Migrations.g.cs", SourceText.From(migrationsSrc, Encoding.UTF8));
             }
 
             // Generate Dependency Injection
-            var diSrc = GenerateDependencyInjection(entities, repos, migrations);
+            var diSrc = GenerateDependencyInjection(entities, repos, migrations, rootNamespaceValue, generatedNamespace);
             spc.AddSource("LinKit.Data.DependencyInjection.g.cs", SourceText.From(diSrc, Encoding.UTF8));
         });
     }
@@ -179,6 +206,7 @@ public class DataGenerator : IIncrementalGenerator
         {
             ClassFullName = symbol.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat),
             ClassName = symbol.Name,
+            AssemblyName = symbol.ContainingAssembly.Name,
             Version = version,
             Description = description
         };
@@ -255,6 +283,22 @@ public class DataGenerator : IIncrementalGenerator
                 if (uNamed.Value.Value is bool uVal) isUnique = uVal;
                 compositeIndexes.Add(new CompositeIndexModel { IndexName = idxName, ColumnNames = colList, IsUnique = isUnique });
             }
+
+        }
+
+        var repositoryAttribute = classSymbol.GetAttributes().FirstOrDefault(a =>
+            a.AttributeClass?.Name == "DataRepositoryAttribute" ||
+            a.AttributeClass?.ToDisplayString() == "LinKit.Data.DataRepositoryAttribute");
+        string? repositoryInterfaceName = $"I{classSymbol.Name}Repository";
+        string? repositoryInterfaceNamespace = null;
+        if (repositoryAttribute != null)
+        {
+            var configuredInterfaceName = repositoryAttribute.ConstructorArguments.FirstOrDefault().Value as string;
+            if (!string.IsNullOrWhiteSpace(configuredInterfaceName))
+                repositoryInterfaceName = configuredInterfaceName;
+
+            repositoryInterfaceNamespace = repositoryAttribute.NamedArguments
+                .FirstOrDefault(argument => argument.Key == "Namespace").Value.Value as string;
         }
 
         string? softDeleteColumn = null;
@@ -543,6 +587,9 @@ public class DataGenerator : IIncrementalGenerator
             Name = classSymbol.Name,
             Namespace = classSymbol.ContainingNamespace.IsGlobalNamespace ? "" : classSymbol.ContainingNamespace.ToDisplayString(),
             FullName = classSymbol.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat),
+            AssemblyName = classSymbol.ContainingAssembly.Name,
+            RepositoryInterfaceName = repositoryInterfaceName,
+            RepositoryInterfaceNamespace = repositoryInterfaceNamespace,
             TableName = tableName,
             Schema = schema,
             TableComment = tableComment,
@@ -567,7 +614,8 @@ public class DataGenerator : IIncrementalGenerator
             a.AttributeClass?.Name == "DataRepositoryAttribute" ||
             a.AttributeClass?.ToDisplayString() == "LinKit.Data.DataRepositoryAttribute");
 
-        if (repoAttr == null) return null;
+        if (repoAttr == null && !interfaceSymbol.Name.EndsWith("Repository", StringComparison.Ordinal))
+            return null;
 
         string? entityFullName = null;
         string? idTypeFullName = null;
@@ -624,7 +672,7 @@ public class DataGenerator : IIncrementalGenerator
         };
     }
 
-    private static string GenerateMappers(List<EntityModel> entities)
+    private static string GenerateMappers(List<EntityModel> entities, string generatedNamespace)
     {
         var sb = new StringBuilder();
         sb.AppendLine("// <auto-generated/>");
@@ -635,7 +683,7 @@ public class DataGenerator : IIncrementalGenerator
         sb.AppendLine("using System.Text.Json;");
         sb.AppendLine("using LinKit.Data;");
         sb.AppendLine();
-        sb.AppendLine("namespace LinKit.Data.Generated;");
+        sb.AppendLine($"namespace {generatedNamespace};");
         sb.AppendLine();
         sb.AppendLine("public static class DataReaderGeneratedExtensions");
         sb.AppendLine("{");
@@ -647,7 +695,6 @@ public class DataGenerator : IIncrementalGenerator
         sb.AppendLine();
         foreach (var entity in entities)
         {
-            // FIX #1: Map by column NAME (not ordinal index) to survive JOIN, alias, or reordered SELECT.
             // We build a ColumnOrdinalMap once per reader call using GetOrdinal(), which is O(1) per column
             // after the initial mapping. This is safe for any SQL that returns these columns.
             sb.AppendLine($"    public static int[] {entity.Name}Ordinals(this DbDataReader reader)");
@@ -662,7 +709,6 @@ public class DataGenerator : IIncrementalGenerator
             sb.AppendLine();
             sb.AppendLine($"    public static {entity.FullName} Read{entity.Name}(this DbDataReader reader) => reader.Read{entity.Name}(reader.{entity.Name}Ordinals());");
             sb.AppendLine();
-            sb.AppendLine($"    // Pass the result of {entity.Name}Ordinals() once per result set to avoid per-row name lookups.");
             sb.AppendLine($"    public static {entity.FullName} Read{entity.Name}(this DbDataReader reader, int[] ords)");
             sb.AppendLine("    {");
             sb.AppendLine($"        var entity = new {entity.FullName}();");
@@ -793,7 +839,7 @@ public class DataGenerator : IIncrementalGenerator
         return sb.ToString();
     }
 
-    private static string GenerateSchemaProvider(List<EntityModel> entities)
+    private static string GenerateSchemaProvider(List<EntityModel> entities, string generatedNamespace)
     {
         var sb = new StringBuilder();
         sb.AppendLine("// <auto-generated/>");
@@ -802,7 +848,7 @@ public class DataGenerator : IIncrementalGenerator
         sb.AppendLine("using System.Collections.Generic;");
         sb.AppendLine("using LinKit.Data;");
         sb.AppendLine();
-        sb.AppendLine("namespace LinKit.Data.Generated;");
+        sb.AppendLine($"namespace {generatedNamespace};");
         sb.AppendLine();
         sb.AppendLine("public sealed class GeneratedTableSchemaProvider : ITableSchemaProvider");
         sb.AppendLine("{");
@@ -891,7 +937,11 @@ public class DataGenerator : IIncrementalGenerator
         return sb.ToString();
     }
 
-    private static string GenerateRepositories(List<EntityModel> entities, List<RepositoryInterfaceModel> repos)
+    private static string GenerateRepositories(
+        List<EntityModel> entities,
+        List<RepositoryInterfaceModel> repos,
+        string rootNamespace,
+        string generatedNamespace)
     {
         var sb = new StringBuilder();
         sb.AppendLine("// <auto-generated/>");
@@ -904,11 +954,11 @@ public class DataGenerator : IIncrementalGenerator
         sb.AppendLine("using System.Threading;");
         sb.AppendLine("using System.Threading.Tasks;");
         sb.AppendLine("using LinKit.Data;");
-        sb.AppendLine("using LinKit.Data.Generated;");
+        sb.AppendLine($"using {generatedNamespace};");
         sb.AppendLine("using LinKit.Data.Linq;");
         sb.AppendLine("using System.Text.Json;");
         sb.AppendLine();
-        sb.AppendLine("namespace LinKit.Data.Generated;");
+        sb.AppendLine($"namespace {rootNamespace};");
         sb.AppendLine();
 
         foreach (var entity in entities)
@@ -919,10 +969,17 @@ public class DataGenerator : IIncrementalGenerator
             var pkPropName = pk?.PropertyName ?? "Id";
 
             // Find matching custom interface if declared
-            var customInterface = repos.FirstOrDefault(r => r.EntityFullName == entity.FullName);
-            var interfaceInheritance = customInterface != null
-                ? $": {customInterface.InterfaceFullName}, IRepository<{entity.FullName}, {pkType}>"
-                : $": IRepository<{entity.FullName}, {pkType}>";
+            var customInterface = repos.FirstOrDefault(r =>
+                r.EntityFullName == entity.FullName ||
+                r.InterfaceFullName == entity.RepositoryInterfaceFullName);
+            var implementedInterfaces = new List<string>();
+            if (entity.RepositoryInterfaceFullName is not null)
+                implementedInterfaces.Add(entity.RepositoryInterfaceFullName);
+            if (customInterface is not null &&
+                !implementedInterfaces.Contains(customInterface.InterfaceFullName, StringComparer.Ordinal))
+                implementedInterfaces.Add(customInterface.InterfaceFullName);
+            implementedInterfaces.Add($"IRepository<{entity.FullName}, {pkType}>");
+            var interfaceInheritance = $": {string.Join(", ", implementedInterfaces)}";
 
             // ANSI (PostgreSQL, SQLite)
             var allColsAnsi = string.Join(", ", entity.Properties.Select(p => $"\\\"{p.ColumnName}\\\""));
@@ -947,7 +1004,7 @@ public class DataGenerator : IIncrementalGenerator
             var insertParamNamesOracle = string.Join(", ", insertCols.Select(p => $":{p.ColumnName}"));
             var updateSetsOracle = string.Join(", ", updateCols.Select(p => $"\\\"{p.ColumnName}\\\" = :{p.ColumnName}"));
 
-            sb.AppendLine($"public class {entity.Name}Repository {interfaceInheritance}");
+            sb.AppendLine($"public partial class {entity.Name}Repository {interfaceInheritance}");
             sb.AppendLine("{");
             sb.AppendLine("    private readonly IDbConnectionFactory _factory;");
             sb.AppendLine("    private readonly IUnitOfWork _uow;");
@@ -1131,7 +1188,6 @@ public class DataGenerator : IIncrementalGenerator
             sb.AppendLine("            }");
             sb.AppendLine("            return;");
             sb.AppendLine("        }");
-            // FIX #2: Removed reflection-based fallback — incompatible with Native AOT trim.
             sb.AppendLine("        // Native AOT: reflection on anonymous/POCO types is NOT supported.");
             sb.AppendLine("        // Use IEnumerable<(string Name, object? Value)>, Dictionary<string, object?>, or IEnumerable<DbParameter>.");
             sb.AppendLine("        throw new NotSupportedException(");
@@ -1140,7 +1196,6 @@ public class DataGenerator : IIncrementalGenerator
             sb.AppendLine("    }");
             sb.AppendLine();
 
-            // GetByIdAsync
             sb.AppendLine($"    public async Task<{entity.FullName}?> GetByIdAsync({pkType} id, CancellationToken ct = default)");
             sb.AppendLine("    {");
             sb.AppendLine("        var (conn, tx, shouldDispose) = await GetConnectionAsync(ct);");
@@ -1164,7 +1219,6 @@ public class DataGenerator : IIncrementalGenerator
             sb.AppendLine("    }");
             sb.AppendLine();
 
-            // ListAsync
             sb.AppendLine($"    public async Task<List<{entity.FullName}>> ListAsync(int skip = 0, int take = 100, CancellationToken ct = default)");
             sb.AppendLine("    {");
             sb.AppendLine("        var (conn, tx, shouldDispose) = await GetConnectionAsync(ct);");
@@ -1192,7 +1246,6 @@ public class DataGenerator : IIncrementalGenerator
             sb.AppendLine("    }");
             sb.AppendLine();
 
-            // GetPagedAsync
             sb.AppendLine($"    public async Task<PagedResult<{entity.FullName}>> GetPagedAsync(int pageNumber, int pageSize, CancellationToken ct = default)");
             sb.AppendLine("    {");
             sb.AppendLine("        if (pageNumber < 1) pageNumber = 1;");
@@ -1201,14 +1254,12 @@ public class DataGenerator : IIncrementalGenerator
             sb.AppendLine("        var (conn, tx, shouldDispose) = await GetConnectionAsync(ct);");
             sb.AppendLine("        try");
             sb.AppendLine("        {");
-            sb.AppendLine("            // Total count");
             sb.AppendLine("            await using var countCmd = conn.CreateCommand();");
             sb.AppendLine("            countCmd.Transaction = tx;");
             sb.AppendLine("            countCmd.CommandText = _pagedCountSql;");
             sb.AppendLine("            var totalObj = await countCmd.ExecuteScalarAsync(ct);");
             sb.AppendLine("            long totalCount = Convert.ToInt64(totalObj);");
             sb.AppendLine();
-            sb.AppendLine("            // Items");
             sb.AppendLine("            await using var cmd = conn.CreateCommand();");
             sb.AppendLine("            cmd.Transaction = tx;");
             sb.AppendLine("            cmd.CommandText = _pagedItemsSql;");
@@ -1238,7 +1289,6 @@ public class DataGenerator : IIncrementalGenerator
             sb.AppendLine("    }");
             sb.AppendLine();
 
-            // InsertAsync
             sb.AppendLine($"    public async Task InsertAsync({entity.FullName} entity, CancellationToken ct = default)");
             sb.AppendLine("    {");
             sb.AppendLine("        var (conn, tx, shouldDispose) = await GetConnectionAsync(ct);");
@@ -1400,7 +1450,6 @@ public class DataGenerator : IIncrementalGenerator
             sb.AppendLine("    }");
             sb.AppendLine();
 
-            // UpdateAsync
             sb.AppendLine($"    public async Task UpdateAsync({entity.FullName} entity, CancellationToken ct = default)");
             sb.AppendLine("    {");
             sb.AppendLine("        var (conn, tx, shouldDispose) = await GetConnectionAsync(ct);");
@@ -1454,7 +1503,7 @@ public class DataGenerator : IIncrementalGenerator
             sb.AppendLine("    }");
             sb.AppendLine();
 
-            // UpdateRangeAsync — FIX #4: Single connection & transaction reuse
+            // Reuses one connection and transaction for the entire batch.
             sb.AppendLine($"    public async Task UpdateRangeAsync(IEnumerable<{entity.FullName}> entities, CancellationToken ct = default)");
             sb.AppendLine("    {");
             sb.AppendLine("        var (conn, tx, shouldDispose) = await GetConnectionAsync(ct);");
@@ -1519,7 +1568,6 @@ public class DataGenerator : IIncrementalGenerator
             sb.AppendLine("    }");
             sb.AppendLine();
 
-            // DeleteAsync
             sb.AppendLine($"    public async Task DeleteAsync({pkType} id, CancellationToken ct = default)");
             sb.AppendLine("    {");
             sb.AppendLine("        var (conn, tx, shouldDispose) = await GetConnectionAsync(ct);");
@@ -1542,7 +1590,7 @@ public class DataGenerator : IIncrementalGenerator
             sb.AppendLine("    }");
             sb.AppendLine();
 
-            // DeleteRangeAsync — FIX #4: Batch DELETE with WHERE IN (...) in chunks of 500
+            // Splits large deletes into chunks to stay within database parameter limits.
             sb.AppendLine($"    public async Task DeleteRangeAsync(IEnumerable<{pkType}> ids, CancellationToken ct = default)");
             sb.AppendLine("    {");
             sb.AppendLine($"        var batch = new List<{pkType}>();");
@@ -1599,7 +1647,6 @@ public class DataGenerator : IIncrementalGenerator
             sb.AppendLine("    }");
             sb.AppendLine();
 
-            // CountAsync
             sb.AppendLine("    public async Task<long> CountAsync(CancellationToken ct = default)");
             sb.AppendLine("    {");
             sb.AppendLine("        var (conn, tx, shouldDispose) = await GetConnectionAsync(ct);");
@@ -1618,7 +1665,6 @@ public class DataGenerator : IIncrementalGenerator
             sb.AppendLine("    }");
             sb.AppendLine();
 
-            // ExistsAsync
             sb.AppendLine($"    public async Task<bool> ExistsAsync({pkType} id, CancellationToken ct = default)");
             sb.AppendLine("    {");
             sb.AppendLine("        var (conn, tx, shouldDispose) = await GetConnectionAsync(ct);");
@@ -1642,7 +1688,6 @@ public class DataGenerator : IIncrementalGenerator
             sb.AppendLine("    }");
             sb.AppendLine();
 
-            // QuerySqlAsync
             sb.AppendLine($"    public async Task<List<{entity.FullName}>> QuerySqlAsync(string sql, object? parameters = null, CancellationToken ct = default)");
             sb.AppendLine("    {");
             sb.AppendLine("        var (conn, tx, shouldDispose) = await GetConnectionAsync(ct);");
@@ -1669,7 +1714,6 @@ public class DataGenerator : IIncrementalGenerator
             sb.AppendLine("    }");
             sb.AppendLine();
 
-            // QuerySingleSqlAsync
             sb.AppendLine($"    public async Task<{entity.FullName}?> QuerySingleSqlAsync(string sql, object? parameters = null, CancellationToken ct = default)");
             sb.AppendLine("    {");
             sb.AppendLine("        var (conn, tx, shouldDispose) = await GetConnectionAsync(ct);");
@@ -1690,7 +1734,6 @@ public class DataGenerator : IIncrementalGenerator
             sb.AppendLine("    }");
             sb.AppendLine();
 
-            // ExecuteSqlAsync
             sb.AppendLine("    public async Task<int> ExecuteSqlAsync(string sql, object? parameters = null, CancellationToken ct = default)");
             sb.AppendLine("    {");
             sb.AppendLine("        var (conn, tx, shouldDispose) = await GetConnectionAsync(ct);");
@@ -1709,7 +1752,6 @@ public class DataGenerator : IIncrementalGenerator
             sb.AppendLine("    }");
             sb.AppendLine();
 
-            // ExecuteScalarSqlAsync
             sb.AppendLine("    public async Task<TScalar?> ExecuteScalarSqlAsync<TScalar>(string sql, object? parameters = null, CancellationToken ct = default)");
             sb.AppendLine("    {");
             sb.AppendLine("        var (conn, tx, shouldDispose) = await GetConnectionAsync(ct);");
@@ -1731,7 +1773,6 @@ public class DataGenerator : IIncrementalGenerator
             sb.AppendLine("    }");
             sb.AppendLine();
 
-            // Query() Fluent builder
             sb.AppendLine($"    public IFluentQuery<{entity.FullName}> Query() => new {entity.Name}FluentQuery(this);");
             sb.AppendLine();
             sb.AppendLine($"    public ILinKitQueryable<{entity.FullName}> AsQueryable() => new LinKitQueryable<{entity.FullName}>(new LinKitQueryProvider<{entity.FullName}>(() => Query(), _dialect, _propertyToColumn));");
@@ -1742,6 +1783,9 @@ public class DataGenerator : IIncrementalGenerator
             {
                 foreach (var method in customInterface.QueryMethods)
                 {
+                    if (method.CustomSql is null)
+                        continue;
+
                     if (method.MethodName is "GetByIdAsync" or "ListAsync" or "GetPagedAsync" or "InsertAsync" or "InsertRangeAsync" or "UpdateAsync" or "UpdateRangeAsync" or "DeleteAsync" or "DeleteRangeAsync" or "CountAsync" or "ExistsAsync" or "QuerySqlAsync" or "QuerySingleSqlAsync" or "ExecuteSqlAsync" or "ExecuteScalarSqlAsync" or "Query" or "AsQueryable")
                         continue;
 
@@ -1797,9 +1841,7 @@ public class DataGenerator : IIncrementalGenerator
                 }
             }
 
-            // Embedded Fluent Query Builder implementation
-            sb.AppendLine("    // Fluent Query Builder implementation");
-            sb.AppendLine($"    public class {entity.Name}FluentQuery : IFluentQuery<{entity.FullName}>");
+            sb.AppendLine($"        public class {entity.Name}FluentQuery : IFluentQuery<{entity.FullName}>");
             sb.AppendLine("    {");
             sb.AppendLine($"        private readonly {entity.Name}Repository _repo;");
             sb.AppendLine("        private readonly List<string> _whereConditions = new List<string>();");
@@ -2003,7 +2045,7 @@ public class DataGenerator : IIncrementalGenerator
         return sb.ToString();
     }
 
-    private static string GenerateMigrationsRegistry(List<MigrationModel> migrations)
+    private static string GenerateMigrationsRegistry(List<MigrationModel> migrations, string generatedNamespace)
     {
         var sorted = migrations.OrderBy(m => m.Version, StringComparer.Ordinal).ToList();
         var sb = new StringBuilder();
@@ -2011,9 +2053,10 @@ public class DataGenerator : IIncrementalGenerator
         sb.AppendLine("#nullable enable");
         sb.AppendLine("using System;");
         sb.AppendLine("using System.Collections.Generic;");
+        sb.AppendLine("using LinKit.Data;");
         sb.AppendLine("using LinKit.Data.Migrations;");
         sb.AppendLine();
-        sb.AppendLine("namespace LinKit.Data.Generated;");
+        sb.AppendLine($"namespace {generatedNamespace};");
         sb.AppendLine();
         sb.AppendLine("public sealed class GeneratedMigrationRegistry : IMigrationRegistry");
         sb.AppendLine("{");
@@ -2031,7 +2074,12 @@ public class DataGenerator : IIncrementalGenerator
         return sb.ToString();
     }
 
-    private static string GenerateDependencyInjection(List<EntityModel> entities, List<RepositoryInterfaceModel> repos, List<MigrationModel> migrations)
+    private static string GenerateDependencyInjection(
+        List<EntityModel> entities,
+        List<RepositoryInterfaceModel> repos,
+        List<MigrationModel> migrations,
+        string rootNamespace,
+        string generatedNamespace)
     {
         var sb = new StringBuilder();
         sb.AppendLine("// <auto-generated/>");
@@ -2039,7 +2087,9 @@ public class DataGenerator : IIncrementalGenerator
         sb.AppendLine("using System;");
         sb.AppendLine("using Microsoft.Extensions.DependencyInjection;");
         sb.AppendLine("using LinKit.Data;");
-        sb.AppendLine("using LinKit.Data.Generated;");
+        sb.AppendLine($"using {generatedNamespace};");
+        if (!string.IsNullOrWhiteSpace(rootNamespace))
+            sb.AppendLine($"using {rootNamespace};");
         sb.AppendLine();
         sb.AppendLine("namespace LinKit.Data;");
         sb.AppendLine();
@@ -2052,20 +2102,30 @@ public class DataGenerator : IIncrementalGenerator
 
         if (entities.Count > 0)
         {
-            sb.AppendLine("        services.AddSingleton<ITableSchemaProvider, GeneratedTableSchemaProvider>();");
+            var schemaProviderType = string.IsNullOrWhiteSpace(rootNamespace)
+                ? "GeneratedTableSchemaProvider"
+                : $"global::{generatedNamespace}.GeneratedTableSchemaProvider";
+            sb.AppendLine($"        services.AddSingleton<ITableSchemaProvider, {schemaProviderType}>();");
             foreach (var entity in entities)
             {
                 var pk = entity.PrimaryKey;
                 var pkType = pk?.TypeFullName ?? "global::System.Guid";
+                var repositoryType = string.IsNullOrWhiteSpace(rootNamespace)
+                    ? $"{entity.Name}Repository"
+                    : $"global::{rootNamespace}.{entity.Name}Repository";
 
                 // Default IRepository<Entity, TId>
-                sb.AppendLine($"        services.AddScoped<IRepository<{entity.FullName}, {pkType}>, {entity.Name}Repository>();");
+                sb.AppendLine($"        services.AddScoped<IRepository<{entity.FullName}, {pkType}>, {repositoryType}>();");
 
-                // Custom Repository interface if present
-                var customInterface = repos.FirstOrDefault(r => r.EntityFullName == entity.FullName);
-                if (customInterface != null)
+                if (entity.RepositoryInterfaceFullName is not null)
                 {
-                    sb.AppendLine($"        services.AddScoped<{customInterface.InterfaceFullName}, {entity.Name}Repository>();");
+                    sb.AppendLine($"        services.AddScoped<{entity.RepositoryInterfaceFullName}, {repositoryType}>();");
+                }
+
+                var customInterface = repos.FirstOrDefault(r => r.EntityFullName == entity.FullName);
+                if (customInterface != null && customInterface.InterfaceFullName != entity.RepositoryInterfaceFullName)
+                {
+                    sb.AppendLine($"        services.AddScoped<{customInterface.InterfaceFullName}, {repositoryType}>();");
                 }
             }
             sb.AppendLine();
@@ -2073,7 +2133,10 @@ public class DataGenerator : IIncrementalGenerator
 
         if (migrations.Count > 0)
         {
-            sb.AppendLine("        services.AddSingleton<LinKit.Data.Migrations.IMigrationRegistry, GeneratedMigrationRegistry>();");
+            var migrationRegistryType = string.IsNullOrWhiteSpace(rootNamespace)
+                ? "GeneratedMigrationRegistry"
+                : $"global::{generatedNamespace}.GeneratedMigrationRegistry";
+            sb.AppendLine($"        services.AddSingleton<LinKit.Data.Migrations.IMigrationRegistry, {migrationRegistryType}>();");
             foreach (var m in migrations)
             {
                 sb.AppendLine($"        services.AddTransient<{m.ClassFullName}>();");
@@ -2087,11 +2150,51 @@ public class DataGenerator : IIncrementalGenerator
         return sb.ToString();
     }
 
+    private static string GenerateRepositoryInterfaces(List<EntityModel> entities)
+    {
+        var repositories = entities.Where(entity => entity.RepositoryInterfaceFullName is not null).ToList();
+        var sb = new StringBuilder();
+        sb.AppendLine("// <auto-generated/>");
+        sb.AppendLine("#nullable enable");
+        sb.AppendLine();
+
+        foreach (var entity in repositories)
+        {
+            if (!string.IsNullOrWhiteSpace(entity.RepositoryInterfaceNamespace))
+            {
+                sb.AppendLine($"namespace {entity.RepositoryInterfaceNamespace}");
+                sb.AppendLine("{");
+            }
+
+            var indent = string.IsNullOrWhiteSpace(entity.RepositoryInterfaceNamespace) ? "" : "    ";
+            var pkType = entity.PrimaryKey?.TypeFullName ?? "global::System.Guid";
+            sb.AppendLine($"{indent}public partial interface {entity.RepositoryInterfaceName} : global::LinKit.Data.IRepository<{entity.FullName}, {pkType}>");
+            sb.AppendLine($"{indent}{{");
+            sb.AppendLine($"{indent}}}");
+
+            if (!string.IsNullOrWhiteSpace(entity.RepositoryInterfaceNamespace))
+                sb.AppendLine("}");
+
+            sb.AppendLine();
+        }
+
+        return sb.ToString();
+    }
+
     private class EntityModel
     {
         public string Name { get; set; } = string.Empty;
         public string Namespace { get; set; } = string.Empty;
         public string FullName { get; set; } = string.Empty;
+        public string AssemblyName { get; set; } = string.Empty;
+        public string? RepositoryInterfaceName { get; set; }
+        public string? RepositoryInterfaceNamespace { get; set; }
+        public string? RepositoryInterfaceFullName =>
+            RepositoryInterfaceName is null
+                ? null
+                : string.IsNullOrWhiteSpace(RepositoryInterfaceNamespace)
+                    ? $"global::{RepositoryInterfaceName}"
+                    : $"global::{RepositoryInterfaceNamespace}.{RepositoryInterfaceName}";
         public string TableName { get; set; } = string.Empty;
         public string? Schema { get; set; }
         public string? TableComment { get; set; }
@@ -2178,6 +2281,7 @@ public class DataGenerator : IIncrementalGenerator
     {
         public string ClassFullName { get; set; } = string.Empty;
         public string ClassName { get; set; } = string.Empty;
+        public string AssemblyName { get; set; } = string.Empty;
         public string Version { get; set; } = string.Empty;
         public string Description { get; set; } = string.Empty;
     }

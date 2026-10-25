@@ -8,3 +8,4 @@ Rule ID | Category | Severity | Notes
 LNKDATA001 | LinKit.Data | Warning | MultiTenantFilterNotEnforced
 LNKDATA002 | LinKit.Data | Warning | PrimaryKeyFallback
 LNKDATA003 | LinKit.Data | Warning | SoftDeleteColumnNotMapped
+LNKDATA004 | LinKit.Data | Error | DataContextEntityNotFound

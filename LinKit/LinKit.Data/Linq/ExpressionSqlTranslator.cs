@@ -103,11 +103,18 @@ public sealed class ExpressionSqlTranslator
                     orderBys.Add((ResolveOrderColumn(UnquoteLambda(call.Arguments[1]).Body), true));
                     break;
                 case "Skip":
-                    skip = Convert.ToInt32(ExtractValue(call.Arguments[1]));
+                {
+                    var count = Math.Max(0, Convert.ToInt32(ExtractValue(call.Arguments[1])));
+                    skip = (int)Math.Min(int.MaxValue, (long)(skip ?? 0) + count);
+                    if (take.HasValue) take = Math.Max(0, take.Value - count);
                     break;
+                }
                 case "Take":
-                    take = Convert.ToInt32(ExtractValue(call.Arguments[1]));
+                {
+                    var count = Math.Max(0, Convert.ToInt32(ExtractValue(call.Arguments[1])));
+                    take = Math.Min(take ?? int.MaxValue, count);
                     break;
+                }
                 case "Select":
                     break;
                 default:

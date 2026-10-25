@@ -31,5 +31,6 @@
     <ProjectReference Include="..\..\LinKit.Data\LinKit.Data.csproj" />
     <ProjectReference Include="..\..\LinKit.Outbox.Data\LinKit.Outbox.Data.csproj" />
     <ProjectReference Include="..\..\LinKit.Data.Generator\LinKit.Data.Generator.csproj" OutputItemType="Analyzer" ReferenceOutputAssembly="false" />
+    <ProjectReference Include="..\..\Samples\MonolithSample\MonolithSample.csproj" />
   </ItemGroup>
 </Project>

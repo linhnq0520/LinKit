@@ -53,24 +53,37 @@ public sealed class LinKitQueryProvider<TEntity> : ILinKitAsyncQueryProvider whe
 
     public async Task<TResult> ExecuteAsync<TResult>(Expression expression, CancellationToken ct = default)
     {
-        var fq = BuildFluentQuery(expression, out var terminalMethod);
+        ct.ThrowIfCancellationRequested();
+        var fq = BuildFluentQuery(expression, out var terminalMethod, out var translated);
 
-        if (terminalMethod == "Count" || typeof(TResult) == typeof(long) || typeof(TResult) == typeof(int))
+        if (terminalMethod is "Count" or "LongCount" || typeof(TResult) == typeof(long) || typeof(TResult) == typeof(int))
         {
-            long count = await fq.CountAsync(ct);
+            long count = translated.Take == 0
+                ? 0
+                : ApplyPaging(await fq.CountAsync(ct), translated.Skip, translated.Take);
             return (TResult)Convert.ChangeType(count, typeof(TResult));
         }
 
         if (terminalMethod == "Any" || typeof(TResult) == typeof(bool))
         {
-            bool any = await fq.AnyAsync(ct);
+            bool any = translated.Take != 0 &&
+                ApplyPaging(await fq.CountAsync(ct), translated.Skip, translated.Take) > 0;
             return (TResult)(object)any;
         }
 
-        if (terminalMethod is "FirstOrDefault" or "First" or "SingleOrDefault" or "Single")
+        if (terminalMethod is "FirstOrDefault" or "First" or "SingleOrDefault" or "Single" ||
+            typeof(TResult) == typeof(TEntity))
         {
-            var item = await fq.FirstOrDefaultAsync(ct);
-            return (TResult)(object)item!;
+            var single = terminalMethod is "Single" or "SingleOrDefault";
+            var items = await fq.Take(single ? 2 : 1).ToListAsync(ct);
+            return terminalMethod switch
+            {
+                "First" when items.Count == 0 => throw new InvalidOperationException("Sequence contains no elements."),
+                "Single" when items.Count == 0 => throw new InvalidOperationException("Sequence contains no elements."),
+                "SingleOrDefault" or "Single" when items.Count > 1
+                    => throw new InvalidOperationException("Sequence contains more than one element."),
+                _ => (TResult)(object?)items.FirstOrDefault()!
+            };
         }
 
         if (typeof(TResult) == typeof(List<TEntity>) || typeof(TResult) == typeof(IEnumerable<TEntity>))
@@ -89,12 +102,22 @@ public sealed class LinKitQueryProvider<TEntity> : ILinKitAsyncQueryProvider whe
             throw new NotSupportedException($"ExecutePagedAsync only supports entity type '{typeof(TEntity).Name}'.");
         }
 
-        var fq = BuildFluentQuery(expression, out _);
+        var fq = BuildFluentQuery(expression, out _, out _);
         var paged = await fq.ToPagedListAsync(pageNumber, pageSize, ct);
         return (PagedResult<T>)(object)paged;
     }
 
-    internal IFluentQuery<TEntity> BuildFluentQuery(Expression expression, out string? terminalMethod)
+    private static long ApplyPaging(long count, int? skip, int? take)
+    {
+        if (skip is > 0) count = Math.Max(0, count - skip.Value);
+        if (take.HasValue) count = Math.Min(count, Math.Max(0, take.Value));
+        return count;
+    }
+
+    internal IFluentQuery<TEntity> BuildFluentQuery(
+        Expression expression,
+        out string? terminalMethod,
+        out TranslatedSqlQuery translated)
     {
         terminalMethod = null;
         Expression? terminalPredicate = null;
@@ -103,7 +126,7 @@ public sealed class LinKitQueryProvider<TEntity> : ILinKitAsyncQueryProvider whe
         // Check for terminal aggregate methods like Count / Any / FirstOrDefault
         if (expression is MethodCallExpression call)
         {
-            if (call.Method.Name is "Count" or "Any" or "FirstOrDefault" or "First" or "SingleOrDefault" or "Single")
+            if (call.Method.Name is "Count" or "LongCount" or "Any" or "FirstOrDefault" or "First" or "SingleOrDefault" or "Single")
             {
                 terminalMethod = call.Method.Name;
                 if (call.Arguments.Count > 1)
@@ -118,7 +141,7 @@ public sealed class LinKitQueryProvider<TEntity> : ILinKitAsyncQueryProvider whe
             }
         }
 
-        var translated = translator.Translate(expression, terminalPredicate);
+        translated = translator.Translate(expression, terminalPredicate);
         var fq = _fluentQueryFactory();
 
         if (!string.IsNullOrWhiteSpace(translated.WhereSql))

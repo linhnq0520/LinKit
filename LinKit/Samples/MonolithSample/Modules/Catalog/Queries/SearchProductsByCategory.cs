@@ -4,14 +4,13 @@ using System.Threading.Tasks;
 using LinKit.Core.Cqrs;
 using LinKit.Core.Endpoints;
 using LinKit.Data;
-using LinKit.Data.Dialects;
 using MonolithSample.Modules.Catalog.Domain;
 
 namespace MonolithSample.Modules.Catalog.Queries;
 
 [HttpGet(
     "api/catalog/db-products/by-category",
-    Summary = "Search products using a parameterized category join"
+    Summary = "Search products using compile-time typed category join (AOT Mini-ORM)"
 )]
 public sealed record SearchProductsByCategoryQuery(
     [FromQuery] string Category,
@@ -20,49 +19,26 @@ public sealed record SearchProductsByCategoryQuery(
 ) : IQuery<List<ProductEntity>>;
 
 [CqrsHandler]
-public sealed class SearchProductsByCategoryHandler(
-    IRepository<ProductEntity, Guid> repository,
-    IDbConnectionFactory connectionFactory)
+public sealed class SearchProductsByCategoryHandler(CatalogDataContext data)
     : IQueryHandler<SearchProductsByCategoryQuery, List<ProductEntity>>
 {
     public Task<List<ProductEntity>> HandleAsync(
         SearchProductsByCategoryQuery query,
         CancellationToken cancellationToken)
     {
-        var dialect = SqlDialectFactory.GetDialect(connectionFactory.Dialect);
-        var products = dialect.QuoteIdentifier("catalog_products");
-        var categories = dialect.QuoteIdentifier("catalog_categories");
-        var productAlias = "p";
-        var categoryAlias = "c";
-        var categoryId = dialect.QuoteIdentifier(nameof(ProductEntity.CategoryId));
-        var id = dialect.QuoteIdentifier(nameof(CategoryEntity.Id));
-        var name = dialect.QuoteIdentifier(nameof(CategoryEntity.Name));
-        var price = dialect.QuoteIdentifier(nameof(ProductEntity.Price));
-        var stock = dialect.QuoteIdentifier(nameof(ProductEntity.Stock));
-        var featured = dialect.QuoteIdentifier(nameof(ProductEntity.IsFeatured));
-        var marker = dialect.ParameterPrefix;
+        var categoryName = query.Category;
+        var minPrice = query.MinPrice;
+        var minStock = query.MinStock;
 
-        var sql = $"""
-            SELECT {productAlias}.*
-            FROM {products} AS {productAlias}
-            INNER JOIN {categories} AS {categoryAlias}
-                ON {productAlias}.{categoryId} = {categoryAlias}.{id}
-            WHERE {categoryAlias}.{name} = {marker}category
-                AND {productAlias}.{price} >= {marker}minPrice
-                AND ({productAlias}.{stock} >= {marker}minStock
-                    OR {productAlias}.{featured} = {marker}isFeatured)
-            ORDER BY {productAlias}.{price} DESC, {productAlias}.{id} ASC
-            """;
+        // Compile-time strongly-typed SQL DSL with 0 reflection and 0 runtime Expression tree parsing
+        var typedQuery = data.ProductEntity.Query()
+            .InnerJoin(data.CategoryEntity, (p, c) => p.CategoryId.Equal(c.Id))
+            .Where((p, c) => c.Name == categoryName
+                & p.Price >= minPrice
+                & (p.Stock >= minStock | p.IsFeatured == true))
+            .OrderByDescending((p, c) => p.Price)
+            .ThenBy((p, c) => p.Id);
 
-        return repository.QuerySqlAsync(
-            sql,
-            new Dictionary<string, object?>
-            {
-                ["category"] = query.Category,
-                ["minPrice"] = query.MinPrice,
-                ["minStock"] = query.MinStock,
-                ["isFeatured"] = true
-            },
-            cancellationToken);
+        return typedQuery.ToListAsync(cancellationToken);
     }
 }

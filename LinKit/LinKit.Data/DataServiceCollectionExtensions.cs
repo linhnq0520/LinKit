@@ -32,6 +32,8 @@ public class LinKitDataOptions
 {
     public DatabaseDialect Dialect { get; set; } = DatabaseDialect.Sqlite;
     public Func<DbConnection>? ConnectionCreator { get; set; }
+    public Func<IServiceProvider, string?>? TenantIdResolver { get; private set; }
+    public Func<DbCommand, ValueTask>? CommandConfigurator { get; private set; }
     public bool EnsureDatabaseCreated { get; set; } = true;
     public string? AdminConnectionString { get; set; }
     public DatabaseUserProvisioningOptions UserProvisioning { get; } = new();
@@ -44,6 +46,18 @@ public class LinKitDataOptions
     {
         Dialect = dialect;
         ConnectionCreator = connectionCreator ?? throw new ArgumentNullException(nameof(connectionCreator));
+        return this;
+    }
+
+    public LinKitDataOptions UseTenantId(Func<IServiceProvider, string?> tenantIdResolver)
+    {
+        TenantIdResolver = tenantIdResolver ?? throw new ArgumentNullException(nameof(tenantIdResolver));
+        return this;
+    }
+
+    public LinKitDataOptions ConfigureCommand(Func<DbCommand, ValueTask> commandConfigurator)
+    {
+        CommandConfigurator = commandConfigurator ?? throw new ArgumentNullException(nameof(commandConfigurator));
         return this;
     }
 
@@ -162,6 +176,15 @@ public static class DataServiceCollectionExtensions
         services.AddSingleton(options);
         services.AddSingleton<IDbConnectionFactory>(new DelegateDbConnectionFactory(options.Dialect, options.ConnectionCreator));
         services.AddScoped<IUnitOfWork, UnitOfWork>();
+        services.AddScoped<DataSession>(sp =>
+        {
+            var opt = sp.GetRequiredService<LinKitDataOptions>();
+            return new DataSession(
+                opt.ConnectionCreator!,
+                new SqlDialect(opt.Dialect),
+                opt.TenantIdResolver?.Invoke(sp),
+                opt.CommandConfigurator);
+        });
         services.AddScoped<IDatabaseInitializer, DatabaseInitializer>();
         services.AddScoped<ISchemaSynchronizer, SchemaSynchronizer>();
         services.AddScoped<LinKit.Data.Migrations.IMigrationRunner, LinKit.Data.Migrations.MigrationRunner>();

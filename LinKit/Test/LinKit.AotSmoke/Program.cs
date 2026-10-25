@@ -49,6 +49,8 @@ await using (var command = databaseAnchor.CreateCommand())
         CREATE TABLE smoke_guid ("Id" TEXT PRIMARY KEY, "Name" TEXT NOT NULL);
         CREATE TABLE smoke_code ("Code" TEXT PRIMARY KEY, "Name" TEXT NOT NULL);
         CREATE TABLE smoke_long ("Id" INTEGER PRIMARY KEY, "Name" TEXT NOT NULL);
+        CREATE TABLE smoke_typed_categories ("Id" INTEGER PRIMARY KEY AUTOINCREMENT, "Name" TEXT NOT NULL);
+        CREATE TABLE smoke_typed_products ("Id" INTEGER PRIMARY KEY AUTOINCREMENT, "Name" TEXT NOT NULL, "CategoryId" INTEGER NULL, "Price" NUMERIC NOT NULL);
         INSERT INTO smoke_records ("Id", "Name", "Score", "DeletedAt") VALUES
             (1, 'low', 5, NULL),
             (2, 'match', 12, NULL),
@@ -67,7 +69,7 @@ services.AddLinKitData(options =>
 });
 services.AddLinKitAdoNetOutbox();
 await using var dataProvider = services.BuildServiceProvider();
-using (var scope = dataProvider.CreateScope())
+await using (var scope = dataProvider.CreateAsyncScope())
 {
     var repository = scope.ServiceProvider.GetRequiredService<IRepository<SmokeRecord, int>>();
     var customRepository = scope.ServiceProvider.GetRequiredService<ISmokeRecordRepository>();
@@ -115,6 +117,21 @@ using (var scope = dataProvider.CreateScope())
     Check(records.Count == 2, "data LINQ result count");
     Check(records[0] is { Id: 3, Name: "high", Score: 20 }, "data generated reader and ordering");
     Check(records[1] is { Id: 2, Name: "match", Score: 12 }, "data LINQ closure parameter");
+    Check(query.LongCount() == 3, "data LINQ LongCount terminal");
+
+    var pageCount = await repository.Table
+        .Where(record => record.Score >= minimumScore)
+        .OrderBy(record => record.Score)
+        .Skip(1)
+        .Take(1)
+        .CountAsync();
+    Check(pageCount == 1, "data LINQ count respects composed paging");
+    var singleRecord = repository.Table.Single(record => record.Id == 2);
+    Check(singleRecord.Name == "match", "data LINQ Single terminal");
+    var firstRecord = await repository.Table
+        .Where(record => record.Name == "missing")
+        .FirstOrDefaultAsync();
+    Check(firstRecord is null, "data LINQ FirstOrDefaultAsync empty result");
 
     var fluentMinimumScore = 10;
     var fluentExpressionRecords = await repository.Table
@@ -140,6 +157,45 @@ using (var scope = dataProvider.CreateScope())
         .Where("Score >= @minimum", new[] { (Name: "minimum", Value: (object?)10) })
         .ToListAsync();
     Check(fluentRecords.Count == 2, "soft-delete filter in fluent query");
+
+    var typedProducts = new SmokeTypedProductTypedRepository(
+        scope.ServiceProvider.GetRequiredService<DataSession>());
+    var typedCategories = new SmokeTypedCategoryTypedRepository(
+        scope.ServiceProvider.GetRequiredService<DataSession>());
+    var typedCategory = new SmokeTypedCategory { Name = "books" };
+    await typedCategories.InsertAsync(typedCategory);
+    await typedProducts.InsertAsync(new SmokeTypedProduct
+    {
+        Name = "aot book",
+        CategoryId = typedCategory.Id,
+        Price = 25m
+    });
+    var typedMinPrice = 10m;
+    var typedJoin = await typedProducts.Query()
+        .InnerJoin(typedCategories, (product, category) => product.CategoryId.Equal(category.Id))
+        .Where((product, category) => product.Price >= typedMinPrice & category.Name == "books")
+        .Select((product, category) =>
+            SmokeTypedProductCategoryDtoProjection.Create(product.Name, category.Name))
+        .ToListAsync();
+    Check(
+        typedJoin is [{ ProductName: "aot book", CategoryName: "books" }],
+        "typed generated table join and projection under Native AOT");
+
+    var typedAggregates = await typedProducts.Query()
+        .WhereExists(typedCategories, (product, category) => product.CategoryId.Equal(category.Id))
+        .LeftJoin(typedCategories, (product, category) => product.CategoryId.Equal(category.Id))
+        .GroupBy((product, category) => [category.Id, category.Name])
+        .Having((product, _) => Sql.Sum(product.Price).GreaterThanOrEqual(typedMinPrice))
+        .Select((product, category) => new Projection<SmokeTypedAggregate>(
+            [category.Name, Sql.Count(), Sql.Sum(product.Price)],
+            reader => new SmokeTypedAggregate(
+                DbValues.Read<string?>(reader, 0),
+                DbValues.Read<long>(reader, 1),
+                DbValues.Read<decimal?>(reader, 2))))
+        .ToListAsync();
+    Check(
+        typedAggregates is [{ CategoryName: "books", ProductCount: 1, TotalPrice: 25m }],
+        "typed correlated exists, left join, group and having under Native AOT");
 
     var matchingCount = query.Count(record => record.Score >= minimumScore);
     Check(matchingCount == 2, "data terminal predicate without reflection");
@@ -243,6 +299,35 @@ public class SmokeLong
 
     public string Name { get; set; } = string.Empty;
 }
+
+[Table("smoke_typed_categories")]
+public class SmokeTypedCategory
+{
+    [PrimaryKey(AutoIncrement = true)]
+    public int Id { get; set; }
+
+    public string Name { get; set; } = string.Empty;
+}
+
+[Table("smoke_typed_products")]
+public class SmokeTypedProduct
+{
+    [PrimaryKey(AutoIncrement = true)]
+    public int Id { get; set; }
+
+    public string Name { get; set; } = string.Empty;
+    public int? CategoryId { get; set; }
+    public decimal Price { get; set; }
+}
+
+[DataRecord]
+public class SmokeTypedProductCategoryDto
+{
+    public string ProductName { get; set; } = string.Empty;
+    public string CategoryName { get; set; } = string.Empty;
+}
+
+public sealed record SmokeTypedAggregate(string? CategoryName, long ProductCount, decimal? TotalPrice);
 
 [DataRepository]
 public interface ISmokeRecordRepository : IRepository<SmokeRecord, int>

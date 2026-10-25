@@ -9,10 +9,10 @@ using MonolithSample.Modules.Catalog.Domain;
 namespace MonolithSample.Modules.Catalog.Queries;
 
 [HttpGet("api/catalog/db-products/{id}", Summary = "Get product by Id via LinKit.Data")]
-public record GetCatalogProductByIdQuery([FromRoute] Guid id) : IQuery<ProductEntity>;
+public record GetCatalogProductByIdQuery([FromRoute] int id) : IQuery<ProductEntity>;
 
 [CqrsHandler]
-public class GetCatalogProductByIdHandler(IRepository<ProductEntity, Guid> repository)
+public class GetCatalogProductByIdHandler(IRepository<ProductEntity, int> repository)
     : IQueryHandler<GetCatalogProductByIdQuery, ProductEntity>
 {
     public async Task<ProductEntity> HandleAsync(GetCatalogProductByIdQuery query, CancellationToken cancellationToken)

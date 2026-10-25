@@ -36,6 +36,7 @@ public sealed class TableAttribute : Attribute
 public sealed class PrimaryKeyAttribute : Attribute
 {
     public bool AutoIncrement { get; set; } = false;
+    public bool Generated { get => AutoIncrement; set => AutoIncrement = value; }
 
     public PrimaryKeyAttribute() { }
 
@@ -296,11 +297,9 @@ public sealed class CompositeIndexAttribute : Attribute
 }
 
 /// <summary>
-/// Configures soft delete support on the entity.
-/// When applied, DeleteAsync performs a soft delete (UPDATE SET DeletedAt = CURRENT_TIMESTAMP),
-/// and repository query methods automatically filter out soft-deleted records.
+/// Configures soft delete support on the entity or property.
 /// </summary>
-[AttributeUsage(AttributeTargets.Class, Inherited = true, AllowMultiple = false)]
+[AttributeUsage(AttributeTargets.Class | AttributeTargets.Property, Inherited = true, AllowMultiple = false)]
 public sealed class SoftDeleteAttribute : Attribute
 {
     public string ColumnName { get; }
@@ -310,6 +309,38 @@ public sealed class SoftDeleteAttribute : Attribute
         ColumnName = columnName;
     }
 }
+
+/// <summary>
+/// Marks a class as a LinKit DataContext aggregating entity repositories and schemas.
+/// </summary>
+[AttributeUsage(AttributeTargets.Class, Inherited = false, AllowMultiple = false)]
+public sealed class DataContextAttribute : Attribute
+{
+    public Type[] EntityTypes { get; }
+
+    public DataContextAttribute(params Type[] entityTypes)
+    {
+        EntityTypes = entityTypes ?? Array.Empty<Type>();
+    }
+}
+
+/// <summary>
+/// Marks a class as a LinKit DataRecord DTO for typed query projections.
+/// </summary>
+[AttributeUsage(AttributeTargets.Class, Inherited = false, AllowMultiple = false)]
+public sealed class DataRecordAttribute : Attribute;
+
+/// <summary>
+/// Marks a property as optimistic concurrency token (long).
+/// </summary>
+[AttributeUsage(AttributeTargets.Property, Inherited = true, AllowMultiple = false)]
+public sealed class ConcurrencyTokenAttribute : Attribute;
+
+/// <summary>
+/// Marks a property as tenant isolation key (string).
+/// </summary>
+[AttributeUsage(AttributeTargets.Property, Inherited = true, AllowMultiple = false)]
+public sealed class TenantKeyAttribute : Attribute;
 
 /// <summary>
 /// Declares the tenant column name as metadata for an entity.

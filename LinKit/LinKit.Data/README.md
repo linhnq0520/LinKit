@@ -195,6 +195,8 @@ public class GetFeaturedProductsHandler(IRepository<ProductEntity, Guid> reposit
 }
 ```
 
+The LINQ provider supports the implemented predicate/order expression subset plus `Skip`, `Take`, `Count`, `LongCount`, `Any`, `First`, `FirstOrDefault`, `Single`, and `SingleOrDefault`. Paging operators compose in call order; terminal count/existence operations respect paging, and `Take(0)` returns an empty result without querying the database. Unsupported expression nodes and operators fail explicitly rather than being evaluated client-side. Native AOT support is tested for selected query shapes; captured closure values are read through expression member metadata, so the provider is not reflection-free.
+
 **Option B: Fluent Query Builder**
 ```csharp
 using LinKit.Core.Cqrs;
@@ -332,6 +334,32 @@ var page = await repository.Table
 Expression translation does not compile query predicates, but captured values are read from their expression members using reflection APIs that are supported in the tested Native AOT path. Keep captured values as ordinary fields/properties or local variables; unsupported constructs fail rather than falling back to dynamic compilation.
 
 The expression AST currently covers predicates and ordering, not full relational queries: LINQ `Join`/`GroupJoin` and projection to DTOs are not supported by `Table`/`AsQueryable()`. For multi-table queries, use parameterized `QuerySqlAsync` (or a generated custom repository query) and select the root entity columns. The Monolith sample demonstrates a dialect-quoted product/category join in `SearchProductsByCategory`; it uses a parameter dictionary for Native AOT compatibility. This is SQL composed by the application, not a LINQ join translated by the expression AST.
+
+### Generated typed query API
+
+For relational queries, `[Table]` entities can use the generated typed API. `[DataContext(typeof(ProductEntity), typeof(CategoryEntity))]` generates a context containing only the listed mapped entities; omitting the list keeps the compatibility behavior of including all mapped entities in the compilation. `[DataRecord]` generates a strongly typed projection mapper.
+
+```csharp
+var query = data.ProductEntity.Query()
+    .InnerJoin(data.CategoryEntity, (product, category) =>
+        product.CategoryId.Equal(category.Id))
+    .Where((product, category) =>
+        category.Name == categoryName
+        & product.Price >= minimumPrice)
+    .OrderByDescending((product, _) => product.Price)
+    .ThenBy((product, _) => product.Id)
+    .Select((product, category) => new ProductCategoryDtoProjection
+    {
+        ProductName = product.Name,
+        CategoryName = category.Name
+    });
+
+var rows = await query.ToListAsync(cancellationToken);
+```
+
+The generator reads entity metadata and emits table descriptors, typed columns, entity maps and DTO readers; it does not parse individual query bodies. The lambda callbacks execute when the query is composed and build a typed SQL AST; the dialect renders SQL when `ToCommand()` or an execution method is called. This avoids runtime `Expression<T>` parsing and dynamic compilation, but does **not** mean query SQL is generated at compile time. The typed API currently supports inner/left joins, predicates, ordering, grouping/having, paging, aggregates and `EXISTS`; it is a deliberate subset, not a general LINQ provider. The expression-based `Table` API remains available for supported single-table queries.
+
+`DataSession` is scoped and async-disposable. For tenant-scoped entities, configure a per-scope resolver with `options.UseTenantId(serviceProvider => ...)`; a missing tenant fails closed. Oracle commands require `options.ConfigureCommand(...)` to set the provider's `BindByName = true`, for example by configuring `OracleCommand` from `Oracle.ManagedDataAccess.Core`. These callbacks let LinKit.Data remain provider-package agnostic. Use a source-generated JSON context for `[JsonColumn]` values; the typed repository rejects a missing context instead of using reflection-based serialization.
 
 ```csharp
 namespace MyApp;

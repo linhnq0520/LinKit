@@ -44,6 +44,15 @@ public class DataGenerator : IIncrementalGenerator
         isEnabledByDefault: true,
         description: "Map the soft-delete column as an entity property or add it through a database migration.");
 
+    private static readonly DiagnosticDescriptor DataContextEntityNotFound = new(
+        id: "LNKDATA004",
+        title: "Data context entity was not found",
+        messageFormat: "Data context '{0}' references '{1}', but that type is not a mapped [Table] entity in this compilation",
+        category: "LinKit.Data",
+        defaultSeverity: DiagnosticSeverity.Error,
+        isEnabledByDefault: true,
+        description: "Declare the referenced entity with [Table] in the consuming compilation.");
+
     public void Initialize(IncrementalGeneratorInitializationContext context)
     {
         // 1. Discover [Table] classes
@@ -72,6 +81,22 @@ public class DataGenerator : IIncrementalGenerator
             )
             .Where(static m => m is not null);
 
+        // 4. Discover [DataRecord] classes
+        var recordDeclarations = context.SyntaxProvider
+            .CreateSyntaxProvider(
+                predicate: static (s, _) => s is TypeDeclarationSyntax t && t.AttributeLists.Count > 0,
+                transform: static (ctx, _) => GetDataRecordSemanticModel(ctx)
+            )
+            .Where(static m => m is not null);
+
+        // 5. Discover [DataContext] classes
+        var contextDeclarations = context.SyntaxProvider
+            .CreateSyntaxProvider(
+                predicate: static (s, _) => s is ClassDeclarationSyntax c && c.AttributeLists.Count > 0,
+                transform: static (ctx, _) => GetDataContextSemanticModel(ctx)
+            )
+            .Where(static m => m is not null);
+
         var rootNamespace = context.AnalyzerConfigOptionsProvider
             .Select(static (provider, _) =>
                 provider.GlobalOptions.TryGetValue("build_property.RootNamespace", out var value)
@@ -81,13 +106,17 @@ public class DataGenerator : IIncrementalGenerator
         var combined = entityDeclarations.Collect()
             .Combine(repoDeclarations.Collect())
             .Combine(migrationDeclarations.Collect())
+            .Combine(recordDeclarations.Collect())
+            .Combine(contextDeclarations.Collect())
             .Combine(rootNamespace);
 
         context.RegisterSourceOutput(combined, static (spc, source) =>
         {
-            var entities = source.Left.Left.Left.Where(e => e != null).Select(e => e!).ToList();
-            var repos = source.Left.Left.Right.Where(r => r != null).Select(r => r!).ToList();
-            var migrations = source.Left.Right.Where(m => m != null).Select(m => m!).ToList();
+            var entities = source.Left.Left.Left.Left.Left.Where(e => e != null).Select(e => e!).ToList();
+            var repos = source.Left.Left.Left.Left.Right.Where(r => r != null).Select(r => r!).ToList();
+            var migrations = source.Left.Left.Left.Right.Where(m => m != null).Select(m => m!).ToList();
+            var records = source.Left.Left.Right.Where(r => r != null).Select(r => r!).ToList();
+            var contexts = source.Left.Right.Where(c => c != null).Select(c => c!).ToList();
             var rootNamespaceValue = string.IsNullOrWhiteSpace(source.Right)
                 ? entities.FirstOrDefault()?.AssemblyName
                     ?? migrations.FirstOrDefault()?.AssemblyName
@@ -102,6 +131,21 @@ public class DataGenerator : IIncrementalGenerator
                 if (entity.RepositoryInterfaceName is not null &&
                     string.IsNullOrWhiteSpace(entity.RepositoryInterfaceNamespace))
                     entity.RepositoryInterfaceNamespace = rootNamespaceValue;
+            }
+
+            foreach (var dataContext in contexts)
+            {
+                foreach (var entityType in dataContext.EntityTypeNames)
+                {
+                    if (!entities.Any(entity => string.Equals(entity.FullName, entityType, StringComparison.Ordinal)))
+                    {
+                        spc.ReportDiagnostic(Diagnostic.Create(
+                            DataContextEntityNotFound,
+                            dataContext.Location,
+                            dataContext.ClassName,
+                            entityType));
+                    }
+                }
             }
 
             foreach (var entity in entities)
@@ -135,7 +179,7 @@ public class DataGenerator : IIncrementalGenerator
                 }
             }
 
-            if (entities.Count == 0 && migrations.Count == 0)
+            if (entities.Count == 0 && migrations.Count == 0 && records.Count == 0 && contexts.Count == 0)
             {
                 return;
             }
@@ -157,6 +201,22 @@ public class DataGenerator : IIncrementalGenerator
                 // Generate Repositories
                 var reposSrc = GenerateRepositories(entities, repos, rootNamespaceValue);
                 spc.AddSource("LinKit.Data.Repositories.g.cs", SourceText.From(reposSrc, Encoding.UTF8));
+
+                // Generate Typed AOT ORM (Table, Map, Patch, TypedRepository, Extensions)
+                var typedOrmSrc = GenerateTypedORM(entities, generatedNamespace);
+                spc.AddSource("LinKit.Data.TypedORM.g.cs", SourceText.From(typedOrmSrc, Encoding.UTF8));
+            }
+
+            if (records.Count > 0)
+            {
+                var projectionsSrc = GenerateProjections(records, entities);
+                spc.AddSource("LinKit.Data.Projections.g.cs", SourceText.From(projectionsSrc, Encoding.UTF8));
+            }
+
+            if (contexts.Count > 0)
+            {
+                var contextsSrc = GenerateContexts(contexts, entities);
+                spc.AddSource("LinKit.Data.Contexts.g.cs", SourceText.From(contextsSrc, Encoding.UTF8));
             }
 
             if (migrations.Count > 0)
@@ -167,7 +227,7 @@ public class DataGenerator : IIncrementalGenerator
             }
 
             // Generate Dependency Injection
-            var diSrc = GenerateDependencyInjection(entities, repos, migrations, rootNamespaceValue, generatedNamespace);
+            var diSrc = GenerateDependencyInjection(entities, repos, migrations, contexts, rootNamespaceValue, generatedNamespace);
             spc.AddSource("LinKit.Data.DependencyInjection.g.cs", SourceText.From(diSrc, Encoding.UTF8));
         });
     }
@@ -347,6 +407,7 @@ public class DataGenerator : IIncrementalGenerator
             bool isFixedLength = false;
             int? precision = null;
             int? scale = null;
+            bool? nullableOverride = null;
             string? defaultValueSql = null;
             bool isUnicode = true;
             bool isJson = false;
@@ -377,6 +438,9 @@ public class DataGenerator : IIncrementalGenerator
 
                 var scaleNamed = colAttr.NamedArguments.FirstOrDefault(kv => kv.Key == "Scale");
                 if (scaleNamed.Value.Value is int sScaleVal && sScaleVal > 0) scale = sScaleVal;
+
+                var nullableNamed = colAttr.NamedArguments.FirstOrDefault(kv => kv.Key == "IsNullable");
+                if (nullableNamed.Value.Value is bool nullableValue) nullableOverride = nullableValue;
 
                 var commNamed = colAttr.NamedArguments.FirstOrDefault(kv => kv.Key == "Comment");
                 if (commNamed.Value.Value is string cmVal) colComment = cmVal;
@@ -523,9 +587,11 @@ public class DataGenerator : IIncrementalGenerator
                 if (inNamed.Value.Value is string inVal) idxName = inVal;
             }
 
-            bool isNullable = member.NullableAnnotation == NullableAnnotation.Annotated ||
-                             member.Type.IsReferenceType ||
-                             (member.Type is INamedTypeSymbol nts && nts.OriginalDefinition.SpecialType == SpecialType.System_Nullable_T);
+            bool isNullable = nullableOverride ??
+                              (member.NullableAnnotation == NullableAnnotation.Annotated ||
+                               (member.Type.IsReferenceType && member.NullableAnnotation == NullableAnnotation.None) ||
+                               (member.Type is INamedTypeSymbol nts && nts.OriginalDefinition.SpecialType == SpecialType.System_Nullable_T));
+            if (isPk) isNullable = false;
 
             var underlyingType = (member.Type is INamedTypeSymbol ntsNullable && ntsNullable.OriginalDefinition.SpecialType == SpecialType.System_Nullable_T)
                 ? ntsNullable.TypeArguments[0]
@@ -1252,7 +1318,7 @@ public class DataGenerator : IIncrementalGenerator
             sb.AppendLine("    {");
             sb.AppendLine("        if (pageNumber < 1) pageNumber = 1;");
             sb.AppendLine("        if (pageSize < 1) pageSize = 10;");
-            sb.AppendLine("        int skip = (pageNumber - 1) * pageSize;");
+            sb.AppendLine("        int skip = checked((pageNumber - 1) * pageSize);");
             sb.AppendLine("        var (conn, tx, shouldDispose) = await GetConnectionAsync(ct);");
             sb.AppendLine("        try");
             sb.AppendLine("        {");
@@ -1853,6 +1919,7 @@ public class DataGenerator : IIncrementalGenerator
             sb.AppendLine("        private string? _orderBy;");
             sb.AppendLine("        private int _skip = 0;");
             sb.AppendLine("        private int _take = 100;");
+            sb.AppendLine("        private bool _takeSet;");
             sb.AppendLine();
             sb.AppendLine($"        public {entity.Name}FluentQuery({entity.Name}Repository repo)");
             sb.AppendLine("        {");
@@ -1955,7 +2022,9 @@ public class DataGenerator : IIncrementalGenerator
             sb.AppendLine();
             sb.AppendLine($"        public IFluentQuery<{entity.FullName}> Take(int count)");
             sb.AppendLine("        {");
-            sb.AppendLine("            _take = Math.Max(1, count);");
+            sb.AppendLine("            count = Math.Max(0, count);");
+            sb.AppendLine("            _take = _takeSet ? Math.Min(_take, count) : count;");
+            sb.AppendLine("            _takeSet = true;");
             sb.AppendLine("            return this;");
             sb.AppendLine("        }");
             sb.AppendLine();
@@ -1978,6 +2047,8 @@ public class DataGenerator : IIncrementalGenerator
             sb.AppendLine();
             sb.AppendLine($"        public async Task<List<{entity.FullName}>> ToListAsync(CancellationToken ct = default)");
             sb.AppendLine("        {");
+            sb.AppendLine("            ct.ThrowIfCancellationRequested();");
+            sb.AppendLine($"            if (_take == 0) return new List<{entity.FullName}>();");
             sb.AppendLine($"            var order = _orderBy ?? $\"{{QuoteCol(\"{pkColName}\")}} ASC\";");
             sb.AppendLine("            string sql = _repo._dialect switch");
             sb.AppendLine("            {");
@@ -2084,8 +2155,9 @@ public class DataGenerator : IIncrementalGenerator
             sb.AppendLine("        {");
             sb.AppendLine("            if (pageNumber < 1) pageNumber = 1;");
             sb.AppendLine("            if (pageSize < 1) pageSize = 10;");
-            sb.AppendLine("            _skip = (pageNumber - 1) * pageSize;");
+            sb.AppendLine("            _skip = checked((pageNumber - 1) * pageSize);");
             sb.AppendLine("            _take = pageSize;");
+            sb.AppendLine("            _takeSet = true;");
             sb.AppendLine("            long total = await CountAsync(ct);");
             sb.AppendLine("            var items = await ToListAsync(ct);");
             sb.AppendLine($"            return new PagedResult<{entity.FullName}>");
@@ -2138,6 +2210,7 @@ public class DataGenerator : IIncrementalGenerator
         List<EntityModel> entities,
         List<RepositoryInterfaceModel> repos,
         List<MigrationModel> migrations,
+        List<DataContextModel> contexts,
         string rootNamespace,
         string generatedNamespace)
     {
@@ -2175,6 +2248,12 @@ public class DataGenerator : IIncrementalGenerator
                 // Default IRepository<Entity, TId>
                 sb.AppendLine($"        services.AddScoped<IRepository<{entity.FullName}, {pkType}>, {repositoryType}>();");
 
+                // Typed AOT Repository
+                var typedRepoType = string.IsNullOrWhiteSpace(entity.Namespace)
+                    ? $"{entity.Name}TypedRepository"
+                    : $"{entity.Namespace}.{entity.Name}TypedRepository";
+                sb.AppendLine($"        services.AddScoped<{typedRepoType}>();");
+
                 if (entity.RepositoryInterfaceFullName is not null)
                 {
                     sb.AppendLine($"        services.AddScoped<{entity.RepositoryInterfaceFullName}, {repositoryType}>();");
@@ -2185,6 +2264,15 @@ public class DataGenerator : IIncrementalGenerator
                 {
                     sb.AppendLine($"        services.AddScoped<{customInterface.InterfaceFullName}, {repositoryType}>();");
                 }
+            }
+            sb.AppendLine();
+        }
+
+        if (contexts.Count > 0)
+        {
+            foreach (var ctx in contexts)
+            {
+                sb.AppendLine($"        services.AddScoped<{ctx.FullName}>();");
             }
             sb.AppendLine();
         }
@@ -2206,6 +2294,407 @@ public class DataGenerator : IIncrementalGenerator
         sb.AppendLine("    }");
         sb.AppendLine("}");
         return sb.ToString();
+    }
+
+    private static string GetDbTypeString(PropertyModel p)
+    {
+        var clean = p.CleanTypeName.TrimEnd('?').Trim();
+        if (clean.StartsWith("System.Nullable<", StringComparison.Ordinal) && clean.EndsWith(">", StringComparison.Ordinal))
+            clean = clean.Substring(16, clean.Length - 17).Trim();
+        else if (clean.StartsWith("Nullable<", StringComparison.Ordinal) && clean.EndsWith(">", StringComparison.Ordinal))
+            clean = clean.Substring(9, clean.Length - 10).Trim();
+        if (clean.StartsWith("System.", StringComparison.Ordinal))
+            clean = clean.Substring(7);
+        if (p.IsEnum) return "Int32";
+        return clean switch
+        {
+            "short" or "Int16" => "Int16",
+            "int" or "Int32" => "Int32",
+            "long" or "Int64" => "Int64",
+            "byte" or "Byte" => "Byte",
+            "bool" or "Boolean" => "Boolean",
+            "decimal" or "Decimal" => "Decimal",
+            "float" or "Single" => "Single",
+            "double" or "Double" => "Double",
+            "Guid" => "Guid",
+            "DateTime" => "DateTime2",
+            "DateOnly" => "Date",
+            "TimeOnly" => "Time",
+            "DateTimeOffset" => "DateTimeOffset",
+            "byte[]" => "Binary",
+            _ => "String"
+        };
+    }
+
+    private static string GenerateTypedORM(List<EntityModel> entities, string generatedNamespace)
+    {
+        var sb = new StringBuilder();
+        sb.AppendLine("// <auto-generated/>");
+        sb.AppendLine("#nullable enable");
+        sb.AppendLine("using System;");
+        sb.AppendLine("using System.Collections.Generic;");
+        sb.AppendLine("using System.Data;");
+        sb.AppendLine("using System.Data.Common;");
+        sb.AppendLine("using System.Linq;");
+        sb.AppendLine("using System.Threading;");
+        sb.AppendLine("using System.Threading.Tasks;");
+        sb.AppendLine("using LinKit.Data;");
+        sb.AppendLine();
+
+        var grouped = entities.GroupBy(e => e.Namespace, StringComparer.Ordinal);
+        foreach (var group in grouped)
+        {
+            if (!string.IsNullOrWhiteSpace(group.Key))
+            {
+                sb.AppendLine($"namespace {group.Key};");
+                sb.AppendLine();
+            }
+
+            foreach (var entity in group)
+            {
+                var pk = entity.PrimaryKey;
+                var pkType = pk?.TypeFullName ?? "global::System.Guid";
+                var pkProp = pk?.PropertyName ?? "Id";
+
+                // 1. EntityMap
+                sb.AppendLine($"public sealed class {entity.Name}Map : global::LinKit.Data.EntityMap<{entity.FullName}, {pkType}>");
+                sb.AppendLine("{");
+                sb.AppendLine($"    public static {entity.Name}Map Instance {{ get; }} = new();");
+                sb.AppendLine($"    public static readonly global::LinKit.Data.TableModel TableModel = new(");
+                sb.AppendLine($"        \"{entity.TableName}\",");
+                sb.AppendLine($"        {(entity.Schema != null ? $"\"{entity.Schema}\"" : "null")},");
+                sb.AppendLine("        global::System.Array.AsReadOnly(new global::LinKit.Data.ColumnModel[]");
+                sb.AppendLine("        {");
+                for (int i = 0; i < entity.Properties.Count; i++)
+                {
+                    var p = entity.Properties[i];
+                    var dbType = GetDbTypeString(p);
+                    bool isPk = p.IsPrimaryKey || (entity.HasFallbackPrimaryKey && ReferenceEquals(entity.PrimaryKey, p));
+                    bool isGen = p.IsAutoIncrement;
+                    bool isCon = p.IsConcurrencyCheck;
+                    bool isTenant = !string.IsNullOrEmpty(entity.TenantColumn) && (p.PropertyName == entity.TenantColumn || p.ColumnName == entity.TenantColumn);
+                    bool isSoft = !string.IsNullOrEmpty(entity.SoftDeleteColumn) && (p.PropertyName == entity.SoftDeleteColumn || p.ColumnName == entity.SoftDeleteColumn);
+                    sb.AppendLine($"            new(\"{p.ColumnName}\", global::System.Data.DbType.{dbType}, {(p.IsNullable ? "true" : "false")}, {(isPk ? "true" : "false")}, {(isGen ? "true" : "false")}, {(isCon ? "true" : "false")}, {(isTenant ? "true" : "false")}, {(isSoft ? "true" : "false")}, {p.MaxLength ?? 0}, {(p.Precision ?? 0)}, {(p.Scale ?? 0)}),");
+                }
+                sb.AppendLine("        }));");
+                sb.AppendLine();
+                sb.AppendLine("    public override global::LinKit.Data.TableModel Model => TableModel;");
+                sb.AppendLine($"    public override {entity.FullName} Read(global::System.Data.Common.DbDataReader reader) => global::{generatedNamespace}.DataReaderGeneratedExtensions.Read{entity.Name}(reader);");
+                sb.AppendLine($"    public override object?[] Values({entity.FullName} entity) => new object?[]");
+                sb.AppendLine("    {");
+                foreach (var p in entity.Properties)
+                {
+                    if (p.IsJson)
+                    {
+                        var context = string.IsNullOrWhiteSpace(p.JsonContextTypeFullName)
+                            ? "global::LinKit.Data.LinKitDataJsonSerializerAccessor.Context"
+                            : $"{p.JsonContextTypeFullName}.Default";
+                        sb.AppendLine($"        global::LinKit.Data.DbValues.SerializeJson(entity.{p.PropertyName}, {context}),");
+                    }
+                    else
+                    {
+                        sb.AppendLine($"        entity.{p.PropertyName},");
+                    }
+                }
+                sb.AppendLine("    };");
+                sb.AppendLine($"    public override {pkType} Key({entity.FullName} entity) => entity.{pkProp};");
+                sb.AppendLine($"    public override void SetKey({entity.FullName} entity, object value) => entity.{pkProp} = global::LinKit.Data.DbValues.ConvertTo<{pkType}>(value);");
+                if (!string.IsNullOrEmpty(entity.TenantColumn))
+                {
+                    sb.AppendLine($"    public override void SetTenant({entity.FullName} entity, string value) => entity.{entity.TenantColumn} = value;");
+                }
+                var versionProp = entity.Properties.FirstOrDefault(p => p.IsConcurrencyCheck);
+                if (versionProp != null)
+                {
+                    sb.AppendLine($"    public override void SetVersion({entity.FullName} entity, long value) => entity.{versionProp.PropertyName} = value;");
+                }
+                sb.AppendLine($"    public override global::LinKit.Data.Table<{entity.FullName}> Table(string alias) => new {entity.Name}Table(alias);");
+                sb.AppendLine("}");
+                sb.AppendLine();
+
+                // 2. EntityTable
+                sb.AppendLine($"public sealed class {entity.Name}Table : global::LinKit.Data.Table<{entity.FullName}>");
+                sb.AppendLine("{");
+                foreach (var p in entity.Properties)
+                {
+                    sb.AppendLine($"    public global::LinKit.Data.Column<{p.TypeFullName}> {p.PropertyName} {{ get; }}");
+                }
+                sb.AppendLine($"    public override global::LinKit.Data.Projection<{entity.FullName}> Projection {{ get; }}");
+                sb.AppendLine();
+                sb.AppendLine($"    public {entity.Name}Table(string alias = \"entity\") : base({entity.Name}Map.Instance.Model, alias)");
+                sb.AppendLine("    {");
+                for (int i = 0; i < entity.Properties.Count; i++)
+                {
+                    var p = entity.Properties[i];
+                    sb.AppendLine($"        {p.PropertyName} = new(alias, Model.Columns[{i}], static (reader, ordinal) => global::LinKit.Data.DbValues.Read<{p.TypeFullName}>(reader, ordinal));");
+                }
+                var colsList = string.Join(", ", entity.Properties.Select(p => p.PropertyName));
+                sb.AppendLine($"        Projection = new(new global::LinKit.Data.SqlExpression[] {{ {colsList} }}, static reader => global::{generatedNamespace}.DataReaderGeneratedExtensions.Read{entity.Name}(reader));");
+                sb.AppendLine("    }");
+                sb.AppendLine("}");
+                sb.AppendLine();
+
+                // 3. EntityOptionalTable
+                sb.AppendLine($"public sealed class {entity.Name}OptionalTable");
+                sb.AppendLine("{");
+                foreach (var p in entity.Properties)
+                {
+                    var optType = p.TypeFullName.EndsWith("?", StringComparison.Ordinal) ? p.TypeFullName : p.TypeFullName + "?";
+                    sb.AppendLine($"    public global::LinKit.Data.SqlExpression<{optType}> {p.PropertyName} {{ get; }}");
+                }
+                sb.AppendLine();
+                sb.AppendLine($"    public {entity.Name}OptionalTable(string alias)");
+                sb.AppendLine("    {");
+                for (int i = 0; i < entity.Properties.Count; i++)
+                {
+                    var p = entity.Properties[i];
+                    var optType = p.TypeFullName.EndsWith("?", StringComparison.Ordinal) ? p.TypeFullName : p.TypeFullName + "?";
+                    sb.AppendLine($"        {p.PropertyName} = new global::LinKit.Data.Column<{optType}>(alias, {entity.Name}Map.Instance.Model.Columns[{i}] with {{ Nullable = true }}, static (reader, ordinal) => reader.IsDBNull(ordinal) ? default : global::LinKit.Data.DbValues.Read<{optType}>(reader, ordinal));");
+                }
+                sb.AppendLine("    }");
+                sb.AppendLine("}");
+                sb.AppendLine();
+
+                // 4. EntityPatch
+                var writable = entity.Properties.Where(p => !p.IsPrimaryKey && !p.IsAutoIncrement && !p.IsConcurrencyCheck &&
+                    (string.IsNullOrEmpty(entity.TenantColumn) || (p.PropertyName != entity.TenantColumn && p.ColumnName != entity.TenantColumn)) &&
+                    (string.IsNullOrEmpty(entity.SoftDeleteColumn) || (p.PropertyName != entity.SoftDeleteColumn && p.ColumnName != entity.SoftDeleteColumn))).ToList();
+
+                sb.AppendLine($"public sealed class {entity.Name}Patch : global::LinKit.Data.IUpdate<{entity.Name}Table>");
+                sb.AppendLine("{");
+                foreach (var p in writable)
+                {
+                    sb.AppendLine($"    public global::LinKit.Data.PatchValue<{p.TypeFullName}> {p.PropertyName} {{ get; init; }}");
+                }
+                sb.AppendLine();
+                sb.AppendLine($"    public global::LinKit.Data.Assignment[] Build({entity.Name}Table columns)");
+                sb.AppendLine("    {");
+                sb.AppendLine("        var assignments = new global::System.Collections.Generic.List<global::LinKit.Data.Assignment>();");
+                foreach (var p in writable)
+                {
+                    sb.AppendLine($"        if ({p.PropertyName}.IsSet) assignments.Add(columns.{p.PropertyName}.Set({p.PropertyName}.Value));");
+                }
+                sb.AppendLine("        return assignments.ToArray();");
+                sb.AppendLine("    }");
+                sb.AppendLine("}");
+                sb.AppendLine();
+
+                // 5. EntityTypedRepository
+                sb.AppendLine($"public sealed class {entity.Name}TypedRepository : global::LinKit.Data.Repository<{entity.FullName}, {pkType}>, global::LinKit.Data.IQuerySource<{entity.FullName}, {entity.Name}Table, {entity.Name}OptionalTable>");
+                sb.AppendLine("{");
+                sb.AppendLine($"    public {entity.Name}TypedRepository(global::LinKit.Data.DataSession session) : base(session, {entity.Name}Map.Instance) {{ }}");
+                sb.AppendLine($"    public new global::LinKit.Data.FluentQuery<{entity.FullName}, {entity.Name}Table> Query() => new(base.Query(), new {entity.Name}Table(\"entity\"));");
+                sb.AppendLine($"    public {entity.Name}Table CreateTable(string alias) => new(alias);");
+                sb.AppendLine($"    public {entity.Name}OptionalTable CreateOptionalTable(string alias) => new(alias);");
+                sb.AppendLine($"    public global::System.Threading.Tasks.Task<int> DeleteWhereAsync(global::System.Func<{entity.Name}Table, global::LinKit.Data.Predicate> predicate, global::System.Threading.CancellationToken ct = default)");
+                sb.AppendLine($"        => Query().Where(predicate).ExecuteDeleteAsync(ct: ct);");
+                sb.AppendLine("}");
+                sb.AppendLine();
+
+                // 6. DataExtensions
+                sb.AppendLine($"public static class {entity.Name}DataExtensions");
+                sb.AppendLine("{");
+                sb.AppendLine($"    public static global::LinKit.Data.FluentQuery<{entity.FullName}, {entity.Name}Table> Query(this {entity.Name}Table table, global::LinKit.Data.DataSession session)");
+                sb.AppendLine($"        => new {entity.Name}TypedRepository(session).Query();");
+                sb.AppendLine($"    public static global::LinKit.Data.FluentQuery<{entity.FullName}, {entity.Name}Table> Query{entity.Name}(this global::LinKit.Data.DataSession session)");
+                sb.AppendLine($"        => new {entity.Name}TypedRepository(session).Query();");
+                sb.AppendLine($"    public static global::LinKit.Data.FluentQuery<{entity.FullName}, {entity.Name}Table> From(this global::LinKit.Data.DataSession session, {entity.Name}Table table)");
+                sb.AppendLine($"        => new(session.From(table), table);");
+                sb.AppendLine("}");
+                sb.AppendLine();
+            }
+        }
+
+        return sb.ToString();
+    }
+
+    private static string GenerateContexts(List<DataContextModel> contexts, List<EntityModel> entities)
+    {
+        var sb = new StringBuilder();
+        sb.AppendLine("// <auto-generated/>");
+        sb.AppendLine("#nullable enable");
+        sb.AppendLine("using System;");
+        sb.AppendLine("using LinKit.Data;");
+        sb.AppendLine();
+
+        foreach (var ctx in contexts)
+        {
+            var contextEntities = ctx.EntityTypeNames.Count == 0
+                ? entities
+                : entities.Where(entity => ctx.EntityTypeNames.Contains(entity.FullName, StringComparer.Ordinal)).ToList();
+
+            if (!string.IsNullOrWhiteSpace(ctx.Namespace))
+            {
+                sb.AppendLine($"namespace {ctx.Namespace};");
+                sb.AppendLine();
+            }
+
+            sb.AppendLine($"public partial class {ctx.ClassName}");
+            sb.AppendLine("{");
+            sb.AppendLine("    public global::LinKit.Data.DataSession Session { get; }");
+            foreach (var entity in contextEntities)
+            {
+                var repoType = string.IsNullOrWhiteSpace(entity.Namespace) ? $"{entity.Name}TypedRepository" : $"{entity.Namespace}.{entity.Name}TypedRepository";
+                sb.AppendLine($"    public {repoType} {entity.Name} {{ get; }}");
+            }
+            sb.AppendLine();
+            sb.AppendLine("    public static global::LinKit.Data.SchemaSnapshot Schema { get; } = new(global::System.Array.AsReadOnly(new global::LinKit.Data.TableModel[]");
+            sb.AppendLine("    {");
+            foreach (var entity in contextEntities)
+            {
+                var mapType = string.IsNullOrWhiteSpace(entity.Namespace) ? $"{entity.Name}Map" : $"{entity.Namespace}.{entity.Name}Map";
+                sb.AppendLine($"        {mapType}.Instance.Model,");
+            }
+            sb.AppendLine("    }));");
+            sb.AppendLine();
+            sb.AppendLine($"    public {ctx.ClassName}(global::LinKit.Data.DataSession session)");
+            sb.AppendLine("    {");
+            sb.AppendLine("        global::System.ArgumentNullException.ThrowIfNull(session);");
+            sb.AppendLine("        Session = session;");
+            foreach (var entity in contextEntities)
+            {
+                var repoType = string.IsNullOrWhiteSpace(entity.Namespace) ? $"{entity.Name}TypedRepository" : $"{entity.Namespace}.{entity.Name}TypedRepository";
+                sb.AppendLine($"        {entity.Name} = new {repoType}(session);");
+            }
+            sb.AppendLine("    }");
+            sb.AppendLine("}");
+            sb.AppendLine();
+        }
+
+        return sb.ToString();
+    }
+
+    private static string GenerateProjections(List<DataRecordModel> records, List<EntityModel> entities)
+    {
+        var sb = new StringBuilder();
+        sb.AppendLine("// <auto-generated/>");
+        sb.AppendLine("#nullable enable");
+        sb.AppendLine("using System;");
+        sb.AppendLine("using LinKit.Data;");
+        sb.AppendLine();
+
+        foreach (var record in records)
+        {
+            if (!string.IsNullOrWhiteSpace(record.Namespace))
+            {
+                sb.AppendLine($"namespace {record.Namespace};");
+                sb.AppendLine();
+            }
+
+            sb.AppendLine($"public sealed class {record.ClassName}Projection : global::LinKit.Data.IProjection<{record.FullName}>");
+            sb.AppendLine("{");
+            foreach (var p in record.Properties)
+            {
+                sb.AppendLine($"    public required global::LinKit.Data.SqlExpression<{p.TypeFullName}> {p.PropertyName} {{ get; init; }}");
+            }
+            var fields = string.Join(", ", record.Properties.Select(p => p.PropertyName));
+            sb.AppendLine($"    public global::LinKit.Data.Projection<{record.FullName}> Build() => Create({fields});");
+            sb.AppendLine();
+            var fieldParams = string.Join(", ", record.Properties.Select((p, i) => $"global::LinKit.Data.SqlExpression<{p.TypeFullName}> field{i}"));
+            var fieldArgs = string.Join(", ", record.Properties.Select((_, i) => $"field{i}"));
+            sb.AppendLine($"    public static global::LinKit.Data.Projection<{record.FullName}> Create({fieldParams}) =>");
+            sb.AppendLine($"        new(new global::LinKit.Data.SqlExpression[] {{ {fieldArgs} }}, static reader => new {record.FullName}");
+            sb.AppendLine("        {");
+            for (int i = 0; i < record.Properties.Count; i++)
+            {
+                var p = record.Properties[i];
+                sb.AppendLine($"            {p.PropertyName} = global::LinKit.Data.DbValues.Read<{p.TypeFullName}>(reader, {i}),");
+            }
+            sb.AppendLine("        });");
+
+            foreach (var entity in entities)
+            {
+                var matches = new List<string>();
+                bool matchAll = true;
+                foreach (var rp in record.Properties)
+                {
+                    var ep = entity.Properties.FirstOrDefault(p => string.Equals(p.PropertyName, rp.PropertyName, StringComparison.OrdinalIgnoreCase));
+                    if (ep != null)
+                    {
+                        matches.Add($"columns.{ep.PropertyName}");
+                    }
+                    else
+                    {
+                        matchAll = false;
+                        break;
+                    }
+                }
+                if (matchAll && matches.Count == record.Properties.Count)
+                {
+                    var tblType = string.IsNullOrWhiteSpace(entity.Namespace) ? $"{entity.Name}Table" : $"{entity.Namespace}.{entity.Name}Table";
+                    sb.AppendLine($"    public static global::LinKit.Data.Projection<{record.FullName}> From({tblType} columns) => Create({string.Join(", ", matches)});");
+                }
+            }
+
+            sb.AppendLine("}");
+            sb.AppendLine();
+        }
+
+        return sb.ToString();
+    }
+
+    private static DataRecordModel? GetDataRecordSemanticModel(GeneratorSyntaxContext ctx)
+    {
+        if (ctx.Node is not TypeDeclarationSyntax typeDecl) return null;
+        var symbol = ctx.SemanticModel.GetDeclaredSymbol(typeDecl);
+        if (symbol is not INamedTypeSymbol classSymbol) return null;
+
+        var attr = classSymbol.GetAttributes().FirstOrDefault(a =>
+            a.AttributeClass?.Name is "DataRecordAttribute" or "DataRecord" ||
+            a.AttributeClass?.ToDisplayString() is "LinKit.Data.DataRecordAttribute" or "LinKit.Data.DataRecord");
+        if (attr == null) return null;
+
+        var properties = new List<PropertyModel>();
+        foreach (var member in classSymbol.GetMembers().OfType<IPropertySymbol>())
+        {
+            if (member.IsStatic || member.DeclaredAccessibility != Accessibility.Public) continue;
+            if (member.GetMethod == null) continue;
+            properties.Add(new PropertyModel
+            {
+                PropertyName = member.Name,
+                ColumnName = member.Name,
+                TypeFullName = member.Type.ToDisplayString(FullyQualifiedNullableFormat),
+                CleanTypeName = member.Type.ToDisplayString()
+            });
+        }
+
+        return new DataRecordModel
+        {
+            ClassName = classSymbol.Name,
+            FullName = classSymbol.ToDisplayString(),
+            Namespace = classSymbol.ContainingNamespace.IsGlobalNamespace ? "" : classSymbol.ContainingNamespace.ToDisplayString(),
+            Properties = properties
+        };
+    }
+
+    private static DataContextModel? GetDataContextSemanticModel(GeneratorSyntaxContext ctx)
+    {
+        if (ctx.Node is not ClassDeclarationSyntax classDecl) return null;
+        var symbol = ctx.SemanticModel.GetDeclaredSymbol(classDecl);
+        if (symbol is not INamedTypeSymbol classSymbol) return null;
+
+        var attr = classSymbol.GetAttributes().FirstOrDefault(a =>
+            a.AttributeClass?.Name is "DataContextAttribute" or "DataContext" ||
+            a.AttributeClass?.ToDisplayString() is "LinKit.Data.DataContextAttribute" or "LinKit.Data.DataContext");
+        if (attr == null) return null;
+
+        var entityTypeNames = attr.ConstructorArguments
+            .Where(argument => argument.Kind == TypedConstantKind.Array)
+            .SelectMany(argument => argument.Values)
+            .Select(argument => argument.Value as ITypeSymbol)
+            .Where(type => type is not null)
+            .Select(type => type!.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat))
+            .Distinct(StringComparer.Ordinal)
+            .ToList();
+
+        return new DataContextModel
+        {
+            ClassName = classSymbol.Name,
+            FullName = classSymbol.ToDisplayString(),
+            Namespace = classSymbol.ContainingNamespace.IsGlobalNamespace ? "" : classSymbol.ContainingNamespace.ToDisplayString(),
+            EntityTypeNames = entityTypeNames,
+            Location = classSymbol.Locations.FirstOrDefault()
+        };
     }
 
     private static string GenerateRepositoryInterfaces(List<EntityModel> entities)
@@ -2342,5 +2831,22 @@ public class DataGenerator : IIncrementalGenerator
         public string AssemblyName { get; set; } = string.Empty;
         public string Version { get; set; } = string.Empty;
         public string Description { get; set; } = string.Empty;
+    }
+
+    private class DataRecordModel
+    {
+        public string ClassName { get; set; } = string.Empty;
+        public string FullName { get; set; } = string.Empty;
+        public string Namespace { get; set; } = string.Empty;
+        public List<PropertyModel> Properties { get; set; } = new List<PropertyModel>();
+    }
+
+    private class DataContextModel
+    {
+        public string ClassName { get; set; } = string.Empty;
+        public string FullName { get; set; } = string.Empty;
+        public string Namespace { get; set; } = string.Empty;
+        public List<string> EntityTypeNames { get; set; } = new();
+        public Location? Location { get; set; }
     }
 }

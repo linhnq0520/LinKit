@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using LinKit.Core.Cqrs;
@@ -17,19 +18,19 @@ public record GetCatalogProductsPagedQuery(
 ) : IQuery<PagedResult<ProductEntity>>;
 
 [CqrsHandler]
-public class GetCatalogProductsPagedHandler(IRepository<ProductEntity, Guid> repository)
+public class GetCatalogProductsPagedHandler(IRepository<ProductEntity, int> repository)
     : IQueryHandler<GetCatalogProductsPagedQuery, PagedResult<ProductEntity>>
 {
     public async Task<PagedResult<ProductEntity>> HandleAsync(GetCatalogProductsPagedQuery query, CancellationToken cancellationToken)
     {
-        var fluentQuery = repository.Table;
+        IQueryable<ProductEntity> fluentQuery = repository.Table;
 
         if (query.MinPrice.HasValue)
         {
-            fluentQuery.Where(product => product.Price >= query.MinPrice.Value);
+            fluentQuery = fluentQuery.Where(product => product.Price >= query.MinPrice.Value);
         }
 
-        fluentQuery.OrderBy(product => product.Price);
+        fluentQuery = fluentQuery.OrderBy(product => product.Price);
 
         return await fluentQuery.ToPagedListAsync(query.Page, query.PageSize, cancellationToken);
     }
@@ -39,14 +40,14 @@ public class GetCatalogProductsPagedHandler(IRepository<ProductEntity, Guid> rep
 public record QueryCatalogProductsRawSqlQuery([FromQuery] decimal MinPrice = 0) : IQuery<List<ProductEntity>>;
 
 [CqrsHandler]
-public class QueryCatalogProductsRawSqlHandler(IRepository<ProductEntity, Guid> repository)
+public class QueryCatalogProductsRawSqlHandler(IRepository<ProductEntity, int> repository)
     : IQueryHandler<QueryCatalogProductsRawSqlQuery, List<ProductEntity>>
 {
     public async Task<List<ProductEntity>> HandleAsync(QueryCatalogProductsRawSqlQuery query, CancellationToken cancellationToken)
     {
         return await repository.QuerySqlAsync(
             "SELECT * FROM \"catalog_products\" WHERE \"Price\" >= @minPrice ORDER BY \"Price\" ASC",
-            new { minPrice = query.MinPrice },
+            new Dictionary<string, object?> { ["minPrice"] = query.MinPrice },
             cancellationToken
         );
     }
@@ -58,7 +59,7 @@ public record QueryCatalogProductsLinqQuery(
 ) : IQuery<List<ProductEntity>>;
 
 [CqrsHandler]
-public class QueryCatalogProductsLinqHandler(IRepository<ProductEntity, Guid> repository)
+public class QueryCatalogProductsLinqHandler(IRepository<ProductEntity, int> repository)
     : IQueryHandler<QueryCatalogProductsLinqQuery, List<ProductEntity>>
 {
     public async Task<List<ProductEntity>> HandleAsync(QueryCatalogProductsLinqQuery query, CancellationToken cancellationToken)
@@ -71,5 +72,28 @@ public class QueryCatalogProductsLinqHandler(IRepository<ProductEntity, Guid> re
                         select p;
 
         return await linqQuery.ToListAsync(cancellationToken);
+    }
+}
+
+[HttpGet("api/catalog/db-products/typed-dto", Summary = "Query product summaries via Compile-time Typed Projection (AOT Mini-ORM)")]
+public record QueryCatalogProductSummariesTypedQuery(
+    [FromQuery] decimal MinPrice = 0
+) : IQuery<List<MonolithSample.Modules.Catalog.Models.ProductSummaryDto>>;
+
+[CqrsHandler]
+public class QueryCatalogProductSummariesTypedHandler(ProductEntityTypedRepository repository)
+    : IQueryHandler<QueryCatalogProductSummariesTypedQuery, List<MonolithSample.Modules.Catalog.Models.ProductSummaryDto>>
+{
+    public async Task<List<MonolithSample.Modules.Catalog.Models.ProductSummaryDto>> HandleAsync(
+        QueryCatalogProductSummariesTypedQuery query,
+        CancellationToken cancellationToken)
+    {
+        var min = query.MinPrice;
+
+        return await repository.Query()
+            .Where(p => p.Price >= min)
+            .OrderByDescending(p => p.Price)
+            .Select(MonolithSample.Modules.Catalog.Models.ProductSummaryDtoProjection.From)
+            .ToListAsync(cancellationToken);
     }
 }

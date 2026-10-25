@@ -71,7 +71,7 @@ Packages follow independent semantic versions. Current project versions are:
 
 | Package | Version | Package | Version |
 |---|---:|---|---:|
-| `LinKit.Core` | 3.0.0 | `LinKit.Data` | 2.0.0 |
+| `LinKit.Core` | 3.0.0 | `LinKit.Data` | 2.1.0 |
 | `LinKit.Grpc` | 2.0.0 | `LinKit.Messaging.Kafka` | 1.2.0 |
 | `LinKit.Messaging.RabbitMQ` | 1.2.0 | `LinKit.Outbox` | 1.1.0 |
 | `LinKit.Outbox.Data` | 1.1.0 | `LinKit.Caching` | 1.1.0 |

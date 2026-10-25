@@ -26,7 +26,8 @@ internal static class MessagingGeneratorPart
     private const string MessageAttributeName = "LinKit.Core.Messaging.MessageAttribute";
 
     public static IncrementalValueProvider<IReadOnlyList<MessagingServiceInfo>> GetServices(
-        IncrementalGeneratorInitializationContext context
+        IncrementalGeneratorInitializationContext context,
+        IncrementalValueProvider<string> generatedNamespace
     )
     {
         IncrementalValueProvider<ImmutableArray<MessageInfo?>> collectedMessages = context
@@ -38,9 +39,11 @@ internal static class MessagingGeneratorPart
             .Where(info => info is not null)!
             .Collect();
 
-        return collectedMessages.Select(
-            (messages, _) =>
+        return collectedMessages.Combine(generatedNamespace).Select(
+            (data, _) =>
             {
+                var messages = data.Left;
+                var namespaceName = data.Right;
                 var services = new List<MessagingServiceInfo>();
                 if (!messages.Any())
                 {
@@ -49,7 +52,7 @@ internal static class MessagingGeneratorPart
 
                 services.Add(
                     new MessagingServiceInfo(
-                        "services.AddSingleton<LinKit.Core.Messaging.IMessagePublisher, LinKit.Generated.Messaging.GeneratedMessagePublisher>();"
+                        $"services.AddSingleton<LinKit.Core.Messaging.IMessagePublisher, global::{namespaceName}.GeneratedMessagePublisher>();"
                     )
                 );
 
@@ -61,7 +64,7 @@ internal static class MessagingGeneratorPart
                 {
                     var queueName = queueGroup.Key!;
                     var className =
-                        $"LinKit.Generated.Messaging.{new string(queueName.Select(c => char.IsLetterOrDigit(c) ? c : '_').ToArray())}ConsumerService";
+                        $"global::{namespaceName}.{new string(queueName.Select(c => char.IsLetterOrDigit(c) ? c : '_').ToArray())}ConsumerService";
 
                     services.Add(
                         new MessagingServiceInfo(
@@ -75,7 +78,9 @@ internal static class MessagingGeneratorPart
         );
     }
 
-    public static void Initialize(IncrementalGeneratorInitializationContext context)
+    public static void Initialize(
+        IncrementalGeneratorInitializationContext context,
+        IncrementalValueProvider<string> generatedNamespace)
     {
         IncrementalValuesProvider<MessageInfo?> messageDeclarations = context
             .SyntaxProvider.ForAttributeWithMetadataName(
@@ -86,24 +91,25 @@ internal static class MessagingGeneratorPart
             .Where(info => info is not null);
 
         context.RegisterSourceOutput(
-            messageDeclarations.Collect(),
-            (spc, messages) =>
+            messageDeclarations.Collect().Combine(generatedNamespace),
+            (spc, data) =>
             {
+                var messages = data.Left;
                 var validMessages = messages.OfType<MessageInfo>().ToList();
                 if (!validMessages.Any())
                 {
                     return;
                 }
 
-                var publisherSource = GeneratePublisher(validMessages);
+                var publisherSource = GeneratePublisher(validMessages, data.Right);
                 spc.AddSource(
-                    "Messaging.Publisher.g.cs",
+                    "LinKit.Core.Messaging.Publisher.g.cs",
                     SourceText.From(publisherSource, Encoding.UTF8)
                 );
 
-                var consumerSource = GenerateConsumers(validMessages);
+                var consumerSource = GenerateConsumers(validMessages, data.Right);
                 spc.AddSource(
-                    "Messaging.Consumers.g.cs",
+                    "LinKit.Core.Messaging.Consumers.g.cs",
                     SourceText.From(consumerSource, Encoding.UTF8)
                 );
             }
@@ -153,7 +159,7 @@ internal static class MessagingGeneratorPart
         );
     }
 
-    private static string GeneratePublisher(IReadOnlyList<MessageInfo> messages)
+    private static string GeneratePublisher(IReadOnlyList<MessageInfo> messages, string generatedNamespace)
     {
         var sb = new StringBuilder();
         sb.AppendLine(
@@ -166,9 +172,12 @@ using System;
 using System.Threading;
 using System.Threading.Tasks;
 
-namespace LinKit.Generated.Messaging
-{
-    public sealed class GeneratedMessagePublisher : IMessagePublisher
+"
+        );
+        sb.AppendLine($"namespace {generatedNamespace}");
+        sb.AppendLine("{");
+        sb.AppendLine(
+            @"    public sealed class GeneratedMessagePublisher : IMessagePublisher
     {
         private readonly IBrokerProducer _producer;
         private readonly IMessageMetadataProvider? _metadataProvider;
@@ -224,7 +233,7 @@ namespace LinKit.Generated.Messaging
         return sb.ToString();
     }
 
-    private static string GenerateConsumers(IReadOnlyList<MessageInfo> messages)
+    private static string GenerateConsumers(IReadOnlyList<MessageInfo> messages, string generatedNamespace)
     {
         var sb = new StringBuilder();
         sb.AppendLine(
@@ -242,9 +251,10 @@ using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 
-namespace LinKit.Generated.Messaging
-{"
+"
         );
+        sb.AppendLine($"namespace {generatedNamespace}");
+        sb.AppendLine("{");
 
         var messagesByQueue = messages
             .Where(m => !string.IsNullOrEmpty(m.QueueName))

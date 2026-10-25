@@ -126,10 +126,22 @@ public sealed class LinKitQueryProvider<TEntity> : ILinKitAsyncQueryProvider whe
             fq.Where(translated.WhereSql, translated.Parameters);
         }
 
-        foreach (var (col, isDesc) in translated.OrderBys)
+        for (var index = 0; index < translated.OrderBys.Count; index++)
         {
-            if (isDesc) fq.OrderByDescending(col);
-            else fq.OrderBy(col);
+            var (col, isDesc) = translated.OrderBys[index];
+            if (index == 0)
+            {
+                if (isDesc) fq.OrderByDescending(col);
+                else fq.OrderBy(col);
+            }
+            else if (isDesc)
+            {
+                fq.ThenByDescending(col);
+            }
+            else
+            {
+                fq.ThenBy(col);
+            }
         }
 
         if (translated.Skip.HasValue)

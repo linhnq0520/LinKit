@@ -25,6 +25,9 @@ public class ProductEntity : BaseEntity
     [DefaultValueSql("0")]
     public int Stock { get; set; } = 0;
 
+    [Indexed]
+    public int? CategoryId { get; set; }
+
     [MaxLength(50)]
     public string? Sku { get; set; }
 

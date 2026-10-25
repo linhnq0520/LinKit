@@ -3,7 +3,7 @@
 [![NuGet Version](https://img.shields.io/nuget/v/LinKit.Data.svg)](https://www.nuget.org/packages/LinKit.Data/)
 [![NuGet Downloads](https://img.shields.io/nuget/dt/LinKit.Data.svg)](https://www.nuget.org/packages/LinKit.Data/)
 
-**LinKit.Data** is a source-generated ADO.NET data access and schema synchronization library. Generated repository and reader-mapping paths are designed to reduce runtime discovery. LINQ closure extraction and other specific paths may still use runtime reflection/dynamic code; the repository AOT smoke app covers only a selected feature set.
+**LinKit.Data** is a source-generated ADO.NET data access and schema synchronization library. Generated repository and reader-mapping paths reduce runtime discovery; the supported expression-query path builds SQL through a provider-neutral AST without compiling expressions. Closure member values still use reflection, so Native AOT support is verified for a selected feature set rather than being reflection-free or universal.
 
 ---
 
@@ -20,7 +20,7 @@ LinKit does not require EF Core. It provides additive schema synchronization and
 
 - **Additive schema synchronization:** At application startup, LinKit can create missing tables and add supported missing columns/indexes for SQLite, PostgreSQL, SQL Server, MySQL, and Oracle. It is not a general migration engine and does not safely infer renames, drops, or arbitrary existing-column changes.
 - **EF Core Equivalent Attributes:** Configure lengths, precisions, scales, foreign keys, check constraints, comments, unicode, json columns, and optimistic concurrency.
-- **Compile-Time Code Generation:** Repository implementations, DataReader mapping, and standard SQL operations are generated at compile time. Custom LINQ closure values are currently extracted from expression trees using runtime member access; this path is exercised under Native AOT but is not reflection-free.
+- **Compile-Time Code Generation:** Repository implementations, entity-to-column metadata, DataReader mapping, and standard SQL operations are generated at compile time. Runtime expression trees are translated into a provider-neutral SQL AST and rendered through the configured dialect. Captured expression values use member access supported by the tested Native AOT path; this path is not reflection-free.
 - **Native AOT JSON Serialization (`[JsonColumn]`):**
   - **Compile-time Specific Context:** `[JsonColumn(typeof(AppJsonContext))]` can bind to `AppJsonContext.Default` for the configured type.
   - **Ambient Global Context:** `options.UseJsonSerializerContext(AppJsonContext.Default)` across repositories.
@@ -33,7 +33,7 @@ LinKit does not require EF Core. It provides additive schema synchronization and
   - Bulk Operations: `InsertRangeAsync`, `UpdateRangeAsync`, `DeleteRangeAsync`
   - Pagination: `GetPagedAsync(pageNumber, pageSize)` returning `PagedResult<T>`
   - Arbitrary SQL Execution: `QuerySqlAsync`, `QuerySingleSqlAsync`, `ExecuteSqlAsync`, `ExecuteScalarSqlAsync`
-  - Fluent Query Builder: `repo.Query().Where(...).OrderBy(...).Skip(...).Take(...).ToPagedListAsync(...)`
+  - Fluent Query Builder: `repo.Query().Where(...).OrderBy(...).Skip(...).Take(...).ToPagedListAsync(...)`; expression APIs and LINQ chaining are also available from `repo.Table`.
 - **Unit of Work & Ambient Transactions:** Repositories using the same scoped UoW can enlist commands in its current transaction.
 - **Partial generated repositories:** Generated repository implementations are `partial`, so application code in the same project can add focused helpers without editing generated files.
 
@@ -275,7 +275,7 @@ builder.Services.AddScoped<IUnitOfWorkInterceptor, AuditUnitOfWorkInterceptor>()
 
 ## 🧩 Extending Generated Data Types
 
-LinKit-generated repositories are emitted into the consuming project's `RootNamespace`, so their generated declarations can be extended with another `partial` declaration in that same project:
+Generated repository contracts and implementations are emitted into the consuming project's `RootNamespace`, so they can be extended with another `partial` declaration without opting into an implementation-oriented namespace:
 
 ```csharp
 namespace MyApp;
@@ -305,10 +305,37 @@ public class ProductEntity
 }
 ```
 
+Use the expression overload of `Where` when the condition should be translated for the configured database dialect:
+
+```csharp
+var query = repository.Query();
+if (minPrice.HasValue)
+{
+    query.Where(product => product.Price >= minPrice.Value);
+}
+query.OrderBy(product => product.Price);
+var page = await query.ToPagedListAsync(pageNumber, pageSize, cancellationToken);
+```
+
+This overload parses the expression into a provider-neutral SQL AST, then renders mapped/quoted columns and dialect-specific parameter markers through LinKit's configured dialect. Supported predicate forms are translated directly from the expression tree without compiling the predicate, and are covered by the Native AOT smoke app. Unsupported expression/value forms fail explicitly instead of falling back to dynamic compilation. Unsupported SQL method calls fail with `NotSupportedException`. Use `Where(string, parameters)` for deliberate SQL fragments, but write their column quoting and parameter markers for the active provider.
+
+`OrderBy`, `OrderByDescending`, `ThenBy`, and `ThenByDescending` also accept strongly typed property selectors. The repository `Table` property is a convenience equivalent to `AsQueryable()` and supports LINQ chaining without invoking a method:
+
+```csharp
+var page = await repository.Table
+    .Where(product => product.Price >= minPrice)
+    .OrderByDescending(product => product.Price)
+    .ThenBy(product => product.Name)
+    .ToPagedListAsync(pageNumber, pageSize, cancellationToken);
+```
+
+Expression translation does not compile query predicates, but captured values are read from their expression members using reflection APIs that are supported in the tested Native AOT path. Keep captured values as ordinary fields/properties or local variables; unsupported constructs fail rather than falling back to dynamic compilation.
+
+The expression AST currently covers predicates and ordering, not full relational queries: LINQ `Join`/`GroupJoin` and projection to DTOs are not supported by `Table`/`AsQueryable()`. For multi-table queries, use parameterized `QuerySqlAsync` (or a generated custom repository query) and select the root entity columns. The Monolith sample demonstrates a dialect-quoted product/category join in `SearchProductsByCategory`; it uses a parameter dictionary for Native AOT compatibility. This is SQL composed by the application, not a LINQ join translated by the expression AST.
+
 ```csharp
 namespace MyApp;
 
-[DataRepository]
 public partial interface IProductEntityRepository
 {
     Task<long> CountAvailableAsync(CancellationToken ct = default);
@@ -325,7 +352,11 @@ public partial class ProductEntityRepository
 }
 ```
 
-Generated infrastructure types such as mapper extensions, the schema provider, and the migration registry use `RootNamespace.Generated`. The `AddLinKitData` extension remains in `LinKit.Data`.
+Repository contracts and partial repository implementations use `RootNamespace` by default, making application-side partial declarations natural. Other LinKit.Data support types use `RootNamespace.Generated`; LinKit emits a global using for that namespace in the consuming assembly. When calling generated extensions from a referenced project, add an explicit `using` for that project's generated namespace because global usings are not transitive.
+
+### Upgrade to 2.0
+
+Generated repository interfaces and repository implementations now use the consuming project's `RootNamespace` by default so application partial declarations share the type directly. Other generated Data support types remain in `<RootNamespace>.Generated`. If you previously extended a generated repository from that generated namespace, move the partial declaration to the root namespace. A custom namespace configured with `[DataRepository(..., Namespace = "...")]` is unchanged.
 
 The generated `IProductEntityRepository` is a `partial interface` that inherits `IRepository<ProductEntity, Guid>`. LinKit also generates `ProductEntityRepository : IProductEntityRepository` and registers `IProductEntityRepository` to that implementation in `AddLinKitData`. A matching application partial interface named with the `Repository` suffix can declare custom methods without an attribute. Methods without `[SqlQuery]` are implemented in the repository's application-side `partial class`; methods with `[SqlQuery]` are generated by LinKit.Data. Keep `[DataRepository]` on a custom interface only when its name does not follow the `*Repository` convention and it needs generator-discovered query methods. The optional entity-level `[DataRepository("ICatalogProductRepository", Namespace = "MyApp.Catalog")]` overrides the default interface name and namespace. `partial` parts must be compiled into the consuming assembly; it does not let an application add source to types shipped inside the LinKit.Data NuGet assembly.
 

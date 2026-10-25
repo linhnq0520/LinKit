@@ -116,6 +116,17 @@ using (var scope = dataProvider.CreateScope())
     Check(records[0] is { Id: 3, Name: "high", Score: 20 }, "data generated reader and ordering");
     Check(records[1] is { Id: 2, Name: "match", Score: 12 }, "data LINQ closure parameter");
 
+    var fluentMinimumScore = 10;
+    var fluentExpressionRecords = await repository.Table
+        .Where(record => record.Score >= fluentMinimumScore)
+        .Where(record => record.Name.Contains("match"))
+        .OrderByDescending(record => record.Score)
+        .ThenBy(record => record.Name)
+        .ToListAsync();
+    Check(
+        fluentExpressionRecords is [{ Id: 2, Name: "match", Score: 12 }],
+        "AOT fluent expression predicates and distinct parameters");
+
     var scalarLong = await repository.ExecuteScalarSqlAsync<long>(
         "SELECT COUNT(*) FROM smoke_records"
     );

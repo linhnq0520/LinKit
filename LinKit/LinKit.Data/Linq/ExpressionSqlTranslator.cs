@@ -4,7 +4,6 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Linq.Expressions;
 using System.Reflection;
-using System.Runtime.CompilerServices;
 
 namespace LinKit.Data.Linq;
 
@@ -21,34 +20,58 @@ public sealed class TranslatedSqlQuery
 }
 
 /// <summary>
-/// AOT-friendly, lightweight AST expression visitor translating LINQ expressions to SQL query clauses.
+/// Translates supported LINQ expressions into a provider-neutral SQL expression tree.
 /// </summary>
 public sealed class ExpressionSqlTranslator
 {
     private readonly DatabaseDialect _dialect;
     private readonly IReadOnlyDictionary<string, string> _propertyToColumn;
-    private readonly Dictionary<string, object?> _parameters = new(StringComparer.OrdinalIgnoreCase);
-    private int _paramCounter = 0;
+    private readonly int _parameterOffset;
 
-    public ExpressionSqlTranslator(DatabaseDialect dialect, IReadOnlyDictionary<string, string> propertyToColumn)
+    public ExpressionSqlTranslator(
+        DatabaseDialect dialect,
+        IReadOnlyDictionary<string, string> propertyToColumn,
+        int parameterOffset = 0)
     {
         _dialect = dialect;
         _propertyToColumn = propertyToColumn;
+        _parameterOffset = parameterOffset;
     }
 
-    public TranslatedSqlQuery Translate(Expression expression)
+    public TranslatedSqlQuery Translate(Expression expression) => Translate(expression, null);
+
+    public TranslatedSqlQuery TranslatePredicate(LambdaExpression predicate)
     {
-        return Translate(expression, null);
+        ValidateSingleParameter(predicate, nameof(predicate));
+        var node = ParsePredicate(predicate.Body);
+        var renderer = new SqlExpressionRenderer(_dialect, _parameterOffset);
+        return new TranslatedSqlQuery
+        {
+            WhereSql = renderer.Render(node),
+            Parameters = renderer.Parameters
+        };
+    }
+
+    public string TranslateOrderBy(LambdaExpression keySelector, bool descending = false)
+    {
+        ValidateSingleParameter(keySelector, nameof(keySelector));
+        var propertyName = ResolveEntityPropertyName(keySelector.Body);
+        if (!_propertyToColumn.TryGetValue(propertyName, out var columnName))
+        {
+            throw new NotSupportedException($"Property '{propertyName}' is not mapped to a database column.");
+        }
+
+        var renderer = new SqlExpressionRenderer(_dialect);
+        return renderer.Render(new SqlOrderByNode(new SqlColumnNode(columnName), descending));
     }
 
     public TranslatedSqlQuery Translate(Expression expression, Expression? additionalWhere)
     {
-        var wheres = new List<LambdaExpression>();
-        var orderBys = new List<(LambdaExpression Selector, bool IsDescending)>();
+        var wheres = new List<SqlExpressionNode>();
+        var orderBys = new List<(string Column, bool IsDescending)>();
         int? skip = null;
         int? take = null;
 
-        // Unwind method call chain
         var current = expression;
         var callStack = new Stack<MethodCallExpression>();
         while (current is MethodCallExpression call)
@@ -60,25 +83,24 @@ public sealed class ExpressionSqlTranslator
         while (callStack.Count > 0)
         {
             var call = callStack.Pop();
-            var name = call.Method.Name;
-            switch (name)
+            switch (call.Method.Name)
             {
                 case "Where":
-                    wheres.Add(UnquoteLambda(call.Arguments[1]));
+                    wheres.Add(ParsePredicate(UnquoteLambda(call.Arguments[1]).Body));
                     break;
                 case "OrderBy":
                     orderBys.Clear();
-                    orderBys.Add((UnquoteLambda(call.Arguments[1]), false));
+                    orderBys.Add((ResolveOrderColumn(UnquoteLambda(call.Arguments[1]).Body), false));
                     break;
                 case "OrderByDescending":
                     orderBys.Clear();
-                    orderBys.Add((UnquoteLambda(call.Arguments[1]), true));
+                    orderBys.Add((ResolveOrderColumn(UnquoteLambda(call.Arguments[1]).Body), true));
                     break;
                 case "ThenBy":
-                    orderBys.Add((UnquoteLambda(call.Arguments[1]), false));
+                    orderBys.Add((ResolveOrderColumn(UnquoteLambda(call.Arguments[1]).Body), false));
                     break;
                 case "ThenByDescending":
-                    orderBys.Add((UnquoteLambda(call.Arguments[1]), true));
+                    orderBys.Add((ResolveOrderColumn(UnquoteLambda(call.Arguments[1]).Body), true));
                     break;
                 case "Skip":
                     skip = Convert.ToInt32(ExtractValue(call.Arguments[1]));
@@ -87,358 +109,327 @@ public sealed class ExpressionSqlTranslator
                     take = Convert.ToInt32(ExtractValue(call.Arguments[1]));
                     break;
                 case "Select":
-                    // Identity or projection; base query remains on entity table
                     break;
+                default:
+                    throw new NotSupportedException($"LINQ operator '{call.Method.Name}' is not supported.");
             }
         }
 
-        if (additionalWhere != null)
+        if (additionalWhere is not null)
         {
-            wheres.Add(UnquoteLambda(additionalWhere));
+            wheres.Add(ParsePredicate(UnquoteLambda(additionalWhere).Body));
         }
 
-        // Translate WHERE clauses
-        string? whereSql = null;
-        if (wheres.Count > 0)
+        SqlExpressionNode? whereNode = null;
+        foreach (var where in wheres)
         {
-            var parts = new List<string>();
-            foreach (var w in wheres)
+            whereNode = whereNode is null
+                ? where
+                : new SqlLogicalNode(whereNode, "AND", where);
+        }
+
+        var translated = new TranslatedSqlQuery { OrderBys = orderBys, Skip = skip, Take = take };
+        if (whereNode is not null)
+        {
+            var renderer = new SqlExpressionRenderer(_dialect, _parameterOffset);
+            translated = new TranslatedSqlQuery
             {
-                var clause = VisitExpression(w.Body);
-                if (!string.IsNullOrWhiteSpace(clause))
-                {
-                    parts.Add(clause);
-                }
-            }
-            if (parts.Count > 0)
-            {
-                whereSql = string.Join(" AND ", parts.Select(p => $"({p})"));
-            }
+                WhereSql = renderer.Render(whereNode),
+                Parameters = renderer.Parameters,
+                OrderBys = orderBys,
+                Skip = skip,
+                Take = take
+            };
         }
 
-        // Translate ORDER BY clauses
-        var translatedOrderBys = new List<(string Column, bool IsDescending)>();
-        foreach (var (selector, isDesc) in orderBys)
-        {
-            var col = ResolveColumnName(selector.Body);
-            if (!string.IsNullOrEmpty(col))
-            {
-                translatedOrderBys.Add((col, isDesc));
-            }
-        }
-
-        return new TranslatedSqlQuery
-        {
-            WhereSql = whereSql,
-            Parameters = _parameters,
-            OrderBys = translatedOrderBys,
-            Skip = skip,
-            Take = take
-        };
+        return translated;
     }
 
-    private static LambdaExpression UnquoteLambda(Expression expr)
+    private SqlExpressionNode ParsePredicate(Expression expression)
     {
-        while (expr is UnaryExpression u && (u.NodeType == ExpressionType.Quote || u.NodeType == ExpressionType.Convert))
+        expression = StripConvert(expression);
+        if (expression is BinaryExpression binary)
         {
-            expr = u.Operand;
+            return binary.NodeType switch
+            {
+                ExpressionType.AndAlso => new SqlLogicalNode(ParsePredicate(binary.Left), "AND", ParsePredicate(binary.Right)),
+                ExpressionType.OrElse => new SqlLogicalNode(ParsePredicate(binary.Left), "OR", ParsePredicate(binary.Right)),
+                ExpressionType.Equal => ParseEquality(binary.Left, binary.Right, isNotEqual: false),
+                ExpressionType.NotEqual => ParseEquality(binary.Left, binary.Right, isNotEqual: true),
+                ExpressionType.GreaterThan => new SqlBinaryNode(ParseValue(binary.Left), ">", ParseValue(binary.Right)),
+                ExpressionType.GreaterThanOrEqual => new SqlBinaryNode(ParseValue(binary.Left), ">=", ParseValue(binary.Right)),
+                ExpressionType.LessThan => new SqlBinaryNode(ParseValue(binary.Left), "<", ParseValue(binary.Right)),
+                ExpressionType.LessThanOrEqual => new SqlBinaryNode(ParseValue(binary.Left), "<=", ParseValue(binary.Right)),
+                _ => throw UnsupportedExpression(expression)
+            };
         }
-        return (LambdaExpression)expr;
+
+        if (expression is UnaryExpression unary && unary.NodeType == ExpressionType.Not)
+        {
+            var operand = StripConvert(unary.Operand);
+            if (operand is MemberExpression member && IsEntityMember(member) && IsBoolean(member.Type))
+            {
+                return new SqlBinaryNode(ParseEntityMember(member), "=", new SqlParameterNode(false));
+            }
+
+            return new SqlNotNode(ParsePredicate(operand));
+        }
+
+        if (expression is MemberExpression booleanMember &&
+            IsEntityMember(booleanMember) &&
+            IsBoolean(booleanMember.Type))
+        {
+            return new SqlBinaryNode(ParseEntityMember(booleanMember), "=", new SqlParameterNode(true));
+        }
+
+        if (expression is MethodCallExpression methodCall)
+        {
+            return ParseMethodCall(methodCall);
+        }
+
+        throw UnsupportedExpression(expression);
     }
 
-    private string QuoteColumn(string col) => _dialect switch
+    private SqlExpressionNode ParseValue(Expression expression)
     {
-        DatabaseDialect.SqlServer => $"[{col}]",
-        DatabaseDialect.MySql => $"`{col}`",
-        _ => $"\"{col}\""
-    };
+        expression = StripConvert(expression);
 
-    private string ParamPlaceholder(string paramName) =>
-        _dialect == DatabaseDialect.Oracle ? $":{paramName}" : $"@{paramName}";
+        if (expression is MemberExpression member)
+        {
+            return IsEntityMember(member)
+                ? ParseEntityMember(member)
+                : new SqlParameterNode(ExtractValue(member));
+        }
 
-    private string AddParameter(object? value)
-    {
-        var name = $"p{_paramCounter++}";
-        _parameters[name] = value;
-        return ParamPlaceholder(name);
+        if (expression is ConstantExpression constant)
+        {
+            return new SqlParameterNode(constant.Value);
+        }
+
+        throw UnsupportedExpression(expression);
     }
 
-    private string? ResolveColumnName(Expression expr)
+    private SqlExpressionNode ParseEquality(Expression left, Expression right, bool isNotEqual)
     {
-        if (expr is UnaryExpression u && (u.NodeType == ExpressionType.Convert || u.NodeType == ExpressionType.ConvertChecked))
-        {
-            expr = u.Operand;
-        }
-
-        if (expr is MemberExpression m)
-        {
-            var propName = m.Member.Name;
-            return _propertyToColumn.TryGetValue(propName, out var col) ? col : propName;
-        }
-
-        return null;
-    }
-
-    private string VisitExpression(Expression node)
-    {
-        // Strip converts
-        if (node is UnaryExpression u && (u.NodeType == ExpressionType.Convert || u.NodeType == ExpressionType.ConvertChecked))
-        {
-            node = u.Operand;
-        }
-
-        // Binary: AndAlso / OrElse
-        if (node is BinaryExpression b)
-        {
-            switch (b.NodeType)
-            {
-                case ExpressionType.AndAlso:
-                    return $"({VisitExpression(b.Left)} AND {VisitExpression(b.Right)})";
-                case ExpressionType.OrElse:
-                    return $"({VisitExpression(b.Left)} OR {VisitExpression(b.Right)})";
-                case ExpressionType.Equal:
-                    return HandleEquality(b.Left, b.Right, isNotEqual: false);
-                case ExpressionType.NotEqual:
-                    return HandleEquality(b.Left, b.Right, isNotEqual: true);
-                case ExpressionType.GreaterThan:
-                    return $"({VisitExpression(b.Left)} > {VisitExpression(b.Right)})";
-                case ExpressionType.GreaterThanOrEqual:
-                    return $"({VisitExpression(b.Left)} >= {VisitExpression(b.Right)})";
-                case ExpressionType.LessThan:
-                    return $"({VisitExpression(b.Left)} < {VisitExpression(b.Right)})";
-                case ExpressionType.LessThanOrEqual:
-                    return $"({VisitExpression(b.Left)} <= {VisitExpression(b.Right)})";
-            }
-        }
-
-        // Unary NOT: !p.IsFeatured
-        if (node is UnaryExpression un && un.NodeType == ExpressionType.Not)
-        {
-            var operandCol = ResolveColumnName(un.Operand);
-            if (operandCol != null)
-            {
-                return $"({QuoteColumn(operandCol)} = {AddParameter(false)})";
-            }
-            return $"(NOT ({VisitExpression(un.Operand)}))";
-        }
-
-        // Method call: string Contains, StartsWith, EndsWith, Enumerable.Contains
-        if (node is MethodCallExpression call)
-        {
-            return HandleMethodCall(call);
-        }
-
-        // Member: p.IsFeatured (boolean standalone) or local variable closure
-        if (node is MemberExpression m)
-        {
-            if (IsEntityMember(m))
-            {
-                var col = ResolveColumnName(m);
-                if (col != null)
-                {
-                    if (m.Type == typeof(bool) || m.Type == typeof(bool?))
-                    {
-                        return $"({QuoteColumn(col)} = {AddParameter(true)})";
-                    }
-                    return QuoteColumn(col);
-                }
-            }
-            else
-            {
-                var val = ExtractValue(m);
-                return AddParameter(val);
-            }
-        }
-
-        // Constant value
-        if (node is ConstantExpression c)
-        {
-            return AddParameter(c.Value);
-        }
-
-        // Fallback: evaluate expression
-        var fallbackVal = ExtractValue(node);
-        return AddParameter(fallbackVal);
-    }
-
-    private string HandleEquality(Expression left, Expression right, bool isNotEqual)
-    {
-        bool leftIsNull = IsNullConstant(left);
-        bool rightIsNull = IsNullConstant(right);
-
+        var leftIsNull = IsNullValue(left);
+        var rightIsNull = IsNullValue(right);
         if (leftIsNull && rightIsNull)
         {
-            return isNotEqual ? "(1 = 0)" : "(1 = 1)";
-        }
-
-        if (rightIsNull)
-        {
-            return $"({VisitExpression(left)} {(isNotEqual ? "IS NOT NULL" : "IS NULL")})";
+            return new SqlBooleanConstantNode(!isNotEqual);
         }
 
         if (leftIsNull)
         {
-            return $"({VisitExpression(right)} {(isNotEqual ? "IS NOT NULL" : "IS NULL")})";
+            return new SqlNullCheckNode(ParseValue(right), isNotEqual);
         }
 
-        var op = isNotEqual ? "<>" : "=";
-        return $"({VisitExpression(left)} {op} {VisitExpression(right)})";
+        if (rightIsNull)
+        {
+            return new SqlNullCheckNode(ParseValue(left), isNotEqual);
+        }
+
+        return new SqlBinaryNode(
+            ParseValue(left),
+            isNotEqual ? "<>" : "=",
+            ParseValue(right));
     }
 
-    private static bool IsNullConstant(Expression expr)
+    private SqlExpressionNode ParseMethodCall(MethodCallExpression call)
     {
-        if (expr is ConstantExpression c && c.Value == null) return true;
-        if (expr is UnaryExpression u && (u.NodeType == ExpressionType.Convert || u.NodeType == ExpressionType.ConvertChecked))
+        if (call.Method.DeclaringType == typeof(string) &&
+            call.Object is not null &&
+            call.Arguments.Count == 1 &&
+            call.Method.Name is "Contains" or "StartsWith" or "EndsWith")
         {
-            return IsNullConstant(u.Operand);
-        }
-        return false;
-    }
-
-    private bool IsEntityMember(MemberExpression m)
-    {
-        var root = m.Expression;
-        while (root is MemberExpression inner)
-        {
-            root = inner.Expression;
-        }
-        return root is ParameterExpression;
-    }
-
-    private string HandleMethodCall(MethodCallExpression call)
-    {
-        // string.Contains(substring)
-        if (call.Method.DeclaringType == typeof(string) && call.Method.Name == "Contains" && call.Object != null && call.Arguments.Count == 1)
-        {
-            var col = ResolveColumnName(call.Object);
-            if (col != null)
+            var pattern = ExtractValue(call.Arguments[0])?.ToString() ?? string.Empty;
+            pattern = EscapeLikePattern(pattern, _dialect);
+            pattern = call.Method.Name switch
             {
-                var val = ExtractValue(call.Arguments[0])?.ToString() ?? "";
-                return $"({QuoteColumn(col)} LIKE {AddParameter($"%{val}%")})";
-            }
+                "Contains" => $"%{pattern}%",
+                "StartsWith" => $"{pattern}%",
+                _ => $"%{pattern}"
+            };
+            return new SqlLikeNode(ParseValue(call.Object), new SqlParameterNode(pattern));
         }
 
-        // string.StartsWith(prefix)
-        if (call.Method.DeclaringType == typeof(string) && call.Method.Name == "StartsWith" && call.Object != null && call.Arguments.Count == 1)
-        {
-            var col = ResolveColumnName(call.Object);
-            if (col != null)
-            {
-                var val = ExtractValue(call.Arguments[0])?.ToString() ?? "";
-                return $"({QuoteColumn(col)} LIKE {AddParameter($"{val}%")})";
-            }
-        }
-
-        // string.EndsWith(suffix)
-        if (call.Method.DeclaringType == typeof(string) && call.Method.Name == "EndsWith" && call.Object != null && call.Arguments.Count == 1)
-        {
-            var col = ResolveColumnName(call.Object);
-            if (col != null)
-            {
-                var val = ExtractValue(call.Arguments[0])?.ToString() ?? "";
-                return $"({QuoteColumn(col)} LIKE {AddParameter($"%{val}")})";
-            }
-        }
-
-        // Enumerable.Contains(collection, p.Col)
         if (call.Method.Name == "Contains")
         {
-            Expression? collectionExpr = null;
-            Expression? itemExpr = null;
-
+            Expression? collectionExpression = null;
+            Expression? itemExpression = null;
             if (call.Method.DeclaringType == typeof(Enumerable) && call.Arguments.Count == 2)
             {
-                collectionExpr = call.Arguments[0];
-                itemExpr = call.Arguments[1];
+                collectionExpression = call.Arguments[0];
+                itemExpression = call.Arguments[1];
             }
-            else if (call.Object != null && call.Arguments.Count == 1)
+            else if (call.Object is not null && call.Arguments.Count == 1)
             {
-                collectionExpr = call.Object;
-                itemExpr = call.Arguments[0];
+                collectionExpression = call.Object;
+                itemExpression = call.Arguments[0];
             }
 
-            if (collectionExpr != null && itemExpr != null)
+            if (collectionExpression is not null && itemExpression is not null)
             {
-                var col = ResolveColumnName(itemExpr);
-                if (col != null)
+                var values = ExtractValue(collectionExpression);
+                if (values is IEnumerable enumerable)
                 {
-                    var collectionVal = ExtractValue(collectionExpr);
-                    if (collectionVal is IEnumerable enumerable)
+                    var parameters = new List<SqlExpressionNode>();
+                    foreach (var value in enumerable)
                     {
-                        var items = new List<object?>();
-                        foreach (var it in enumerable) items.Add(it);
-                        if (items.Count == 0) return "(1 = 0)";
-
-                        var placeholders = items.Select(it => AddParameter(it));
-                        return $"({QuoteColumn(col)} IN ({string.Join(", ", placeholders)}))";
+                        parameters.Add(new SqlParameterNode(value));
                     }
+
+                    return new SqlInNode(ParseValue(itemExpression), parameters);
                 }
             }
         }
 
-        // object.Equals(a, b)
-        if (call.Method.Name == "Equals")
+        if (call.Method.Name == nameof(object.Equals))
         {
-            if (call.Object != null && call.Arguments.Count == 1)
+            if (call.Object is not null && call.Arguments.Count == 1)
             {
-                return HandleEquality(call.Object, call.Arguments[0], isNotEqual: false);
+                return ParseEquality(call.Object, call.Arguments[0], isNotEqual: false);
             }
+
             if (call.Arguments.Count == 2)
             {
-                return HandleEquality(call.Arguments[0], call.Arguments[1], isNotEqual: false);
-            }
-        }
-
-        throw new NotSupportedException($"LINQ method call '{call.Method.DeclaringType?.Name}.{call.Method.Name}' is not supported in SQL translation.");
-    }
-
-    /// <summary>
-    /// Safely extracts values from closures, fields, and properties without dynamic code generation (Native AOT compliant).
-    /// </summary>
-    private static object? ExtractValue(Expression? expr)
-    {
-        if (expr == null) return null;
-        if (expr is ConstantExpression c) return c.Value;
-
-        if (expr is MemberExpression m)
-        {
-            var container = ExtractValue(m.Expression);
-            if (m.Member is FieldInfo field)
-            {
-                return field.GetValue(container);
-            }
-            if (m.Member is PropertyInfo prop)
-            {
-                return prop.GetValue(container);
-            }
-        }
-
-        if (expr is UnaryExpression u && (u.NodeType == ExpressionType.Convert || u.NodeType == ExpressionType.ConvertChecked))
-        {
-            return ExtractValue(u.Operand);
-        }
-
-        // Fallback for parameterless method invocations
-        if (expr is MethodCallExpression call && call.Object == null && call.Arguments.Count == 0)
-        {
-            return call.Method.Invoke(null, null);
-        }
-
-        // Fallback: only attempt dynamic compilation if dynamic code is supported (non-NativeAOT)
-        if (RuntimeFeature.IsDynamicCodeSupported)
-        {
-            try
-            {
-                return Expression.Lambda(expr).Compile().DynamicInvoke();
-            }
-            catch
-            {
-                return null;
+                return ParseEquality(call.Arguments[0], call.Arguments[1], isNotEqual: false);
             }
         }
 
         throw new NotSupportedException(
-            $"LINQ expression '{expr}' cannot be evaluated in Native AOT mode without dynamic code generation. " +
-            "Please extract the value into a local variable before using it in the query expression.");
+            $"LINQ method call '{call.Method.DeclaringType?.Name}.{call.Method.Name}' is not supported.");
+    }
+
+    private SqlColumnNode ParseEntityMember(MemberExpression member)
+    {
+        var propertyName = member.Member.Name;
+        if (!_propertyToColumn.TryGetValue(propertyName, out var columnName))
+        {
+            throw new NotSupportedException($"Property '{propertyName}' is not mapped to a database column.");
+        }
+
+        return new SqlColumnNode(columnName);
+    }
+
+    private string ResolveOrderColumn(Expression expression)
+    {
+        var propertyName = ResolveEntityPropertyName(expression);
+        if (!_propertyToColumn.TryGetValue(propertyName, out var columnName))
+        {
+            throw new NotSupportedException($"Property '{propertyName}' is not mapped to a database column.");
+        }
+
+        return columnName;
+    }
+
+    private static string ResolveEntityPropertyName(Expression expression)
+    {
+        expression = StripConvert(expression);
+        if (expression is MemberExpression member && IsEntityMember(member))
+        {
+            return member.Member.Name;
+        }
+
+        throw new NotSupportedException("Expression must select a mapped entity property.");
+    }
+
+    private static bool IsEntityMember(MemberExpression member)
+    {
+        Expression? root = member.Expression;
+        while (root is MemberExpression nested)
+        {
+            root = nested.Expression;
+        }
+
+        return root is ParameterExpression;
+    }
+
+    private static bool IsBoolean(Type type) =>
+        type == typeof(bool) || type == typeof(bool?);
+
+    private static bool IsNullConstant(Expression expression)
+    {
+        expression = StripConvert(expression);
+        return expression is ConstantExpression { Value: null };
+    }
+
+    private bool IsNullValue(Expression expression)
+    {
+        if (IsNullConstant(expression))
+        {
+            return true;
+        }
+
+        expression = StripConvert(expression);
+        return expression is MemberExpression member &&
+               !IsEntityMember(member) &&
+               ExtractValue(member) is null;
+    }
+
+    private static string EscapeLikePattern(string value, DatabaseDialect dialect)
+    {
+        var escaped = value.Replace("!", "!!", StringComparison.Ordinal)
+            .Replace("%", "!%", StringComparison.Ordinal)
+            .Replace("_", "!_", StringComparison.Ordinal);
+        return dialect == DatabaseDialect.SqlServer
+            ? escaped.Replace("[", "![", StringComparison.Ordinal)
+            : escaped;
+    }
+
+    private static Expression StripConvert(Expression expression)
+    {
+        while (expression is UnaryExpression unary &&
+               unary.NodeType is ExpressionType.Convert or ExpressionType.ConvertChecked or ExpressionType.Quote)
+        {
+            expression = unary.Operand;
+        }
+
+        return expression;
+    }
+
+    private static LambdaExpression UnquoteLambda(Expression expression)
+    {
+        expression = StripConvert(expression);
+        return expression as LambdaExpression
+            ?? throw new NotSupportedException("LINQ operator requires a lambda expression.");
+    }
+
+    private static void ValidateSingleParameter(LambdaExpression expression, string parameterName)
+    {
+        ArgumentNullException.ThrowIfNull(expression, parameterName);
+        if (expression.Parameters.Count != 1)
+        {
+            throw new ArgumentException("Expression must have exactly one entity parameter.", parameterName);
+        }
+    }
+
+    private static NotSupportedException UnsupportedExpression(Expression expression) =>
+        new($"LINQ expression node '{expression.NodeType}' ({expression}) is not supported.");
+
+    private static object? ExtractValue(Expression? expression)
+    {
+        if (expression is null)
+        {
+            return null;
+        }
+
+        expression = StripConvert(expression);
+        if (expression is ConstantExpression constant)
+        {
+            return constant.Value;
+        }
+
+        if (expression is MemberExpression member && !IsEntityMember(member))
+        {
+            var container = ExtractValue(member.Expression);
+            return member.Member switch
+            {
+                FieldInfo field => field.GetValue(container),
+                PropertyInfo property => property.GetValue(container),
+                _ => throw UnsupportedExpression(expression)
+            };
+        }
+
+        throw UnsupportedExpression(expression);
     }
 }

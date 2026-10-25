@@ -4,6 +4,7 @@ using LinKit.Messaging.Kafka;
 using LinKit.Messaging.RabbitMQ;
 using LinKit.Outbox;
 using MicroserviceSample.OrderService.Infrastructure;
+using SharedContracts.Generated;
 
 var builder = WebApplication.CreateBuilder(args);
 

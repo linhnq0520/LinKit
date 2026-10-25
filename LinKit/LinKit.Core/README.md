@@ -283,7 +283,7 @@ If you do not specify a `ServiceType`, LinKit follows a smart hierarchy to choos
 3. **Self-Registration:** If no interfaces are found, it registers the class itself.
 
 #### 4. Activation in Program.cs
-The Source Generator automatically creates an extension method called `AddLinKitDependency()`. Call it once in your startup configuration:
+The Source Generator automatically creates an extension method called `AddLinKitDependency()` in `<RootNamespace>.Generated` and emits a global using for that namespace in the current assembly. Call it once in your startup configuration:
 
 ```csharp
 var builder = WebApplication.CreateBuilder(args);
@@ -293,6 +293,12 @@ builder.Services.AddLinKitDependency();
 
 var app = builder.Build();
 ```
+
+Generated namespaces are assembly-specific to prevent extension-method collisions when projects reference each other. Global usings are not transitive; to call a generated registration method from a referenced project, add `using <ReferencedProjectRootNamespace>.Generated;`.
+
+### Upgrade to 3.0
+
+Generated Core APIs now live in the consuming assembly's `<RootNamespace>.Generated` namespace instead of the shared `LinKit.Core` namespace. The consuming assembly gets a generated global using automatically; projects that call generated APIs from a referenced assembly must explicitly import that assembly's generated namespace. This avoids duplicate extension methods when multiple projects reference LinKit.
 
 ### `RegisterServiceAttribute` Parameters
 

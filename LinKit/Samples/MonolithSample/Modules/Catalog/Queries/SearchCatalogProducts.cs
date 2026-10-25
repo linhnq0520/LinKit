@@ -22,14 +22,14 @@ public class GetCatalogProductsPagedHandler(IRepository<ProductEntity, Guid> rep
 {
     public async Task<PagedResult<ProductEntity>> HandleAsync(GetCatalogProductsPagedQuery query, CancellationToken cancellationToken)
     {
-        var fluentQuery = repository.Query();
+        var fluentQuery = repository.Table;
 
         if (query.MinPrice.HasValue)
         {
-            fluentQuery.Where("Price >= @minPrice", new { minPrice = query.MinPrice.Value });
+            fluentQuery.Where(product => product.Price >= query.MinPrice.Value);
         }
 
-        fluentQuery.OrderBy("Price");
+        fluentQuery.OrderBy(product => product.Price);
 
         return await fluentQuery.ToPagedListAsync(query.Page, query.PageSize, cancellationToken);
     }
@@ -73,4 +73,3 @@ public class QueryCatalogProductsLinqHandler(IRepository<ProductEntity, Guid> re
         return await linqQuery.ToListAsync(cancellationToken);
     }
 }
-

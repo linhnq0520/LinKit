@@ -104,6 +104,12 @@ builder.Services.AddLinKitGrpcClient();
 builder.Services.AddGrpcChannel("https://inventory.example.net");
 ```
 
+gRPC generated types and registration extensions use the project's `<RootNamespace>.Generated` namespace. The generator emits a global using for the current assembly; when calling a generated extension from a referenced contracts/service project, import that project's generated namespace explicitly.
+
+### Upgrade to 2.0
+
+Generated gRPC adapters and DI extensions now use the consuming assembly's `<RootNamespace>.Generated` namespace rather than a shared LinKit namespace. The current assembly receives a generated global using; add an explicit using for a referenced assembly's generated namespace when calling its generated registration or mapping APIs.
+
 `AddGrpcChannel` registers `DefaultGrpcChannelProvider`, which reuses a channel for each generated gRPC client type. For multiple service addresses, implement the provider:
 
 ```csharp

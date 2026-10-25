@@ -138,7 +138,9 @@ internal static class EndpointsGeneratorPart
 
     #region Pipeline Setup
 
-    public static void Initialize(IncrementalGeneratorInitializationContext context)
+    public static void Initialize(
+        IncrementalGeneratorInitializationContext context,
+        IncrementalValueProvider<string> generatedNamespace)
     {
         IncrementalValueProvider<List<RouteGroupInfo>> routeGroups =
             context.CompilationProvider.Select(
@@ -195,26 +197,28 @@ internal static class EndpointsGeneratorPart
             .Where(info => info is not null);
 
         context.RegisterSourceOutput(
-            endpointDeclarations.Collect().Combine(routeGroups),
+            endpointDeclarations.Collect().Combine(routeGroups).Combine(generatedNamespace),
             (spc, data) =>
             {
-                var (endpoints, groups) = data;
+                var (endpointsAndGroups, namespaceName) = data;
+                var (endpoints, groups) = endpointsAndGroups;
                 List<EndpointInfo> validEndpoints = endpoints.OfType<EndpointInfo>().ToList();
                 if (!validEndpoints.Any())
                 {
                     return;
                 }
 
-                string source = GenerateEndpointsExtension(validEndpoints, groups);
-                spc.AddSource("Endpoints.g.cs", SourceText.From(source, Encoding.UTF8));
+                string source = GenerateEndpointsExtension(validEndpoints, groups, namespaceName);
+                spc.AddSource("LinKit.Core.Endpoints.g.cs", SourceText.From(source, Encoding.UTF8));
             }
         );
 
         context.RegisterSourceOutput(
-            exceptionMappings.Collect().Combine(context.CompilationProvider),
+            exceptionMappings.Collect().Combine(context.CompilationProvider).Combine(generatedNamespace),
             (spc, data) =>
             {
-                var (mappings, compilation) = data;
+                var (mappingsAndCompilation, namespaceName) = data;
+                var (mappings, compilation) = mappingsAndCompilation;
 
                 // Console/worker apps do not reference ASP.NET Core; emitting the middleware there would not compile.
                 if (compilation.GetTypeByMetadataName("Microsoft.AspNetCore.Builder.IApplicationBuilder") is null)
@@ -225,8 +229,8 @@ internal static class EndpointsGeneratorPart
                 List<ExceptionMappingInfo> validMappings = mappings
                     .OfType<ExceptionMappingInfo>()
                     .ToList();
-                string source = GenerateExceptionHandlerMiddleware(validMappings);
-                spc.AddSource("ExceptionHandler.g.cs", SourceText.From(source, Encoding.UTF8));
+                string source = GenerateExceptionHandlerMiddleware(validMappings, namespaceName);
+                spc.AddSource("LinKit.Core.ExceptionHandler.g.cs", SourceText.From(source, Encoding.UTF8));
             }
         );
     }
@@ -736,7 +740,8 @@ internal static class EndpointsGeneratorPart
 
     private static string GenerateEndpointsExtension(
         IReadOnlyList<EndpointInfo> endpoints,
-        IReadOnlyList<RouteGroupInfo> routeGroups
+        IReadOnlyList<RouteGroupInfo> routeGroups,
+        string generatedNamespace
     )
     {
         StringBuilder sb = new StringBuilder();
@@ -750,7 +755,7 @@ internal static class EndpointsGeneratorPart
         sb.AppendLine("using LinKit.Core.Endpoints;");
         sb.AppendLine("using System.Threading;");
         sb.AppendLine();
-        sb.AppendLine("namespace LinKit.Core");
+        sb.AppendLine($"namespace {generatedNamespace}");
         sb.AppendLine("{");
         sb.AppendLine("    internal static partial class GeneratedEndpointsExtensions");
         sb.AppendLine("    {");
@@ -1083,7 +1088,8 @@ internal static class EndpointsGeneratorPart
     }
 
     private static string GenerateExceptionHandlerMiddleware(
-        IReadOnlyList<ExceptionMappingInfo> mappings
+        IReadOnlyList<ExceptionMappingInfo> mappings,
+        string generatedNamespace
     )
     {
         StringBuilder sb = new StringBuilder();
@@ -1099,7 +1105,7 @@ internal static class EndpointsGeneratorPart
         sb.AppendLine("using System.Net;");
         sb.AppendLine("using System.Threading.Tasks;");
         sb.AppendLine();
-        sb.AppendLine("namespace LinKit.Core");
+        sb.AppendLine($"namespace {generatedNamespace}");
         sb.AppendLine("{");
         sb.AppendLine("    internal static class GeneratedExceptionHandlerExtensions");
         sb.AppendLine("    {");

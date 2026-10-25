@@ -21,16 +21,24 @@ public record CreateCatalogProductCommand(
 ) : ICommand<int>;
 
 [CqrsHandler]
-public class CreateCatalogProductHandler(IRepository<ProductEntity, int> repository)
+public class CreateCatalogProductHandler(
+    IRepository<ProductEntity, int> repository,
+    IRepository<CategoryEntity, int> categoryRepository)
     : ICommandHandler<CreateCatalogProductCommand, int>
 {
     public async Task<int> HandleAsync(CreateCatalogProductCommand request, CancellationToken cancellationToken)
     {
+        var category = await categoryRepository.Table
+            .Where(item => item.Name == "General")
+            .FirstOrDefaultAsync(cancellationToken)
+            ?? throw new InvalidOperationException("The default catalog category is missing.");
+
         var product = new ProductEntity
         {
             Name = request.Name,
             Price = request.Price,
             Stock = request.Stock,
+            CategoryId = category.Id,
             Sku = request.Sku,
             IsFeatured = request.IsFeatured,
             Status = request.Status,
@@ -44,4 +52,3 @@ public class CreateCatalogProductHandler(IRepository<ProductEntity, int> reposit
         return product.Id;
     }
 }
-

@@ -86,12 +86,14 @@ internal static class CqrsGeneratorPart
     }
 
     public static IncrementalValueProvider<IReadOnlyList<CqrsServiceInfo>> GetServices(
-        IncrementalValueProvider<(IReadOnlyList<HandlerInfo> Handlers, IReadOnlyList<BehaviorInfo> Behaviors)> combined
+        IncrementalValueProvider<(IReadOnlyList<HandlerInfo> Handlers, IReadOnlyList<BehaviorInfo> Behaviors)> combined,
+        IncrementalValueProvider<string> generatedNamespace
     )
     {
-        return combined.Select(
-            (source, _) =>
+        return combined.Combine(generatedNamespace).Select(
+            (data, _) =>
             {
+                var source = data.Left;
                 var (handlers, behaviors) = source;
                 var services = new List<CqrsServiceInfo>();
 
@@ -143,21 +145,22 @@ internal static class CqrsGeneratorPart
 
     public static void Initialize(
         IncrementalGeneratorInitializationContext context,
-        IncrementalValueProvider<(IReadOnlyList<HandlerInfo> Handlers, IReadOnlyList<BehaviorInfo> Behaviors)> combined
+        IncrementalValueProvider<(IReadOnlyList<HandlerInfo> Handlers, IReadOnlyList<BehaviorInfo> Behaviors)> combined,
+        IncrementalValueProvider<string> generatedNamespace
     )
     {
         context.RegisterSourceOutput(
-            combined,
+            combined.Combine(generatedNamespace),
             (spc, source) =>
             {
-                if (!source.Handlers.Any())
+                if (!source.Left.Handlers.Any())
                     return;
-                ReportDuplicateHandlers(spc, source.Handlers);
+                ReportDuplicateHandlers(spc, source.Left.Handlers);
                 IReadOnlyList<HandlerInfo> dispatchHandlers = GetUniqueDispatchHandlers(
-                    source.Handlers
+                    source.Left.Handlers
                 );
-                string mediatorSource = GenerateMediatorClass(dispatchHandlers, source.Behaviors);
-                spc.AddSource("Cqrs.Mediator.g.cs", SourceText.From(mediatorSource, Encoding.UTF8));
+                string mediatorSource = GenerateMediatorClass(dispatchHandlers, source.Left.Behaviors, source.Right);
+                spc.AddSource("LinKit.Core.Cqrs.Mediator.g.cs", SourceText.From(mediatorSource, Encoding.UTF8));
             }
         );
     }
@@ -490,7 +493,8 @@ internal static class CqrsGeneratorPart
 
     private static string GenerateMediatorClass(
         IReadOnlyList<HandlerInfo> handlers,
-        IReadOnlyList<BehaviorInfo?> behaviors
+        IReadOnlyList<BehaviorInfo?> behaviors,
+        string generatedNamespace
     )
     {
         StringBuilder sb = new StringBuilder();
@@ -503,9 +507,12 @@ using System;
 using System.Threading;
 using System.Threading.Tasks;
 
-namespace LinKit.Generated.Cqrs
-{
-    internal sealed class Mediator : IMediator
+"
+        );
+        sb.AppendLine($"namespace {generatedNamespace}");
+        sb.AppendLine("{");
+        sb.AppendLine(
+            @"    internal sealed class Mediator : IMediator
     {
         private readonly IServiceProvider _serviceProvider;
         public Mediator(IServiceProvider serviceProvider) => _serviceProvider = serviceProvider;

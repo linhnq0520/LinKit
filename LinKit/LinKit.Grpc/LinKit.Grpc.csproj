@@ -4,7 +4,7 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <PackageId>LinKit.Grpc</PackageId>
-    <Version>1.2.0</Version>
+    <Version>2.0.0</Version>
     <Authors>Linh Nguyen</Authors>
     <Description>Source-generated gRPC server and client adapters for LinKit CQRS requests.</Description>
     <PackageTags>linkit;grpc;source-generator;cqrs;mediator</PackageTags>

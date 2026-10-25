@@ -1,6 +1,7 @@
 using System.Threading.RateLimiting;
 using LinKit.Core;
 using LinKit.Grpc;
+using SharedContracts.Generated;
 using MicroserviceSample.ApiGateway.Infrastructure;
 using Microsoft.AspNetCore.RateLimiting;
 

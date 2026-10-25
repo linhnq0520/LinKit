@@ -2,6 +2,7 @@ using LinKit.Core;
 using LinKit.Grpc;
 using LinKit.Messaging.Kafka;
 using LinKit.Messaging.RabbitMQ;
+using SharedContracts.Generated;
 using LinKit.Outbox;
 
 var builder = WebApplication.CreateBuilder(args);

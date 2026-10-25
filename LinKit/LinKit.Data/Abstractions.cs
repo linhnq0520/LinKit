@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Data.Common;
 using System.Linq;
+using System.Linq.Expressions;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -53,8 +54,15 @@ public interface ILinKitQueryable<TEntity> : IQueryable<TEntity> where TEntity :
 public interface IFluentQuery<TEntity> where TEntity : class
 {
     IFluentQuery<TEntity> Where(string sqlCondition, object? parameters = null);
+    IFluentQuery<TEntity> Where(Expression<Func<TEntity, bool>> predicate);
     IFluentQuery<TEntity> OrderBy(string column);
+    IFluentQuery<TEntity> OrderBy<TKey>(Expression<Func<TEntity, TKey>> keySelector);
     IFluentQuery<TEntity> OrderByDescending(string column);
+    IFluentQuery<TEntity> OrderByDescending<TKey>(Expression<Func<TEntity, TKey>> keySelector);
+    IFluentQuery<TEntity> ThenBy(string column);
+    IFluentQuery<TEntity> ThenByDescending(string column);
+    IFluentQuery<TEntity> ThenBy<TKey>(Expression<Func<TEntity, TKey>> keySelector);
+    IFluentQuery<TEntity> ThenByDescending<TKey>(Expression<Func<TEntity, TKey>> keySelector);
     IFluentQuery<TEntity> Skip(int count);
     IFluentQuery<TEntity> Take(int count);
 
@@ -92,6 +100,8 @@ public interface IRepository<TEntity, in TId> where TEntity : class
     Task<TScalar?> ExecuteScalarSqlAsync<TScalar>(string sql, object? parameters = null, CancellationToken ct = default);
 
     IFluentQuery<TEntity> Query();
+
+    ILinKitQueryable<TEntity> Table { get; }
 
     ILinKitQueryable<TEntity> AsQueryable();
 }

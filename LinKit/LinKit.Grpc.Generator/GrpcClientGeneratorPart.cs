@@ -41,7 +41,8 @@ internal static class GrpcClientGeneratorPart
     private const string ICommandInterfaceName = "LinKit.Core.Cqrs.ICommand";
 
     public static IncrementalValueProvider<IReadOnlyList<GrpcClientServiceInfo>> GetServices(
-        IncrementalGeneratorInitializationContext context
+        IncrementalGeneratorInitializationContext context,
+        IncrementalValueProvider<string> generatedNamespace
     )
     {
         IncrementalValuesProvider<GrpcClientEndpointInfo> validEndpoints = context
@@ -55,15 +56,17 @@ internal static class GrpcClientGeneratorPart
 
         return validEndpoints
             .Collect()
+            .Combine(generatedNamespace)
             .Select(
-                (endpoints, _) =>
+                (data, _) =>
                 {
+                    var endpoints = data.Left;
                     var services = new List<GrpcClientServiceInfo>();
                     if (endpoints.Any())
                     {
                         services.Add(
                             new GrpcClientServiceInfo(
-                                "services.AddTransient<LinKit.Grpc.IGrpcMediator, LinKit.Generated.Grpc.GrpcClientMediator>();"
+                                $"services.AddTransient<LinKit.Grpc.IGrpcMediator, global::{data.Right}.GrpcClientMediator>();"
                             )
                         );
                     }
@@ -72,7 +75,9 @@ internal static class GrpcClientGeneratorPart
             );
     }
 
-    public static void Initialize(IncrementalGeneratorInitializationContext context)
+    public static void Initialize(
+        IncrementalGeneratorInitializationContext context,
+        IncrementalValueProvider<string> generatedNamespace)
     {
         IncrementalValuesProvider<TransformationResult> transformationPipeline = context
             .SyntaxProvider.ForAttributeWithMetadataName(
@@ -99,16 +104,17 @@ internal static class GrpcClientGeneratorPart
             .Select((x, _) => x.EndpointInfo!);
 
         context.RegisterSourceOutput(
-            validEndpoints.Collect(),
-            (spc, endpoints) =>
+            validEndpoints.Collect().Combine(generatedNamespace),
+            (spc, data) =>
             {
+                var endpoints = data.Left;
                 if (endpoints.IsEmpty)
                 {
                     return;
                 }
 
-                var source = GenerateGrpcMediator(endpoints);
-                spc.AddSource("Grpc.ClientMediator.g.cs", SourceText.From(source, Encoding.UTF8));
+                var source = GenerateGrpcMediator(endpoints, data.Right);
+                spc.AddSource("LinKit.Grpc.ClientMediator.g.cs", SourceText.From(source, Encoding.UTF8));
             }
         );
     }
@@ -298,7 +304,9 @@ internal static class GrpcClientGeneratorPart
         };
     }
 
-    private static string GenerateGrpcMediator(IReadOnlyList<GrpcClientEndpointInfo> endpoints)
+    private static string GenerateGrpcMediator(
+        IReadOnlyList<GrpcClientEndpointInfo> endpoints,
+        string generatedNamespace)
     {
         var sb = new StringBuilder();
         sb.AppendLine(
@@ -328,10 +336,11 @@ using Grpc.Core.Interceptors;
             clientFieldNames[clientType] = fieldName;
         }
 
-        sb.AppendLine(@"
-namespace LinKit.Generated.Grpc
-{
-    public sealed class GrpcClientMediator : IGrpcMediator
+        sb.AppendLine();
+        sb.AppendLine($"namespace {generatedNamespace}");
+        sb.AppendLine("{");
+        sb.AppendLine(
+            @"    public sealed class GrpcClientMediator : IGrpcMediator
     {
         private readonly IGrpcClientFactory _factory;");
 

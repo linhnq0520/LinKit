@@ -2,7 +2,7 @@
 
 [![NuGet](https://img.shields.io/nuget/v/LinKit.Caching.svg)](https://www.nuget.org/packages/LinKit.Caching/)
 
-`LinKit.Caching` provides `ICacheProvider` and a bounded in-memory implementation with absolute/sliding expiration and single-flight value creation. This package does not include Redis, Garnet, or Memcached adapters.
+`LinKit.Caching` provides `ICacheProvider` with a bounded in-memory implementation and a high-performance, 100% Native AOT-compatible two-level (L1 In-Memory + L2 Redis) hybrid cache provider using a lightweight RESP2 socket client.
 
 ## Install
 
@@ -10,10 +10,37 @@
 dotnet add package LinKit.Caching
 ```
 
-## Register the in-memory provider
+## Register Cache Providers
+
+### In-Memory Provider
 
 ```csharp
 builder.Services.AddLinKitCaching();
+```
+
+### Hybrid (L1 In-Memory + L2 Redis) Provider
+
+Configure Redis connection directly:
+
+```csharp
+builder.Services.AddLinKitCaching(options =>
+{
+    options.Enabled = true;
+    options.Host = "localhost";
+    options.Port = 6379;
+    options.DefaultTtl = TimeSpan.FromMinutes(10);
+});
+```
+
+Or using explicit configuration:
+
+```csharp
+builder.Services.AddLinKitRedisCaching(new LinKitRedisOptions
+{
+    Host = "localhost",
+    Port = 6379,
+    DefaultTtl = TimeSpan.FromMinutes(10)
+});
 ```
 
 Inject `ICacheProvider` where needed:

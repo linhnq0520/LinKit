@@ -772,19 +772,19 @@ internal static class EndpointsGeneratorPart
         sb.AppendLine("                {");
         sb.AppendLine("                    return res.Status switch");
         sb.AppendLine("                    {");
-        sb.AppendLine("                        LinKit.Core.Results.ResultStatus.NotFound => Microsoft.AspNetCore.Http.Results.NotFound(new { error = res.ErrorMessage, code = res.ErrorCode }),");
-        sb.AppendLine("                        LinKit.Core.Results.ResultStatus.Conflict => Microsoft.AspNetCore.Http.Results.Conflict(new { error = res.ErrorMessage, code = res.ErrorCode }),");
+        sb.AppendLine("                        LinKit.Core.Results.ResultStatus.NotFound => Microsoft.AspNetCore.Http.Results.Problem(detail: res.ErrorMessage, title: res.ErrorCode ?? \"Not Found\", statusCode: 404),");
+        sb.AppendLine("                        LinKit.Core.Results.ResultStatus.Conflict => Microsoft.AspNetCore.Http.Results.Problem(detail: res.ErrorMessage, title: res.ErrorCode ?? \"Conflict\", statusCode: 409),");
         sb.AppendLine("                        LinKit.Core.Results.ResultStatus.Unauthorized => Microsoft.AspNetCore.Http.Results.Unauthorized(),");
         sb.AppendLine("                        LinKit.Core.Results.ResultStatus.Forbidden => Microsoft.AspNetCore.Http.Results.Forbid(),");
         sb.AppendLine("                        LinKit.Core.Results.ResultStatus.BadRequest => res.ValidationErrors.Count > 0");
         sb.AppendLine("                            ? Microsoft.AspNetCore.Http.Results.ValidationProblem(System.Linq.Enumerable.ToDictionary(System.Linq.Enumerable.GroupBy(res.ValidationErrors, e => e.PropertyName), g => g.Key, g => System.Linq.Enumerable.ToArray(System.Linq.Enumerable.Select(g, e => e.ErrorMessage))))");
-        sb.AppendLine("                            : Microsoft.AspNetCore.Http.Results.BadRequest(new { error = res.ErrorMessage, code = res.ErrorCode }),");
+        sb.AppendLine("                            : Microsoft.AspNetCore.Http.Results.Problem(detail: res.ErrorMessage, title: res.ErrorCode ?? \"Bad Request\", statusCode: 400),");
         sb.AppendLine("                        _ => Microsoft.AspNetCore.Http.Results.Problem(detail: res.ErrorMessage, statusCode: 500)");
         sb.AppendLine("                    };");
         sb.AppendLine("                }");
         sb.AppendLine("                var val = res.GetRawValue();");
         sb.AppendLine("                if (val is null) return statusCode switch { 204 => Microsoft.AspNetCore.Http.Results.NoContent(), 201 => Microsoft.AspNetCore.Http.Results.StatusCode(201), _ => Microsoft.AspNetCore.Http.Results.Ok() };");
-        sb.AppendLine("                return statusCode switch { 201 => Microsoft.AspNetCore.Http.Results.Json(val, statusCode: 201), _ => Microsoft.AspNetCore.Http.Results.Ok(val) };");
+        sb.AppendLine("                return statusCode switch { 201 => Microsoft.AspNetCore.Http.TypedResults.Created(string.Empty, result), _ => Microsoft.AspNetCore.Http.TypedResults.Ok(result) };");
         sb.AppendLine("            }");
         sb.AppendLine();
         sb.AppendLine("            // 1. Clean Architecture FileResponse");
@@ -815,10 +815,15 @@ internal static class EndpointsGeneratorPart
         sb.AppendLine("            // 5. Default JSON / StatusCode Response");
         sb.AppendLine("            return statusCode switch");
         sb.AppendLine("            {");
-        sb.AppendLine("                200 => Microsoft.AspNetCore.Http.Results.Ok(result),");
-        sb.AppendLine("                201 => Microsoft.AspNetCore.Http.Results.Json(result, statusCode: 201),");
-        sb.AppendLine("                _ => Microsoft.AspNetCore.Http.Results.Json(result, statusCode: statusCode)");
+        sb.AppendLine("                200 => Microsoft.AspNetCore.Http.TypedResults.Ok(result),");
+        sb.AppendLine("                201 => Microsoft.AspNetCore.Http.TypedResults.Created(string.Empty, result),");
+        sb.AppendLine("                _ => Microsoft.AspNetCore.Http.TypedResults.Ok(result)");
         sb.AppendLine("            };");
+        sb.AppendLine("        }");
+        sb.AppendLine();
+        sb.AppendLine("        private sealed class DeferredEndpointResult(Func<HttpContext, Task> execute) : IResult");
+        sb.AppendLine("        {");
+        sb.AppendLine("            public Task ExecuteAsync(HttpContext context) => execute(context);");
         sb.AppendLine("        }");
         sb.AppendLine();
 
@@ -935,33 +940,37 @@ internal static class EndpointsGeneratorPart
         }
 
         sb.AppendLine(
-            $"            {builder}.{mapMethod}(\"{finalRoute}\", async ({string.Join(", ", handlerParams)}) =>"
+            $"            {builder}.{mapMethod}(\"{finalRoute}\", ({string.Join(", ", handlerParams)}) =>"
         );
-        sb.AppendLine("            {");
+        sb.AppendLine("                new DeferredEndpointResult(async httpContext =>");
+        sb.AppendLine("                {");
 
         if (endpoint.IsCommandWithoutResult)
         {
-            sb.AppendLine("                await mediator.SendAsync(request, cancellationToken);");
-            string successReturn = endpoint.SuccessStatusCode switch
+            sb.AppendLine("                    await mediator.SendAsync(request, cancellationToken);");
+            string successResult = endpoint.SuccessStatusCode switch
             {
-                204 => "Microsoft.AspNetCore.Http.Results.NoContent();",
-                201 => "Microsoft.AspNetCore.Http.Results.StatusCode(Microsoft.AspNetCore.Http.StatusCodes.Status201Created);",
-                200 => "Microsoft.AspNetCore.Http.Results.Ok();",
-                _ => $"Microsoft.AspNetCore.Http.Results.StatusCode({endpoint.SuccessStatusCode});",
+                204 => "Microsoft.AspNetCore.Http.Results.NoContent()",
+                201 => "Microsoft.AspNetCore.Http.Results.StatusCode(Microsoft.AspNetCore.Http.StatusCodes.Status201Created)",
+                200 => "Microsoft.AspNetCore.Http.Results.Ok()",
+                _ => $"Microsoft.AspNetCore.Http.Results.StatusCode({endpoint.SuccessStatusCode})",
             };
-            sb.AppendLine($"                return {successReturn}");
+            sb.AppendLine($"                    await {successResult}.ExecuteAsync(httpContext);");
         }
         else
         {
             string call = endpoint.IsCommand ? "SendAsync" : "QueryAsync";
             sb.AppendLine(
-                $"                var result = await mediator.{call}(request, cancellationToken);"
+                $"                    var result = await mediator.{call}(request, cancellationToken);"
             );
             // Use the ToResult helper to avoid boxing and handle ValueTypes correctly
-            sb.AppendLine($"                return ToResult(result, {endpoint.SuccessStatusCode});");
+            sb.AppendLine(
+                $"                    await ToResult(result, {endpoint.SuccessStatusCode}).ExecuteAsync(httpContext);"
+            );
         }
 
-        sb.AppendLine("            })");
+        sb.AppendLine("                })");
+        sb.AppendLine("            )");
 
         // Filters
         foreach (var filter in endpoint.Filters)
@@ -1181,19 +1190,12 @@ internal static class EndpointsGeneratorPart
             sb.AppendLine(
                 $"                            context.Response.StatusCode = {mapping.StatusCode};"
             );
+            string detailExpr = mapping.IncludeDetails
+                ? "isDevelopment ? ex.Message : \"An error occurred.\""
+                : "\"An error occurred.\"";
             sb.AppendLine(
-                "                            await context.Response.WriteAsJsonAsync(new {"
+                $"                            await WriteProblemJsonAsync(context, \"https://tools.ietf.org/html/rfc7231\", \"{mapping.Title ?? "Error"}\", {mapping.StatusCode}, {detailExpr}, null); break;"
             );
-            sb.AppendLine(
-                $"                                Type = \"https://tools.ietf.org/html/rfc7231\", Title = \"{mapping.Title ?? "Error"}\", Status = {mapping.StatusCode},"
-            );
-            sb.AppendLine(
-                mapping.IncludeDetails
-                    ? "                                Detail = isDevelopment ? ex.Message : \"An error occurred.\","
-                    : "                                Detail = \"An error occurred.\","
-            );
-            sb.AppendLine("                                Instance = context.Request.Path");
-            sb.AppendLine("                            }); break;");
         }
 
         sb.AppendLine("                        default:");
@@ -1204,11 +1206,28 @@ internal static class EndpointsGeneratorPart
             "                            context.Response.StatusCode = (int)HttpStatusCode.InternalServerError;"
         );
         sb.AppendLine(
-            "                            await context.Response.WriteAsJsonAsync(new { Type = \"https://tools.ietf.org/html/rfc7231#section-6.6.1\", Title = \"Internal Server Error\", Status = 500, Detail = isDevelopment ? exception.Message : \"An unexpected error occurred.\", Instance = context.Request.Path, StackTrace = isDevelopment ? exception.StackTrace : null }); break;"
+            "                            await WriteProblemJsonAsync(context, \"https://tools.ietf.org/html/rfc7231#section-6.6.1\", \"Internal Server Error\", 500, isDevelopment ? exception.Message : \"An unexpected error occurred.\", isDevelopment ? exception.StackTrace : null); break;"
         );
         sb.AppendLine("                    }");
         sb.AppendLine("                });");
         sb.AppendLine("            }); return app;");
+        sb.AppendLine("        }");
+        sb.AppendLine();
+        sb.AppendLine("        private static async Task WriteProblemJsonAsync(HttpContext context, string type, string title, int status, string? detail, string? stackTrace)");
+        sb.AppendLine("        {");
+        sb.AppendLine("            using var ms = new System.IO.MemoryStream();");
+        sb.AppendLine("            using (var writer = new System.Text.Json.Utf8JsonWriter(ms))");
+        sb.AppendLine("            {");
+        sb.AppendLine("                writer.WriteStartObject();");
+        sb.AppendLine("                writer.WriteString(\"type\", type);");
+        sb.AppendLine("                writer.WriteString(\"title\", title);");
+        sb.AppendLine("                writer.WriteNumber(\"status\", status);");
+        sb.AppendLine("                if (detail != null) writer.WriteString(\"detail\", detail);");
+        sb.AppendLine("                writer.WriteString(\"instance\", context.Request.Path.Value ?? string.Empty);");
+        sb.AppendLine("                if (stackTrace != null) writer.WriteString(\"stackTrace\", stackTrace);");
+        sb.AppendLine("                writer.WriteEndObject();");
+        sb.AppendLine("            }");
+        sb.AppendLine("            await context.Response.Body.WriteAsync(ms.GetBuffer().AsMemory(0, (int)ms.Length), context.RequestAborted);");
         sb.AppendLine("        }");
         sb.AppendLine("    }");
         sb.AppendLine("}");
@@ -1230,7 +1249,7 @@ internal static class EndpointsGeneratorPart
             $"                            context.Response.StatusCode = (int){statusEnum};"
         );
         sb.AppendLine(
-            $"                            await context.Response.WriteAsJsonAsync(new {{ Type = \"https://tools.ietf.org/html/rfc7231\", Title = \"{title}\", Status = {code}, Detail = {detail}, Instance = context.Request.Path }}); break;"
+            $"                            await WriteProblemJsonAsync(context, \"https://tools.ietf.org/html/rfc7231\", \"{title}\", {code}, {detail}, null); break;"
         );
     }
 

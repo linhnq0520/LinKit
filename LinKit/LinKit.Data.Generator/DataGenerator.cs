@@ -2344,10 +2344,11 @@ public class DataGenerator : IIncrementalGenerator
         var grouped = entities.GroupBy(e => e.Namespace, StringComparer.Ordinal);
         foreach (var group in grouped)
         {
-            if (!string.IsNullOrWhiteSpace(group.Key))
+            bool hasNamespace = !string.IsNullOrWhiteSpace(group.Key);
+            if (hasNamespace)
             {
-                sb.AppendLine($"namespace {group.Key};");
-                sb.AppendLine();
+                sb.AppendLine($"namespace {group.Key}");
+                sb.AppendLine("{");
             }
 
             foreach (var entity in group)
@@ -2503,6 +2504,12 @@ public class DataGenerator : IIncrementalGenerator
                 sb.AppendLine("}");
                 sb.AppendLine();
             }
+
+            if (hasNamespace)
+            {
+                sb.AppendLine("}");
+                sb.AppendLine();
+            }
         }
 
         return sb.ToString();
@@ -2523,10 +2530,11 @@ public class DataGenerator : IIncrementalGenerator
                 ? entities
                 : entities.Where(entity => ctx.EntityTypeNames.Contains(entity.FullName, StringComparer.Ordinal)).ToList();
 
-            if (!string.IsNullOrWhiteSpace(ctx.Namespace))
+            bool hasNamespace = !string.IsNullOrWhiteSpace(ctx.Namespace);
+            if (hasNamespace)
             {
-                sb.AppendLine($"namespace {ctx.Namespace};");
-                sb.AppendLine();
+                sb.AppendLine($"namespace {ctx.Namespace}");
+                sb.AppendLine("{");
             }
 
             sb.AppendLine($"public partial class {ctx.ClassName}");
@@ -2558,6 +2566,10 @@ public class DataGenerator : IIncrementalGenerator
             }
             sb.AppendLine("    }");
             sb.AppendLine("}");
+            if (hasNamespace)
+            {
+                sb.AppendLine("}");
+            }
             sb.AppendLine();
         }
 
@@ -2575,10 +2587,11 @@ public class DataGenerator : IIncrementalGenerator
 
         foreach (var record in records)
         {
-            if (!string.IsNullOrWhiteSpace(record.Namespace))
+            bool hasNamespace = !string.IsNullOrWhiteSpace(record.Namespace);
+            if (hasNamespace)
             {
-                sb.AppendLine($"namespace {record.Namespace};");
-                sb.AppendLine();
+                sb.AppendLine($"namespace {record.Namespace}");
+                sb.AppendLine("{");
             }
 
             sb.AppendLine($"public sealed class {record.ClassName}Projection : global::LinKit.Data.IProjection<{record.FullName}>");
@@ -2627,6 +2640,10 @@ public class DataGenerator : IIncrementalGenerator
             }
 
             sb.AppendLine("}");
+            if (hasNamespace)
+            {
+                sb.AppendLine("}");
+            }
             sb.AppendLine();
         }
 

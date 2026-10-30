@@ -48,6 +48,8 @@ Add a configuration section for your RabbitMQ connection. The default section na
     "VirtualHost": "/",
     "PrefetchCount": 50,
     "ChannelPoolSize": 64,
+    "DefaultExchangeType": "topic",
+    "PublisherConfirms": true,
     "RequeueOnFailure": true
   }
 }
@@ -76,4 +78,4 @@ var host = builder.Build();
 host.Run();
 ```
 
-`AddLinKitRabbitMQ` registers the producer and consumer connection. Producer sends persistent messages and waits for publisher confirms; consumer uses manual acknowledgements. Delivery remains at-least-once. This adapter does not implement retry counters, delayed retries, or a DLQ policy. Configure broker dead-letter routing and set `RequeueOnFailure` appropriately to avoid poison-message loops. Test reconnection/recovery behavior against the RabbitMQ version and topology used in production.
+`AddLinKitRabbitMQ` registers the producer and consumer connection. Producer sends persistent messages, supports configurable exchange types, header mapping (`CorrelationId`, `ReplyTo`, `MessageId`), and publisher confirms; consumer uses manual acknowledgements and supports dynamic exchange bindings and topologies. Delivery remains at-least-once. This adapter does not implement retry counters, delayed retries, or a DLQ policy. Configure broker dead-letter routing and set `RequeueOnFailure` appropriately to avoid poison-message loops. Test reconnection/recovery behavior against the RabbitMQ version and topology used in production.

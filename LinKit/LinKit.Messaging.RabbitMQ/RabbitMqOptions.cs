@@ -10,4 +10,6 @@ public class RabbitMqOptions
     public ushort PrefetchCount { get; set; } = 50;
     public int ChannelPoolSize { get; set; } = 64;
     public bool RequeueOnFailure { get; set; } = true;
+    public string DefaultExchangeType { get; set; } = "topic";
+    public bool PublisherConfirms { get; set; } = true;
 }

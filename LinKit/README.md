@@ -15,11 +15,12 @@ Runtime libraries target .NET 8, .NET 9, and .NET 10 unless a package/project st
 | `LinKit.Core` | CQRS contracts/mediator, generated DI/endpoints/jobs/mapping, messaging contracts. | [Core README](./LinKit.Core/README.md) |
 | `LinKit.Data` | ADO.NET repositories, schema synchronization, migrations, LINQ/fluent query APIs. | [Data README](./LinKit.Data/README.md) |
 | `LinKit.Grpc` | Generated gRPC CQRS server/client adapters. | [gRPC README](./LinKit.Grpc/README.md) |
+| `LinKit.Json` | Fast, allocation-conscious JSON path navigation and typed value accessors. | [Json README](./LinKit.Json/README.md) |
 | `LinKit.Messaging.Kafka` | Kafka broker integration for LinKit messaging. | [Kafka README](./LinKit.Messaging.Kafka/README.md) |
 | `LinKit.Messaging.RabbitMQ` | RabbitMQ broker integration for LinKit messaging. | [RabbitMQ README](./LinKit.Messaging.RabbitMQ/README.md) |
 | `LinKit.Outbox` | Outbox/Inbox contracts, in-memory stores, publisher and retry options. | [Outbox README](./LinKit.Outbox/README.md) |
 | `LinKit.Outbox.Data` | Durable provider-neutral ADO.NET stores. | [Outbox.Data README](./LinKit.Outbox.Data/README.md) |
-| `LinKit.Caching` | In-memory cache contract/provider; custom adapters can implement the interface. | [Caching README](./LinKit.Caching/README.md) |
+| `LinKit.Caching` | In-memory and Native AOT hybrid Redis cache provider. | [Caching README](./LinKit.Caching/README.md) |
 | `LinKit.Resilience` | Explicit retry, timeout, and circuit-breaker pipeline. | [Resilience README](./LinKit.Resilience/README.md) |
 | `LinKit.Tenancy` | Async-flow tenant context and explicit message-header helpers. | [Tenancy README](./LinKit.Tenancy/README.md) |
 | `LinKit.Sagas` | Saga step coordination and repository abstraction. | [Sagas README](./LinKit.Sagas/README.md) |
@@ -71,12 +72,12 @@ Packages follow independent semantic versions. Current project versions are:
 
 | Package | Version | Package | Version |
 |---|---:|---|---:|
-| `LinKit.Core` | 3.0.0 | `LinKit.Data` | 2.1.0 |
-| `LinKit.Grpc` | 2.0.0 | `LinKit.Messaging.Kafka` | 1.2.0 |
-| `LinKit.Messaging.RabbitMQ` | 1.2.0 | `LinKit.Outbox` | 1.1.0 |
-| `LinKit.Outbox.Data` | 1.1.0 | `LinKit.Caching` | 1.1.0 |
-| `LinKit.Resilience` | 1.1.0 | `LinKit.Tenancy` | 1.1.0 |
-| `LinKit.Sagas` | 1.1.0 | | |
+| `LinKit.Core` | 3.1.0 | `LinKit.Data` | 2.2.0 |
+| `LinKit.Grpc` | 2.0.0 | `LinKit.Json` | 1.0.0 |
+| `LinKit.Messaging.Kafka` | 1.2.0 | `LinKit.Messaging.RabbitMQ` | 1.3.0 |
+| `LinKit.Outbox` | 1.1.0 | `LinKit.Outbox.Data` | 1.1.0 |
+| `LinKit.Caching` | 1.2.0 | `LinKit.Resilience` | 1.1.0 |
+| `LinKit.Tenancy` | 1.1.0 | `LinKit.Sagas` | 1.1.0 |
 
 These are repository project metadata values. Core 3.0.0, Data 2.0.0, and gRPC 2.0.0 include generated namespace changes; see each package README for migration notes. Other package versions are unchanged.
 

@@ -2,6 +2,7 @@ using System;
 using System.Buffers;
 using System.Diagnostics.CodeAnalysis;
 using System.Runtime.CompilerServices;
+using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using System.Text.Json.Serialization.Metadata;
@@ -58,7 +59,13 @@ public static class LinKitMessageJson
     {
         ArgumentNullException.ThrowIfNull(message);
 
-        // Payloads already in JSON form (e.g. from the Outbox) need no type metadata.
+        // Payloads already in JSON form (e.g. from the Outbox or raw bytes/strings) need no type metadata.
+        if (message is byte[] raw)
+            return raw;
+        if (message is ReadOnlyMemory<byte> memory)
+            return memory.ToArray();
+        if (message is string rawJson)
+            return Encoding.UTF8.GetBytes(rawJson);
         if (message is JsonElement element)
         {
             var buffer = new ArrayBufferWriter<byte>();
@@ -66,8 +73,6 @@ public static class LinKitMessageJson
                 element.WriteTo(writer);
             return buffer.WrittenSpan.ToArray();
         }
-        if (message is byte[] raw)
-            return raw;
 
         var info = _options.GetTypeInfo(message.GetType());
         return JsonSerializer.SerializeToUtf8Bytes(message, info);

@@ -5,24 +5,67 @@ using RabbitMQ.Client;
 
 namespace LinKit.Messaging.RabbitMQ;
 
-internal sealed class RabbitMqConnectionFactory : IDisposable
+public sealed class RabbitMqConnectionFactory : IDisposable
 {
-    private readonly IConnection _connection;
+    private readonly ConnectionFactory _factory;
+    private readonly ILogger<RabbitMqConnectionFactory>? _logger;
+    private readonly object _syncRoot = new();
+    private IConnection? _connection;
+    private bool _disposed;
+
     public RabbitMqConnectionFactory(IServiceProvider serviceProvider, IOptions<RabbitMqOptions> options)
     {
-        var logger = serviceProvider.GetService<ILogger<RabbitMqConnectionFactory>>();
-        var factory = new ConnectionFactory
+        _logger = serviceProvider.GetService<ILogger<RabbitMqConnectionFactory>>();
+        _factory = new ConnectionFactory
         {
             HostName = options.Value.HostName,
             UserName = options.Value.UserName,
             Password = options.Value.Password,
             Port = options.Value.Port,
             VirtualHost = string.IsNullOrEmpty(options.Value.VirtualHost) ? "/" : options.Value.VirtualHost,
-            DispatchConsumersAsync = true
+            DispatchConsumersAsync = true,
+            AutomaticRecoveryEnabled = true,
+            TopologyRecoveryEnabled = true,
+            NetworkRecoveryInterval = TimeSpan.FromSeconds(5)
         };
-        logger?.LogInformation("Connecting to RabbitMQ at {HostName}...", factory.HostName);
-        _connection = factory.CreateConnection();
     }
-    public IConnection GetConnection() => _connection;
-    public void Dispose() => _connection?.Dispose();
+
+    public IConnection GetConnection()
+    {
+        if (_connection is { IsOpen: true })
+            return _connection;
+
+        lock (_syncRoot)
+        {
+            if (_connection is { IsOpen: true })
+                return _connection;
+
+            try
+            {
+                _connection?.Dispose();
+            }
+            catch
+            {
+                // Ignore dispose errors on dead connection
+            }
+
+            _logger?.LogInformation("Connecting to RabbitMQ at {HostName}:{Port}...", _factory.HostName, _factory.Port);
+            _connection = _factory.CreateConnection();
+            return _connection;
+        }
+    }
+
+    public void Dispose()
+    {
+        if (_disposed) return;
+        _disposed = true;
+        try
+        {
+            _connection?.Dispose();
+        }
+        catch
+        {
+            // Ignore dispose errors
+        }
+    }
 }

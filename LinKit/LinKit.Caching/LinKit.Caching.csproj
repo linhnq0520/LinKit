@@ -4,7 +4,7 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <PackageId>LinKit.Caching</PackageId>
-    <Version>1.1.0</Version>
+    <Version>1.2.0</Version>
     <Authors>Linh Nguyen</Authors>
     <Description>In-memory caching abstractions for LinKit with expiration, capacity management, and single-flight creation.</Description>
     <PackageTags>linkit;caching;hybrid-cache;aot</PackageTags>

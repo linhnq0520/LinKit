@@ -8,6 +8,9 @@ public static class MessageHeaderNames
     public const string RetryCount = "linkit-retry-count";
     public const string DestinationTopic = "linkit-destination-topic";
     public const string PartitionKey = "linkit-partition-key";
+    public const string ExchangeType = "linkit-exchange-type";
+    public const string ReplyTo = "linkit-reply-to";
+    public const string MessageId = "linkit-message-id";
 }
 
 public class MessageHeaders : Dictionary<string, object>
@@ -112,4 +115,18 @@ public interface IBrokerConnection
         Func<string, ReadOnlyMemory<byte>, IReadOnlyDictionary<string, object>, Task> onMessageReceived,
         CancellationToken stoppingToken
     );
+
+    Task StartConsumingAsync(
+        string queueName,
+        string? exchangeName,
+        string exchangeType,
+        IEnumerable<string>? routingKeys,
+        Func<string, ReadOnlyMemory<byte>, IReadOnlyDictionary<string, object>, Task> onMessageReceived,
+        CancellationToken stoppingToken,
+        ushort prefetchCount = 10,
+        bool durable = true,
+        bool exclusive = false,
+        bool autoDelete = false,
+        IDictionary<string, object?>? queueArguments = null
+    ) => StartConsumingAsync(queueName, onMessageReceived, stoppingToken);
 }

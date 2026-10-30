@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Data.Common;
+using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using LinKit.Data.Dialects;
@@ -16,23 +17,27 @@ public interface ISchemaSynchronizer
 public class SchemaSynchronizer : ISchemaSynchronizer
 {
     private readonly IDbConnectionFactory _connectionFactory;
-    private readonly ITableSchemaProvider _schemaProvider;
+    private readonly IEnumerable<ITableSchemaProvider> _schemaProviders;
     private readonly ILogger<SchemaSynchronizer>? _logger;
 
     public SchemaSynchronizer(
         IDbConnectionFactory connectionFactory,
-        ITableSchemaProvider schemaProvider,
+        IEnumerable<ITableSchemaProvider> schemaProviders,
         ILogger<SchemaSynchronizer>? logger = null)
     {
         _connectionFactory = connectionFactory;
-        _schemaProvider = schemaProvider;
+        _schemaProviders = schemaProviders;
         _logger = logger;
     }
 
     public async Task SynchronizeAsync(CancellationToken ct = default)
     {
         var dialect = SqlDialectFactory.GetDialect(_connectionFactory.Dialect);
-        var tables = _schemaProvider.GetTables();
+        var tables = _schemaProviders
+            .SelectMany(p => p.GetTables())
+            .GroupBy(t => t.TableName, StringComparer.OrdinalIgnoreCase)
+            .Select(g => g.Last())
+            .ToList();
 
         if (tables.Count == 0)
         {

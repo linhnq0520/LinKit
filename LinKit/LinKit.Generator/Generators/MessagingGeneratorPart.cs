@@ -310,18 +310,9 @@ using System.Threading.Tasks;
                 sb.AppendLine(
                     $@"
                 if (string.Equals(routingKey, ""{msg.RoutingKey}"", StringComparison.OrdinalIgnoreCase) ||
-                    string.Equals(messageTypeHeader, ""{msg.SimpleTypeName}"", StringComparison.OrdinalIgnoreCase) ||
-                    (string.Equals(messageTypeHeader, ""workflow"", StringComparison.OrdinalIgnoreCase) && ""{msg.SimpleTypeName}"" == ""WFScheme"") ||
-                    (string.Equals(messageTypeHeader, ""workflow"", StringComparison.OrdinalIgnoreCase) && ""{msg.SimpleTypeName}"" == ""WorkflowResponseMessage""))
+                    string.Equals(messageTypeHeader, ""{msg.SimpleTypeName}"", StringComparison.OrdinalIgnoreCase))
                 {{
-                    global::O24OpenAPI.Core.Models.Workflows.WFScheme? rawScheme = null;
-                    if (""{msg.SimpleTypeName}"" == ""WorkflowResponseMessage"")
-                    {{
-                        rawScheme = global::LinKit.Core.Messaging.LinKitMessageJson.Deserialize<global::O24OpenAPI.Core.Models.Workflows.WFScheme>(body.Span);
-                    }}
-                    var {varName} = rawScheme is not null
-                        ? new global::O24OpenAPI.Orchestrator.Application.Messages.WorkflowResponseMessage(rawScheme) as {msg.MessageType}
-                        : global::LinKit.Core.Messaging.LinKitMessageJson.Deserialize<{msg.MessageType}>(body.Span);
+                    var {varName} = global::LinKit.Core.Messaging.LinKitMessageJson.Deserialize<{msg.MessageType}>(body.Span);
                     if ({varName} is not null)
                     {{"
                 );

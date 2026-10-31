@@ -4,7 +4,7 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <PackageId>LinKit.Resilience</PackageId>
-    <Version>1.2.0</Version>
+    <Version>1.2.1</Version>
     <Authors>Linh Nguyen</Authors>
     <Description>Retry, timeout, and circuit-breaker execution primitives for LinKit applications.</Description>
     <PackageTags>linkit;resilience;circuit-breaker;retry;aot</PackageTags>

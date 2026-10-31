@@ -4,7 +4,7 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <PackageId>LinKit.Json</PackageId>
-    <Version>1.1.0</Version>
+    <Version>1.1.1</Version>
     <Authors>Linh Nguyen</Authors>
     <Description>Strict, allocation-conscious JSON path navigation and typed value accessors for System.Text.Json.</Description>
     <PackageTags>linkit;json;jsonpath;system-text-json;source-generation</PackageTags>

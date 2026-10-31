@@ -1,7 +1,10 @@
 using System.Threading.RateLimiting;
 using LinKit.Caching;
 using LinKit.Data;
+using LinKit.Outbox;
 using LinKit.Resilience;
+using LinKit.Sagas;
+using LinKit.Tenancy;
 using Microsoft.AspNetCore.RateLimiting;
 
 WebApplicationBuilder builder = WebApplication.CreateBuilder(args);
@@ -12,9 +15,14 @@ builder.Services.AddLinKitCqrs();
 // 2. Tự động đăng ký các dịch vụ gắn [RegisterService] (ví dụ: IPricingService)
 builder.Services.AddLinKitDependency();
 
-// 3. Đăng ký Caching và Resilience từ các thư viện con độc lập
+// 3. Đăng ký Caching (In-Memory + Hybrid Redis ready) và Resilience (Retry/CircuitBreaker)
 builder.Services.AddLinKitCaching();
 builder.Services.AddLinKitResilience();
+
+// 4. Đăng ký Tenancy (Multi-Tenancy với AsyncLocal), Outbox và Sagas
+builder.Services.AddLinKitTenancy();
+builder.Services.AddLinKitOutbox();
+builder.Services.AddLinKitSagas<MonolithSample.Modules.Ordering.Commands.OrderSagaState>();
 
 // 4. Đăng ký LinKit.Data - Zero-Reflection ORM với Auto-Schema Synchronization (Zero-Migration)
 builder.Services.AddLinKitData(options =>

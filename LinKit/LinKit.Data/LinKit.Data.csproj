@@ -4,7 +4,7 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <PackageId>LinKit.Data</PackageId>
-    <Version>2.3.0</Version>
+    <Version>2.3.1</Version>
     <Authors>Linh Nguyen</Authors>
     <Description>Source-generated ADO.NET data access and additive schema synchronization for LinKit; selected paths are covered by Native AOT smoke tests.</Description>
     <PackageTags>linkit;data;repository;schema-synchronization;ado-net;aot;cqrs</PackageTags>

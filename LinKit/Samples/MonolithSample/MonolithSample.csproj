@@ -12,6 +12,11 @@
     <ProjectReference Include="..\..\LinKit.Caching\LinKit.Caching.csproj" />
     <ProjectReference Include="..\..\LinKit.Resilience\LinKit.Resilience.csproj" />
     <ProjectReference Include="..\..\LinKit.Data\LinKit.Data.csproj" />
+    <ProjectReference Include="..\..\LinKit.Tenancy\LinKit.Tenancy.csproj" />
+    <ProjectReference Include="..\..\LinKit.Outbox\LinKit.Outbox.csproj" />
+    <ProjectReference Include="..\..\LinKit.Outbox.Data\LinKit.Outbox.Data.csproj" />
+    <ProjectReference Include="..\..\LinKit.Sagas\LinKit.Sagas.csproj" />
+    <ProjectReference Include="..\..\LinKit.Json\src\LinKit.Json\LinKit.Json.csproj" />
     <ProjectReference Include="..\..\LinKit.Generator\LinKit.Generator.csproj" OutputItemType="Analyzer" ReferenceOutputAssembly="false" />
     <ProjectReference Include="..\..\LinKit.Data.Generator\LinKit.Data.Generator.csproj" OutputItemType="Analyzer" ReferenceOutputAssembly="false" />
   </ItemGroup>

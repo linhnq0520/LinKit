@@ -4,7 +4,7 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <PackageId>LinKit.Outbox</PackageId>
-    <Version>1.2.0</Version>
+    <Version>1.2.1</Version>
     <Authors>Linh Nguyen</Authors>
     <Description>Transactional Outbox and Inbox abstractions with in-memory and replaceable store implementations for LinKit.</Description>
     <PackageTags>linkit;outbox;inbox;messaging;microservices;aot</PackageTags>

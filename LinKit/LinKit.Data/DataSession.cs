@@ -32,9 +32,17 @@ public sealed class DataSession(
 
     public SqlDialect Dialect { get; } = dialect;
     public string? TenantId { get; } = tenantId;
-    public bool HasTransaction => _transaction is not null;
+    public bool HasTransaction => ActiveTransaction is not null;
 
-    internal bool OwnsTransaction(DbTransaction transaction) => !_disposed && ReferenceEquals(_transaction, transaction);
+    /// <summary>
+    /// When set, the session borrows the scoped UnitOfWork's connection and transaction instead of opening its own,
+    /// so business writes and outbox rows share one transaction. The UnitOfWork keeps sole ownership/disposal.
+    /// </summary>
+    internal UnitOfWork? SharedUnitOfWork { get; init; }
+
+    private DbTransaction? ActiveTransaction => SharedUnitOfWork is { } shared ? shared.CurrentTransaction : _transaction;
+
+    internal bool OwnsTransaction(DbTransaction transaction) => !_disposed && ReferenceEquals(ActiveTransaction, transaction);
 
     public Query<TEntity> From<TEntity>(Table<TEntity> table) where TEntity : class => Query<TEntity>.From(this, table);
 
@@ -48,6 +56,12 @@ public sealed class DataSession(
 
     private async Task<DbConnection> OpenAsync(CancellationToken ct)
     {
+        if (SharedUnitOfWork is { } shared)
+        {
+            _connection = await shared.EnsureConnectionAsync(ct).ConfigureAwait(false);
+            _opened = true;
+            return _connection;
+        }
         _connection ??= connectionFactory();
         if (_connection.State != ConnectionState.Open)
         {
@@ -67,7 +81,7 @@ public sealed class DataSession(
         var command = connection.CreateCommand();
         try
         {
-            command.Transaction = _transaction;
+            command.Transaction = ActiveTransaction;
             command.CommandTimeout = 30;
             command.CommandText = spec.Sql;
             if (configureCommand is not null) await configureCommand(command).ConfigureAwait(false);
@@ -161,7 +175,14 @@ public sealed class DataSession(
         Enter();
         try
         {
-            if (_transaction is not null) throw new InvalidOperationException("Nested transactions are not supported.");
+            if (ActiveTransaction is not null) throw new InvalidOperationException("Nested transactions are not supported.");
+            if (SharedUnitOfWork is { } sharedUow)
+            {
+                var shared = await sharedUow.BeginTransactionAsync(ct).ConfigureAwait(false);
+                _connection = shared.Connection;
+                _opened = true;
+                return new SessionTransaction(this, shared);
+            }
             var connection = await OpenAsync(ct).ConfigureAwait(false);
             _transaction = await connection.BeginTransactionAsync(isolation, ct).ConfigureAwait(false);
             return new SessionTransaction(this, _transaction);
@@ -174,7 +195,22 @@ public sealed class DataSession(
         Enter();
         try
         {
-            if (!ReferenceEquals(_transaction, expected)) throw new InvalidOperationException("Transaction is no longer active.");
+            if (!ReferenceEquals(ActiveTransaction, expected)) throw new InvalidOperationException("Transaction is no longer active.");
+            if (SharedUnitOfWork is { } sharedUow)
+            {
+                try
+                {
+                    if (commit) await sharedUow.CommitAsync(ct).ConfigureAwait(false);
+                    else await sharedUow.RollbackAsync(ct).ConfigureAwait(false);
+                }
+                catch (Exception error)
+                {
+                    _faulted = true;
+                    if (commit) throw new CommitOutcomeUnknownException(error);
+                    throw;
+                }
+                return;
+            }
             try
             {
                 if (commit) await expected.CommitAsync(ct).ConfigureAwait(false);
@@ -196,6 +232,7 @@ public sealed class DataSession(
         if (_disposed) return;
         if (Interlocked.CompareExchange(ref _busy, 1, 0) != 0) throw new InvalidOperationException("Dispose the active operation/stream before the session.");
         _disposed = true;
+        if (SharedUnitOfWork is not null) return; // connection/transaction are owned and disposed by the UnitOfWork
         try { if (_transaction is not null) await _transaction.DisposeAsync().ConfigureAwait(false); }
         finally { if (_connection is not null) await _connection.DisposeAsync().ConfigureAwait(false); }
     }

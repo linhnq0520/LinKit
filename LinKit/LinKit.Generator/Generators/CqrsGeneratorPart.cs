@@ -262,7 +262,7 @@ internal static class CqrsGeneratorPart
                         uniqueSymbols.Add(s);
 
                     return (IReadOnlyList<HandlerInfo>)
-                        uniqueSymbols.Select(GetHandlerInfo).Where(x => x != null).ToList()!;
+                        uniqueSymbols.SelectMany(GetHandlerInfos).ToList();
                 }
             );
     }
@@ -316,10 +316,10 @@ internal static class CqrsGeneratorPart
         if (targetType == null)
             return null;
 
-        int order =
-            attr.ConstructorArguments.Length > 1 && attr.ConstructorArguments[1].Value is int o
-                ? o
-                : 0;
+        int order = 0;
+        if (attr.ConstructorArguments.Length > 1 && attr.ConstructorArguments[1].Value is int o) { order = o; }
+        else if (attr.NamedArguments.FirstOrDefault(kvp => kvp.Key == "Order").Value.Value is int namedOrder) { order = namedOrder; }
+
 
         var constraints = new List<string>();
         var tRequest = symbol.TypeParameters.FirstOrDefault(tp => tp.Name == "TRequest");
@@ -343,28 +343,31 @@ internal static class CqrsGeneratorPart
         );
     }
 
-    private static HandlerInfo? GetHandlerInfo(INamedTypeSymbol classSymbol)
+    // Một class có thể implement nhiều handler interface (vd. nhiều INotificationHandler<T>);
+    // sinh một descriptor cho mỗi interface thay vì chỉ lấy interface đầu tiên.
+    private static IEnumerable<HandlerInfo> GetHandlerInfos(INamedTypeSymbol classSymbol)
     {
-        bool isNotification = false;
-
-        var handlerInterface = classSymbol.AllInterfaces.FirstOrDefault(i =>
+        foreach (var handlerInterface in classSymbol.AllInterfaces)
         {
             var name = GetCleanName(
-                i.OriginalDefinition.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat)
+                handlerInterface.OriginalDefinition.ToDisplayString(
+                    SymbolDisplayFormat.FullyQualifiedFormat
+                )
             );
+            bool isNotification = name == INotificationHandlerName;
+            if (!isNotification && name != ICommandHandlerName && name != IQueryHandlerName)
+                continue;
 
-            if (name == INotificationHandlerName)
-            {
-                isNotification = true;
-                return true;
-            }
+            yield return BuildHandlerInfo(classSymbol, handlerInterface, isNotification);
+        }
+    }
 
-            return name == ICommandHandlerName || name == IQueryHandlerName;
-        });
-
-        if (handlerInterface == null)
-            return null;
-
+    private static HandlerInfo BuildHandlerInfo(
+        INamedTypeSymbol classSymbol,
+        INamedTypeSymbol handlerInterface,
+        bool isNotification
+    )
+    {
         var requestType = handlerInterface.TypeArguments[0];
 
         var responseType =

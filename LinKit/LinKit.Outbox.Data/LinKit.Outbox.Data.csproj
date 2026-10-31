@@ -4,7 +4,7 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <PackageId>LinKit.Outbox.Data</PackageId>
-    <Version>1.1.0</Version>
+    <Version>1.2.0</Version>
     <Authors>Linh Nguyen</Authors>
     <Description>Provider-neutral ADO.NET durable stores for LinKit Outbox and Inbox.</Description>
     <PackageTags>linkit;outbox;inbox;ado.net;durable;aot</PackageTags>

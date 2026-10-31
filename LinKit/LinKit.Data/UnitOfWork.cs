@@ -55,6 +55,22 @@ public class UnitOfWork : IUnitOfWork
     public DbTransaction? CurrentTransaction => _transaction;
     public DbConnection? CurrentConnection => _connection;
 
+    internal async Task<DbConnection> EnsureConnectionAsync(CancellationToken ct)
+    {
+        await _syncLock.WaitAsync(ct);
+        try
+        {
+            _connection ??= await _factory.CreateConnectionAsync(ct);
+            if (_connection.State != ConnectionState.Open)
+                await _connection.OpenAsync(ct);
+            return _connection;
+        }
+        finally
+        {
+            _syncLock.Release();
+        }
+    }
+
     public async Task<DbTransaction> BeginTransactionAsync(CancellationToken ct = default)
     {
         await _syncLock.WaitAsync(ct);

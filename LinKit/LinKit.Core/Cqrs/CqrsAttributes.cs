@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 
 namespace LinKit.Core.Cqrs;
 
@@ -26,7 +26,7 @@ public sealed class CqrsContextAttribute : Attribute
 public sealed class CqrsBehaviorAttribute : Attribute
 {
     public Type TargetInterface { get; }
-    public int Order { get; }
+    public int Order { get; set; }
 
     public CqrsBehaviorAttribute(Type targetInterface, int order = 0)
     {

@@ -4,7 +4,7 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <PackageId>LinKit.Core</PackageId>
-    <Version>3.1.0</Version>
+    <Version>3.2.0</Version>
     <Authors>Linh Nguyen</Authors>
     <Description>A modular .NET toolkit with source-generated CQRS, endpoints, messaging, mapping, and dependency-injection helpers.</Description>
     <PackageTags>source-generator;performance;aot;cqrs;mediator;di;background;job</PackageTags>

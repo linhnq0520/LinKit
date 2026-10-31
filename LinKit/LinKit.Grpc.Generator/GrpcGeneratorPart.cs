@@ -567,7 +567,8 @@ internal static class GrpcGeneratorPart
                 sb.AppendLine("            {");
                 sb.AppendLine("                throw;");
                 sb.AppendLine("            }");
-                sb.AppendLine("            catch (ValidationException ex)");
+                sb.AppendLine("            catch (LinKit.Core.Validation.ValidationException ex) { throw new RpcException(new Status(StatusCode.InvalidArgument, ex.Message)); }");
+                sb.AppendLine("            catch (System.ComponentModel.DataAnnotations.ValidationException ex)");
                 sb.AppendLine("            {");
                 sb.AppendLine(
                     "                throw new RpcException(new Status(StatusCode.InvalidArgument, ex.Message));"
@@ -633,7 +634,7 @@ internal static class GrpcGeneratorPart
             var serviceBaseType = serviceGroup.Key;
             var generatedClassName = GetGeneratedServiceClassName(serviceBaseType, serviceBaseTypes);
 
-            sb.AppendLine($"            GrpcEndpointRouteBuilderExtensions.MapGrpcService<{generatedClassName}>(endpoints);");
+            sb.AppendLine($"            global::Microsoft.AspNetCore.Builder.GrpcEndpointRouteBuilderExtensions.MapGrpcService<{generatedClassName}>(endpoints);");
         }
         sb.AppendLine("            return endpoints;");
         sb.AppendLine("        }");

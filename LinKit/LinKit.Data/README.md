@@ -9,7 +9,7 @@ LinKit.Data supports **SQLite**, **PostgreSQL**, **SQL Server**, **MySQL**, and 
 
 ---
 
-## 💡 The Philosophy: Zero Reflection, Extreme Speed, Native AOT
+## Design Philosophy: Zero Reflection, Extreme Speed, Native AOT
 
 1. **Declare Domain Model / Entity:** Decorate clean C# POCO classes with intuitive attributes (`[Table]`, `[PrimaryKey]`, `[CompositeIndex]`, `[JsonColumn]`, `[SoftDelete]`, etc.).
 2. **Execute Business Logic in CQRS / Web APIs:** Use the **Typed AST ORM** or inject source-generated **`IRepository<TEntity, TId>`** to run type-safe queries, relational joins, set-based updates, or raw SQL with compiled ADO.NET speed.
@@ -18,7 +18,7 @@ LinKit does not require EF Core or heavy runtime ORMs. It provides additive sche
 
 ---
 
-## 🚀 Key Capabilities in 2.1.0
+## Key Capabilities
 
 ### 1. Compile-Time Typed AST ORM (Zero Reflection)
 - **`DataSession`**: Scoped, async-disposable session managing connection lifecycle, transactions, tenancy, and OpenTelemetry instrumentation (`ActivitySource("LinKit.Data")`).
@@ -91,7 +91,7 @@ List<Item> items = await session.QuerySqlAsync("SELECT * FROM items WHERE type =
 
 ---
 
-## 🏷️ Comprehensive Configuration Attributes
+## Configuration Attributes
 
 | Attribute | Scope | Description |
 | :--- | :--- | :--- |
@@ -118,7 +118,7 @@ List<Item> items = await session.QuerySqlAsync("SELECT * FROM items WHERE type =
 
 ---
 
-## 📦 Installation
+## Installation
 
 ```shell
 dotnet add package LinKit.Data
@@ -145,7 +145,7 @@ dotnet add package Oracle.ManagedDataAccess.Core
 
 ---
 
-## 🛠️ Usage Guide
+## Usage Guide
 
 ### 1. Declare Domain Entities
 
@@ -278,7 +278,7 @@ int affectedRows = await repository.DeleteWhereAsync(p => p.CategoryId.Equal(cat
 
 ---
 
-## 🔄 Unit of Work & Transactions
+## Unit of Work & Transactions
 
 ```csharp
 await using var tx = await session.BeginTransactionAsync(IsolationLevel.ReadCommitted, ct);
@@ -302,5 +302,5 @@ builder.Services.AddScoped<IUnitOfWorkInterceptor, AuditUnitOfWorkInterceptor>()
 
 ---
 
-## 📄 License
+## License
 Licensed under the [MIT License](https://github.com/linhnq0520/LinKit/blob/main/LICENSE).

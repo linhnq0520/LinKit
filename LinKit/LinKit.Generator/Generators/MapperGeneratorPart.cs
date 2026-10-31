@@ -383,7 +383,7 @@ public static class MapperGeneratorPart
             {
                 string mi = indent + "    ";
                 sb.AppendLine(
-                    $"{mi}public static {m.DestType}? To{m.DestShortName}(this {m.SourceType}? source, {m.DestType}? destination = default)\n{mi}{{"
+                    $"{mi}[return: global::System.Diagnostics.CodeAnalysis.NotNullIfNotNull(\"source\")]\n{mi}[return: global::System.Diagnostics.CodeAnalysis.NotNullIfNotNull(\"destination\")]\n{mi}public static {m.DestType}? To{m.DestShortName}(this {m.SourceType}? source, {m.DestType}? destination = default)\n{mi}{{"
                 );
                 sb.AppendLine($"{mi}    if (source == null) return destination;");
                 sb.AppendLine($"{mi}    if (destination == null)\n{mi}    {{");

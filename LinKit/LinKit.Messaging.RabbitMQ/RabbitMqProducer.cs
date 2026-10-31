@@ -9,7 +9,7 @@ public sealed class RabbitMqProducer : IBrokerProducer, IDisposable
 {
     private readonly RabbitMqConnectionFactory _connectionFactory;
     private readonly ConcurrentBag<IModel> _channelPool = new();
-    private readonly ConcurrentDictionary<string, string> _declaredExchanges = new(StringComparer.OrdinalIgnoreCase);
+    private readonly ConcurrentDictionary<string, string> _declaredExchanges = new(StringComparer.Ordinal);
     private readonly int _maxPoolSize;
     private readonly string _defaultExchangeType;
     private readonly bool _publisherConfirms;

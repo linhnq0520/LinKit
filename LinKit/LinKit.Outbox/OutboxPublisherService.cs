@@ -73,6 +73,7 @@ public class OutboxPublisherService : BackgroundService
                             var headers = new MessageHeaders(msg.Headers);
                             headers.MessageType = msg.MessageType;
                             headers.TryAdd(MessageHeaderNames.PartitionKey, msg.Id.ToString("N"));
+                            headers.TryAdd(MessageHeaderNames.MessageId, msg.Id.ToString("N"));
 
                             string topic = headers.DestinationTopic ?? string.Empty;
                             if (string.IsNullOrWhiteSpace(topic))

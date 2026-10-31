@@ -99,6 +99,7 @@ public class JobConfig : IEquatable<JobConfig>
 
         return Name == other.Name
             && IsActive == other.IsActive
+            && IsLogHistory == other.IsLogHistory
             && TimeZoneId == other.TimeZoneId
             && UtcOffsetHours == other.UtcOffsetHours
             && ScheduleType == other.ScheduleType
@@ -122,6 +123,7 @@ public class JobConfig : IEquatable<JobConfig>
         var hashCode = new HashCode();
         hashCode.Add(Name);
         hashCode.Add(IsActive);
+        hashCode.Add(IsLogHistory);
         hashCode.Add(TimeZoneId);
         hashCode.Add(UtcOffsetHours);
         hashCode.Add(ScheduleType);

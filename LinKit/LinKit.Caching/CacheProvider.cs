@@ -43,9 +43,9 @@ public class InMemoryCacheProvider : ICacheProvider
 
         public bool IsExpired(DateTime now)
         {
-            if (AbsoluteExpirationUtc.HasValue && now > AbsoluteExpirationUtc.Value)
+            if (AbsoluteExpirationUtc.HasValue && now >= AbsoluteExpirationUtc.Value)
                 return true;
-            if (SlidingExpiration.HasValue && now - LastAccessedUtc > SlidingExpiration.Value)
+            if (SlidingExpiration.HasValue && now - LastAccessedUtc >= SlidingExpiration.Value)
                 return true;
             return false;
         }
@@ -61,6 +61,18 @@ public class InMemoryCacheProvider : ICacheProvider
     {
         public TaskCompletionSource<object?> Completion { get; } =
             new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        // Set by Set/Remove on the same key while this flight is running: the factory result is then stale
+        // and must not overwrite the newer state (it is still returned to the callers that awaited it).
+        public bool Invalidated { get; set; }
+    }
+
+    private void InvalidateFlight(string key)
+    {
+        if (_inflight.TryGetValue(key, out var flight))
+        {
+            lock (flight) flight.Invalidated = true;
+        }
     }
 
     public InMemoryCacheProvider() : this(DefaultMaxCapacity, null) { }
@@ -80,6 +92,9 @@ public class InMemoryCacheProvider : ICacheProvider
         cancellationToken.ThrowIfCancellationRequested();
         return ValueTask.FromResult(TryGetValue<T>(key, out var value) ? value : default);
     }
+
+    /// <summary>Hit/miss lookup that does not depend on default(T): 0, false, Guid.Empty and cached null are hits.</summary>
+    internal bool TryGetFound<T>(string key, out T value) => TryGetValue<T>(key, out value);
 
     private bool TryGetValue<T>(string key, out T value)
     {
@@ -102,12 +117,27 @@ public class InMemoryCacheProvider : ICacheProvider
             value = typed;
             return true;
         }
+        // A cached null is a hit for reference/nullable types (null values ARE cached; use RemoveAsync to evict).
+        if (entry.Value is null && default(T) is null)
+        {
+            entry.LastAccessedUtc = now;
+            return true;
+        }
         return false;
     }
 
     public ValueTask SetAsync<T>(string key, T value, TimeSpan? ttl = null, TimeSpan? sliding = null, CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
+        if (ttl.HasValue && ttl.Value <= TimeSpan.Zero) throw new ArgumentOutOfRangeException(nameof(ttl), "TTL must be positive.");
+        if (sliding.HasValue && sliding.Value <= TimeSpan.Zero) throw new ArgumentOutOfRangeException(nameof(sliding), "Sliding expiration must be positive.");
+        InvalidateFlight(key);
+        SetCore(key, value, ttl, sliding);
+        return ValueTask.CompletedTask;
+    }
+
+    private void SetCore<T>(string key, T value, TimeSpan? ttl, TimeSpan? sliding)
+    {
         var now = Now;
 
         if (_cache.Count >= _maxCapacity && !_cache.ContainsKey(key))
@@ -120,7 +150,6 @@ public class InMemoryCacheProvider : ICacheProvider
             SlidingExpiration = sliding,
             LastAccessedUtc = now
         };
-        return ValueTask.CompletedTask;
     }
 
     // Hard cap: drop expired entries first, then least-recently-used until below the limit.
@@ -164,7 +193,12 @@ public class InMemoryCacheProvider : ICacheProvider
         try
         {
             var created = await factory(CancellationToken.None).ConfigureAwait(false);
-            await SetAsync(key, created, ttl).ConfigureAwait(false);
+            if (ttl.HasValue && ttl.Value <= TimeSpan.Zero) throw new ArgumentOutOfRangeException(nameof(ttl), "TTL must be positive.");
+            // Atomic with respect to Set/Remove: a concurrent invalidation drops this (stale) result from the cache.
+            lock (flight)
+            {
+                if (!flight.Invalidated) SetCore(key, created, ttl, null);
+            }
             value = created;
         }
         catch (Exception ex)
@@ -188,6 +222,7 @@ public class InMemoryCacheProvider : ICacheProvider
 
     public ValueTask RemoveAsync(string key, CancellationToken cancellationToken = default)
     {
+        InvalidateFlight(key);
         _cache.TryRemove(key, out _);
         return ValueTask.CompletedTask;
     }

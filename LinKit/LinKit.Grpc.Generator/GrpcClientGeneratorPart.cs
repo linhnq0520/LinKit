@@ -436,7 +436,7 @@ using Grpc.Core.Interceptors;
             }
             else
             {
-                requestMappings = "";
+                requestMappings = "()";
             }
 
             string responseInitialization;

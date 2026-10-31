@@ -4,7 +4,7 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <PackageId>LinKit.Sagas</PackageId>
-    <Version>1.1.0</Version>
+    <Version>1.2.0</Version>
     <Authors>Linh Nguyen</Authors>
     <Description>Saga step coordination and compensation abstractions with a replaceable state repository.</Description>
     <PackageTags>linkit;sagas;orchestration;microservices;aot</PackageTags>

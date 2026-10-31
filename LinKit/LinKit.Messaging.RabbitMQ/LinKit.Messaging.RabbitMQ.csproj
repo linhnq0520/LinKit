@@ -6,7 +6,7 @@
 		<ImplicitUsings>enable</ImplicitUsings>
 		<Nullable>enable</Nullable>
 		<PackageId>LinKit.Messaging.RabbitMQ</PackageId>
-		<Version>1.3.0</Version>
+		<Version>1.4.0</Version>
 		<Authors>Linh Nguyen</Authors>
 		<Description>RabbitMQ producer and consumer integration for LinKit messaging abstractions.</Description>
 		<PackageTags>linkit;messaging;rabbitmq;cqrs;aot</PackageTags>

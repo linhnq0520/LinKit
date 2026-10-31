@@ -24,11 +24,11 @@ public class InMemoryInboxStore : IInboxStore
         public DateTime? ExpiresAtUtc { get; set; }
     }
 
-    private readonly ConcurrentDictionary<string, InboxRecord> _processed = new();
+    private readonly ConcurrentDictionary<(string Consumer, string MessageId), InboxRecord> _processed = new();
 
     public Task<bool> HasBeenProcessedAsync(string messageId, string consumerName, CancellationToken cancellationToken = default)
     {
-        string key = $"{consumerName}:{messageId}";
+        var key = (consumerName, messageId);
         if (_processed.TryGetValue(key, out var record))
         {
             if (record.ExpiresAtUtc == null || record.ExpiresAtUtc > DateTime.UtcNow)
@@ -42,7 +42,7 @@ public class InMemoryInboxStore : IInboxStore
 
     public Task MarkProcessedAsync(string messageId, string consumerName, TimeSpan? expiry = null, CancellationToken cancellationToken = default)
     {
-        string key = $"{consumerName}:{messageId}";
+        var key = (consumerName, messageId);
         _processed[key] = new InboxRecord
         {
             ProcessedAtUtc = DateTime.UtcNow,

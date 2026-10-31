@@ -69,10 +69,10 @@ public sealed class TenantConsumeInterceptor(ITenantAccessor accessor) : IMessag
     public IDisposable? Enter(IServiceProvider scopedServices, IReadOnlyDictionary<string, object> headers)
     {
         var tenantId = TenantPropagation.Extract(new MessageHeaders(headers));
-        if (string.IsNullOrEmpty(tenantId) || accessor is not TenantAccessor tenantAccessor) return null;
+        if (accessor is not TenantAccessor tenantAccessor) return null;
 
         var previous = tenantAccessor.Context;
-        tenantAccessor.Context = new TenantContext { TenantId = tenantId };
+        tenantAccessor.Context = string.IsNullOrEmpty(tenantId) ? new TenantContext { TenantId = string.Empty } : new TenantContext { TenantId = tenantId };
         return new Restore(tenantAccessor, previous);
     }
 

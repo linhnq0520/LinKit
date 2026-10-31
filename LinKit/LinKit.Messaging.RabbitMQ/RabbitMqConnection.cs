@@ -27,6 +27,20 @@ public sealed class RabbitMqConnection : IBrokerConnection
         _requeueOnFailure = options?.Value.RequeueOnFailure ?? true;
     }
 
+    private static bool QueueExists(IConnection connection, string queueName)
+    {
+        try
+        {
+            using var probe = connection.CreateModel();
+            probe.QueueDeclarePassive(queueName);
+            return true;
+        }
+        catch (global::RabbitMQ.Client.Exceptions.OperationInterruptedException)
+        {
+            return false;
+        }
+    }
+
     public Task StartConsumingAsync(
         string queueName,
         Func<string, ReadOnlyMemory<byte>, IReadOnlyDictionary<string, object>, Task> onMessageReceived,
@@ -92,14 +106,24 @@ public sealed class RabbitMqConnection : IBrokerConnection
             }
         }
 
-        var declareOk = channel.QueueDeclare(
-            queue: queueName ?? string.Empty,
-            durable: durable,
-            exclusive: exclusive,
-            autoDelete: autoDelete,
-            arguments: args
-        );
-        string actualQueueName = declareOk.QueueName;
+        string actualQueueName;
+        if (!string.IsNullOrEmpty(queueName) && QueueExists(connection, queueName))
+        {
+            // Queue already exists (possibly created by another component with different
+            // arguments, e.g. auto_delete). Attach to it as-is to avoid PRECONDITION_FAILED.
+            actualQueueName = queueName;
+        }
+        else
+        {
+            var declareOk = channel.QueueDeclare(
+                queue: queueName ?? string.Empty,
+                durable: durable,
+                exclusive: exclusive,
+                autoDelete: autoDelete,
+                arguments: args
+            );
+            actualQueueName = declareOk.QueueName;
+        }
 
         if (!string.IsNullOrWhiteSpace(exchangeName))
         {

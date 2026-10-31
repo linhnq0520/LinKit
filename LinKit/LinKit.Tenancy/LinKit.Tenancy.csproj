@@ -4,7 +4,7 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <PackageId>LinKit.Tenancy</PackageId>
-    <Version>1.1.0</Version>
+    <Version>1.2.0</Version>
     <Authors>Linh Nguyen</Authors>
     <Description>Async-flow tenant context and explicit message-header propagation primitives for LinKit.</Description>
     <PackageTags>linkit;multitenancy;saas;aot</PackageTags>

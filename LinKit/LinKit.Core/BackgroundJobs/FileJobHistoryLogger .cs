@@ -9,6 +9,13 @@ public class FileJobHistoryLogger : IJobHistoryLogger
     private readonly string _filePath;
     private readonly SemaphoreSlim _lock = new(1, 1);
 
+    // Immutable once built; reuse instead of allocating per write.
+    private static readonly JsonSerializerOptions SerializerOptions = new()
+    {
+        Encoder = JavaScriptEncoder.Create(UnicodeRanges.All),
+        TypeInfoResolver = JobHistoryJsonContext.Default,
+    };
+
     public FileJobHistoryLogger(string filePath)
     {
         _filePath = filePath;
@@ -22,18 +29,8 @@ public class FileJobHistoryLogger : IJobHistoryLogger
         await _lock.WaitAsync(cancellationToken);
         try
         {
-            var options = new JsonSerializerOptions
-            {
-                Encoder = JavaScriptEncoder.Create(UnicodeRanges.All),
-                TypeInfoResolver = JobHistoryJsonContext.Default,
-            };
-
-            var json = JsonSerializer.Serialize(history, options);
+            var json = JsonSerializer.Serialize(history, SerializerOptions);
             await File.AppendAllTextAsync(_filePath, json + Environment.NewLine, cancellationToken);
-        }
-        catch
-        {
-            // Bỏ qua lỗi ghi file
         }
         finally
         {

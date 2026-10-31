@@ -397,9 +397,15 @@ EXEC (@sqlRole);";
             }
             catch (Exception ex)
             {
-                if (await CanConnectDirectlyAsync(ct))
+                if (await CanConnectDirectlyAsync(ct).ConfigureAwait(false))
                 {
                     _logger?.LogDebug("Direct connection to target database succeeded. Skipping system creation.");
+                    return;
+                }
+
+                if (ex is OperationCanceledException && ct.IsCancellationRequested)
+                {
+                    _logger?.LogWarning("Auto-create PostgreSQL database '{Database}' was canceled.", targetDbName);
                     return;
                 }
 

@@ -757,6 +757,12 @@ internal static class EndpointsGeneratorPart
         sb.AppendLine();
         sb.AppendLine($"namespace {generatedNamespace}");
         sb.AppendLine("{");
+        sb.AppendLine(
+            "    [global::System.Diagnostics.CodeAnalysis.UnconditionalSuppressMessage(\"Trimming\", \"IL2026:RequiresUnreferencedCode\", Justification = \"Generated endpoint routes and response formatting are configured with source generated JSON contexts\")]"
+        );
+        sb.AppendLine(
+            "    [global::System.Diagnostics.CodeAnalysis.UnconditionalSuppressMessage(\"AOT\", \"IL3050:RequiresDynamicCode\", Justification = \"Generated endpoint routes and response formatting are configured with source generated JSON contexts\")]"
+        );
         sb.AppendLine("    internal static partial class GeneratedEndpointsExtensions");
         sb.AppendLine("    {");
         sb.AppendLine();
@@ -783,8 +789,8 @@ internal static class EndpointsGeneratorPart
         sb.AppendLine("                    };");
         sb.AppendLine("                }");
         sb.AppendLine("                var val = res.GetRawValue();");
-        sb.AppendLine("                if (val is null) return statusCode switch { 204 => Microsoft.AspNetCore.Http.Results.NoContent(), 201 => Microsoft.AspNetCore.Http.Results.StatusCode(201), _ => Microsoft.AspNetCore.Http.Results.Ok() };");
-        sb.AppendLine("                return statusCode switch { 201 => Microsoft.AspNetCore.Http.TypedResults.Created(string.Empty, result), _ => Microsoft.AspNetCore.Http.TypedResults.Ok(result) };");
+        sb.AppendLine("                if (val is null) return statusCode switch { 204 => Microsoft.AspNetCore.Http.Results.NoContent(), 201 => Microsoft.AspNetCore.Http.Results.StatusCode(201), 202 => Microsoft.AspNetCore.Http.Results.Accepted(), _ => Microsoft.AspNetCore.Http.Results.StatusCode(statusCode) };");
+        sb.AppendLine("                return statusCode switch { 201 => Microsoft.AspNetCore.Http.TypedResults.Created(string.Empty, result), 202 => Microsoft.AspNetCore.Http.TypedResults.Accepted(string.Empty, result), 204 => Microsoft.AspNetCore.Http.Results.NoContent(), 200 => Microsoft.AspNetCore.Http.TypedResults.Ok(result), _ => Microsoft.AspNetCore.Http.Results.Json(result, statusCode: statusCode) };");
         sb.AppendLine("            }");
         sb.AppendLine();
         sb.AppendLine("            // 1. Clean Architecture FileResponse");
@@ -817,7 +823,9 @@ internal static class EndpointsGeneratorPart
         sb.AppendLine("            {");
         sb.AppendLine("                200 => Microsoft.AspNetCore.Http.TypedResults.Ok(result),");
         sb.AppendLine("                201 => Microsoft.AspNetCore.Http.TypedResults.Created(string.Empty, result),");
-        sb.AppendLine("                _ => Microsoft.AspNetCore.Http.TypedResults.Ok(result)");
+        sb.AppendLine("                202 => Microsoft.AspNetCore.Http.TypedResults.Accepted(string.Empty, result),");
+        sb.AppendLine("                204 => Microsoft.AspNetCore.Http.Results.NoContent(),");
+        sb.AppendLine("                _ => Microsoft.AspNetCore.Http.Results.Json(result, statusCode: statusCode)");
         sb.AppendLine("            };");
         sb.AppendLine("        }");
         sb.AppendLine();

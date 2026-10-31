@@ -83,21 +83,10 @@ public class DefaultGrpcClientFactory(
 
     public void Dispose()
     {
-        if (_channelProvider is IDisposable d1)
-        {
-            d1.Dispose();
-        }
-
-        if (_interceptorProvider is IDisposable d2)
-        {
-            d2.Dispose();
-        }
-
-        if (_metadataProvider is IDisposable d3)
-        {
-            d3.Dispose();
-        }
-
+        // Providers are injected (typically owned by the DI container), so the factory must not dispose them.
+        _clients.Clear();
+        _invokers.Clear();
+        _channels.Clear();
         GC.SuppressFinalize(this);
     }
 }

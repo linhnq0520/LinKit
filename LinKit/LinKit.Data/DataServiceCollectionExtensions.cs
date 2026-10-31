@@ -183,7 +183,7 @@ public static class DataServiceCollectionExtensions
                 opt.ConnectionCreator!,
                 new SqlDialect(opt.Dialect),
                 opt.TenantIdResolver?.Invoke(sp),
-                opt.CommandConfigurator);
+                opt.CommandConfigurator) { SharedUnitOfWork = sp.GetRequiredService<IUnitOfWork>() as UnitOfWork };
         });
         services.AddScoped<IDatabaseInitializer, DatabaseInitializer>();
         services.AddScoped<ISchemaSynchronizer, SchemaSynchronizer>();

@@ -80,7 +80,7 @@ public static class ResiliencePipeline
             {
                 breaker?.OnFailure(options.BreakerFailureThreshold);
 
-                bool retryable = ex is not CircuitBreakerOpenException && (options.ShouldRetry?.Invoke(ex) ?? true);
+                bool retryable = ex is not CircuitBreakerOpenException && (options.ShouldRetry?.Invoke(ex) ?? ex is not OperationCanceledException);
                 if (!retryable || attempt >= options.MaxRetries)
                     throw;
 

@@ -14,17 +14,25 @@ public static class GrpcContextAccessor
 
     public static Scope BeginScope(ServerCallContext? context)
     {
+        var scope = new Scope(_current.Value);
         _current.Value = context;
-        return new Scope();
+        return scope;
     }
-
     public static void Reset() => _current.Value = null;
 
-    public readonly struct Scope : IDisposable
+    public sealed class Scope : IDisposable
     {
+        private readonly ServerCallContext? _previous;
+        private int _disposed;
+
+        internal Scope(ServerCallContext? previous) => _previous = previous;
+
         public void Dispose()
         {
-            _current.Value = null;
+            if (Interlocked.Exchange(ref _disposed, 1) == 0)
+            {
+                _current.Value = _previous;
+            }
         }
     }
 }

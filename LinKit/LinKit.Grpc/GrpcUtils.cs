@@ -1,4 +1,5 @@
-﻿using System.Text.Json.Serialization;
+﻿using System.Diagnostics.CodeAnalysis;
+using System.Text.Json.Serialization;
 using Grpc.Core;
 
 namespace LinKit.Grpc;
@@ -21,6 +22,12 @@ public class GrpcUtils
         return context.GetHeaderValue(key);
     }
 
+    [RequiresUnreferencedCode(
+        "Reference-type headers are deserialized with reflection-based System.Text.Json. Use the JsonSerializerContext overload instead."
+    )]
+    [RequiresDynamicCode(
+        "Reference-type headers are deserialized with reflection-based System.Text.Json. Use the JsonSerializerContext overload instead."
+    )]
     public static T? GetHeaderValue<T>(string key)
     {
         var context = GrpcContextAccessor.Current;

@@ -72,12 +72,12 @@ Packages follow independent semantic versions. Current project versions are:
 
 | Package | Version | Package | Version |
 |---|---:|---|---:|
-| `LinKit.Core` | 3.1.0 | `LinKit.Data` | 2.2.0 |
-| `LinKit.Grpc` | 2.0.0 | `LinKit.Json` | 1.0.0 |
-| `LinKit.Messaging.Kafka` | 1.2.0 | `LinKit.Messaging.RabbitMQ` | 1.3.0 |
-| `LinKit.Outbox` | 1.1.0 | `LinKit.Outbox.Data` | 1.1.0 |
-| `LinKit.Caching` | 1.2.0 | `LinKit.Resilience` | 1.1.0 |
-| `LinKit.Tenancy` | 1.1.0 | `LinKit.Sagas` | 1.1.0 |
+| `LinKit.Core` | 3.3.0 | `LinKit.Data` | 2.3.2 |
+| `LinKit.Grpc` | 2.1.2 | `LinKit.Json` | 1.1.1 |
+| `LinKit.Messaging.Kafka` | 1.3.1 | `LinKit.Messaging.RabbitMQ` | 1.4.1 |
+| `LinKit.Outbox` | 1.2.1 | `LinKit.Outbox.Data` | 1.2.1 |
+| `LinKit.Caching` | 1.3.1 | `LinKit.Resilience` | 1.2.1 |
+| `LinKit.Tenancy` | 1.2.1 | `LinKit.Sagas` | 1.2.1 |
 
 These are repository project metadata values. Core 3.0.0, Data 2.0.0, and gRPC 2.0.0 include generated namespace changes; see each package README for migration notes. Other package versions are unchanged.
 

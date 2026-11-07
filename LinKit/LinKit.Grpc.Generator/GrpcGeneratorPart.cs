@@ -305,7 +305,7 @@ internal static class GrpcGeneratorPart
         return (simpleMaps, listMaps);
     }
 
-    private static string? GetTransformTemplate(ITypeSymbol sourceType, ITypeSymbol destType)
+    internal static string? GetTransformTemplate(ITypeSymbol sourceType, ITypeSymbol destType)
     {
         var srcStr = sourceType.ToDisplayString();
         var destStr = destType.ToDisplayString();
@@ -490,7 +490,7 @@ internal static class GrpcGeneratorPart
 
                 var mediatorAccessor = string.IsNullOrEmpty(endpoint.MediatorKeyedService)
                     ? "_mediator"
-                    : $"(_serviceProvider.GetKeyedService<LinKit.Core.Cqrs.IMediator>(\"{endpoint.MediatorKeyedService}\") ?? _mediator)";
+                    : $"(_serviceProvider.GetKeyedService<LinKit.Core.Cqrs.IMediator>(\"{Microsoft.CodeAnalysis.CSharp.SymbolDisplay.FormatLiteral(endpoint.MediatorKeyedService!, quote: false)}\") ?? _mediator)";
 
                 sb.AppendLine(
                     $"        public override async Task<{endpoint.GrpcResponseType}> {endpoint.GrpcMethodName}({endpoint.GrpcRequestType} request, ServerCallContext context)"
@@ -505,7 +505,7 @@ internal static class GrpcGeneratorPart
                 sb.AppendLine(
                     endpoint.IsCommandWithoutResult
                         ? $"                await {mediatorAccessor}.SendAsync(cqrsRequest, context.CancellationToken);"
-                        : $"                var cqrsResult = await {mediatorAccessor}.{mediatorMethod}<{endpoint.CqrsResponseType.TrimEnd('?')}>(cqrsRequest, context.CancellationToken);"
+                        : $"                var cqrsResult = await {mediatorAccessor}.{mediatorMethod}(cqrsRequest, context.CancellationToken);"
                 );
                 if (cqrsResponseIsNullable)
                 {

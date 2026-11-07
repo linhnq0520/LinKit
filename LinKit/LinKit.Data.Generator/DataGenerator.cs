@@ -15,7 +15,8 @@ public class DataGenerator : IIncrementalGenerator
     private static readonly SymbolDisplayFormat FullyQualifiedNullableFormat =
         SymbolDisplayFormat.FullyQualifiedFormat.WithMiscellaneousOptions(
             SymbolDisplayFormat.FullyQualifiedFormat.MiscellaneousOptions
-            | SymbolDisplayMiscellaneousOptions.IncludeNullableReferenceTypeModifier);
+                | SymbolDisplayMiscellaneousOptions.IncludeNullableReferenceTypeModifier
+        );
 
     private static readonly DiagnosticDescriptor MultiTenantFilterNotEnforced = new(
         id: "LNKDATA001",
@@ -24,7 +25,8 @@ public class DataGenerator : IIncrementalGenerator
         category: "LinKit.Data",
         defaultSeverity: DiagnosticSeverity.Warning,
         isEnabledByDefault: true,
-        description: "The MultiTenant attribute is metadata only until tenant-aware repository filtering is implemented.");
+        description: "The MultiTenant attribute is metadata only until tenant-aware repository filtering is implemented."
+    );
 
     private static readonly DiagnosticDescriptor PrimaryKeyFallback = new(
         id: "LNKDATA002",
@@ -33,7 +35,8 @@ public class DataGenerator : IIncrementalGenerator
         category: "LinKit.Data",
         defaultSeverity: DiagnosticSeverity.Warning,
         isEnabledByDefault: true,
-        description: "Declare an explicit or conventional primary key to avoid generating repository operations against an arbitrary property.");
+        description: "Declare an explicit or conventional primary key to avoid generating repository operations against an arbitrary property."
+    );
 
     private static readonly DiagnosticDescriptor SoftDeleteColumnNotMapped = new(
         id: "LNKDATA003",
@@ -42,7 +45,8 @@ public class DataGenerator : IIncrementalGenerator
         category: "LinKit.Data",
         defaultSeverity: DiagnosticSeverity.Warning,
         isEnabledByDefault: true,
-        description: "Map the soft-delete column as an entity property or add it through a database migration.");
+        description: "Map the soft-delete column as an entity property or add it through a database migration."
+    );
 
     private static readonly DiagnosticDescriptor DataContextEntityNotFound = new(
         id: "LNKDATA004",
@@ -51,203 +55,371 @@ public class DataGenerator : IIncrementalGenerator
         category: "LinKit.Data",
         defaultSeverity: DiagnosticSeverity.Error,
         isEnabledByDefault: true,
-        description: "Declare the referenced entity with [Table] in the consuming compilation.");
+        description: "Declare the referenced entity with [Table] in the consuming compilation."
+    );
+
+    private static readonly DiagnosticDescriptor UnsafeSqlIdentifier = new(
+        id: "LNKDATA005",
+        title: "SQL identifier contains unsafe characters",
+        messageFormat: "Identifier '{1}' on entity '{0}' contains quote or bracket characters that cannot be safely embedded in generated SQL. Rename the table/column or remove the quote characters.",
+        category: "LinKit.Data",
+        defaultSeverity: DiagnosticSeverity.Error,
+        isEnabledByDefault: true,
+        description: "Generated SQL embeds identifiers as literals; quote characters would break or alter the statement."
+    );
+
+    private static readonly DiagnosticDescriptor DataRecordBaseTypeNotInCompilation = new(
+        id: "LNKDT006",
+        title: "[DataRecord] inherits mapped members from a referenced assembly",
+        messageFormat: "'{0}' projects members inherited from base type '{1}', which is declared outside this compilation. Those members are read from metadata only, so a change to the referenced assembly silently changes the generated projection.",
+        category: "LinKit.Data",
+        defaultSeverity: DiagnosticSeverity.Warning,
+        isEnabledByDefault: true,
+        description: "Base members of a [DataRecord] are discovered from symbol metadata. Keep the referenced base type on a version that declares every expected property, or re-declare the members in this compilation."
+    );
+
+    private static readonly char[] UnsafeIdentifierChars = { '"', '\'', '[', ']', '`' };
+
+    private static bool ContainsUnsafeIdentifierChars(string identifier) =>
+        identifier.IndexOfAny(UnsafeIdentifierChars) >= 0;
 
     public void Initialize(IncrementalGeneratorInitializationContext context)
     {
         // 1. Discover [Table] classes
-        var entityDeclarations = context.SyntaxProvider
-            .CreateSyntaxProvider(
-                predicate: static (s, _) => s is ClassDeclarationSyntax c && c.AttributeLists.Count > 0,
+        var entityDeclarations = context
+            .SyntaxProvider.CreateSyntaxProvider(
+                predicate: static (s, _) =>
+                    s is ClassDeclarationSyntax c && c.AttributeLists.Count > 0,
                 transform: static (ctx, _) => GetEntitySemanticModel(ctx)
             )
             .Where(static m => m is not null);
 
         // 2. Discover [DataRepository] interfaces
-        var repoDeclarations = context.SyntaxProvider
-            .CreateSyntaxProvider(
+        var repoDeclarations = context
+            .SyntaxProvider.CreateSyntaxProvider(
                 predicate: static (s, _) =>
-                    s is InterfaceDeclarationSyntax i &&
-                    (i.AttributeLists.Count > 0 || i.Identifier.ValueText.EndsWith("Repository", StringComparison.Ordinal)),
+                    s is InterfaceDeclarationSyntax i
+                    && (
+                        i.AttributeLists.Count > 0
+                        || i.Identifier.ValueText.EndsWith("Repository", StringComparison.Ordinal)
+                    ),
                 transform: static (ctx, _) => GetRepositorySemanticModel(ctx)
             )
             .Where(static m => m is not null);
 
         // 3. Discover [DataMigration] classes
-        var migrationDeclarations = context.SyntaxProvider
-            .CreateSyntaxProvider(
-                predicate: static (s, _) => s is ClassDeclarationSyntax c && c.AttributeLists.Count > 0,
+        var migrationDeclarations = context
+            .SyntaxProvider.CreateSyntaxProvider(
+                predicate: static (s, _) =>
+                    s is ClassDeclarationSyntax c && c.AttributeLists.Count > 0,
                 transform: static (ctx, _) => GetMigrationSemanticModel(ctx)
             )
             .Where(static m => m is not null);
 
         // 4. Discover [DataRecord] classes
-        var recordDeclarations = context.SyntaxProvider
-            .CreateSyntaxProvider(
-                predicate: static (s, _) => s is TypeDeclarationSyntax t && t.AttributeLists.Count > 0,
+        var recordDeclarations = context
+            .SyntaxProvider.CreateSyntaxProvider(
+                predicate: static (s, _) =>
+                    s is TypeDeclarationSyntax t && t.AttributeLists.Count > 0,
                 transform: static (ctx, _) => GetDataRecordSemanticModel(ctx)
             )
             .Where(static m => m is not null);
 
         // 5. Discover [DataContext] classes
-        var contextDeclarations = context.SyntaxProvider
-            .CreateSyntaxProvider(
-                predicate: static (s, _) => s is ClassDeclarationSyntax c && c.AttributeLists.Count > 0,
+        var contextDeclarations = context
+            .SyntaxProvider.CreateSyntaxProvider(
+                predicate: static (s, _) =>
+                    s is ClassDeclarationSyntax c && c.AttributeLists.Count > 0,
                 transform: static (ctx, _) => GetDataContextSemanticModel(ctx)
             )
             .Where(static m => m is not null);
 
-        var rootNamespace = context.AnalyzerConfigOptionsProvider
-            .Select(static (provider, _) =>
+        var rootNamespace = context.AnalyzerConfigOptionsProvider.Select(
+            static (provider, _) =>
                 provider.GlobalOptions.TryGetValue("build_property.RootNamespace", out var value)
                     ? value
-                    : string.Empty);
+                    : string.Empty
+        );
 
-        var combined = entityDeclarations.Collect()
+        var combined = entityDeclarations
+            .Collect()
             .Combine(repoDeclarations.Collect())
             .Combine(migrationDeclarations.Collect())
             .Combine(recordDeclarations.Collect())
             .Combine(contextDeclarations.Collect())
             .Combine(rootNamespace);
 
-        context.RegisterSourceOutput(combined, static (spc, source) =>
-        {
-            var entities = source.Left.Left.Left.Left.Left.Where(e => e != null).Select(e => e!).ToList();
-            var repos = source.Left.Left.Left.Left.Right.Where(r => r != null).Select(r => r!).ToList();
-            var migrations = source.Left.Left.Left.Right.Where(m => m != null).Select(m => m!).ToList();
-            var records = source.Left.Left.Right.Where(r => r != null).Select(r => r!).ToList();
-            var contexts = source.Left.Right.Where(c => c != null).Select(c => c!).ToList();
-            var rootNamespaceValue = string.IsNullOrWhiteSpace(source.Right)
-                ? entities.FirstOrDefault()?.AssemblyName
-                    ?? migrations.FirstOrDefault()?.AssemblyName
-                    ?? string.Empty
-                : source.Right;
-            var generatedNamespace = string.IsNullOrWhiteSpace(rootNamespaceValue)
-                ? "Generated"
-                : $"{rootNamespaceValue}.Generated";
-
-            foreach (var entity in entities)
+        context.RegisterSourceOutput(
+            combined,
+            static (spc, source) =>
             {
-                if (entity.RepositoryInterfaceName is not null &&
-                    string.IsNullOrWhiteSpace(entity.RepositoryInterfaceNamespace))
-                    entity.RepositoryInterfaceNamespace = rootNamespaceValue;
-            }
+                var entities = source
+                    .Left.Left.Left.Left.Left.Where(e => e != null)
+                    .Select(e => e!)
+                    .ToList();
+                var repos = source
+                    .Left.Left.Left.Left.Right.Where(r => r != null)
+                    .Select(r => r!)
+                    .ToList();
+                var migrations = source
+                    .Left.Left.Left.Right.Where(m => m != null)
+                    .Select(m => m!)
+                    .ToList();
+                var records = source.Left.Left.Right.Where(r => r != null).Select(r => r!).ToList();
+                var contexts = source.Left.Right.Where(c => c != null).Select(c => c!).ToList();
+                var rootNamespaceValue = string.IsNullOrWhiteSpace(source.Right)
+                    ? entities.FirstOrDefault()?.AssemblyName
+                        ?? migrations.FirstOrDefault()?.AssemblyName
+                        ?? string.Empty
+                    : source.Right;
+                var generatedNamespace = string.IsNullOrWhiteSpace(rootNamespaceValue)
+                    ? "Generated"
+                    : $"{rootNamespaceValue}.Generated";
 
-            foreach (var dataContext in contexts)
-            {
-                foreach (var entityType in dataContext.EntityTypeNames)
+                foreach (var entity in entities)
                 {
-                    if (!entities.Any(entity => string.Equals(entity.FullName, entityType, StringComparison.Ordinal)))
+                    if (
+                        entity.RepositoryInterfaceName is not null
+                        && string.IsNullOrWhiteSpace(entity.RepositoryInterfaceNamespace)
+                    )
+                        entity.RepositoryInterfaceNamespace = rootNamespaceValue;
+                }
+
+                foreach (var dataContext in contexts)
+                {
+                    foreach (var entityType in dataContext.EntityTypeNames)
                     {
-                        spc.ReportDiagnostic(Diagnostic.Create(
-                            DataContextEntityNotFound,
-                            dataContext.Location,
-                            dataContext.ClassName,
-                            entityType));
+                        if (
+                            !entities.Any(entity =>
+                                string.Equals(entity.FullName, entityType, StringComparison.Ordinal)
+                            )
+                        )
+                        {
+                            spc.ReportDiagnostic(
+                                Diagnostic.Create(
+                                    DataContextEntityNotFound,
+                                    dataContext.Location,
+                                    dataContext.ClassName,
+                                    entityType
+                                )
+                            );
+                        }
                     }
                 }
-            }
 
-            foreach (var entity in entities)
-            {
-                if (entity.TenantColumn is not null && entity.Location is not null)
+                foreach (var entity in entities)
                 {
-                    spc.ReportDiagnostic(Diagnostic.Create(
-                        MultiTenantFilterNotEnforced,
-                        entity.Location,
-                        entity.FullName));
+                    if (entity.TenantColumn is not null && entity.Location is not null)
+                    {
+                        spc.ReportDiagnostic(
+                            Diagnostic.Create(
+                                MultiTenantFilterNotEnforced,
+                                entity.Location,
+                                entity.FullName
+                            )
+                        );
+                    }
+
+                    if (entity.HasFallbackPrimaryKey && entity.Location is not null)
+                    {
+                        spc.ReportDiagnostic(
+                            Diagnostic.Create(PrimaryKeyFallback, entity.Location, entity.FullName)
+                        );
+                    }
+
+                    if (
+                        entity.SoftDeleteColumn is not null
+                        && entity.Location is not null
+                        && !entity.Properties.Any(property =>
+                            string.Equals(
+                                property.ColumnName,
+                                entity.SoftDeleteColumn,
+                                StringComparison.OrdinalIgnoreCase
+                            )
+                        )
+                    )
+                    {
+                        spc.ReportDiagnostic(
+                            Diagnostic.Create(
+                                SoftDeleteColumnNotMapped,
+                                entity.Location,
+                                entity.FullName,
+                                entity.SoftDeleteColumn
+                            )
+                        );
+                    }
+
+                    if (entity.Location is not null)
+                    {
+                        if (ContainsUnsafeIdentifierChars(entity.TableName))
+                        {
+                            spc.ReportDiagnostic(
+                                Diagnostic.Create(
+                                    UnsafeSqlIdentifier,
+                                    entity.Location,
+                                    entity.FullName,
+                                    entity.TableName
+                                )
+                            );
+                        }
+
+                        foreach (var property in entity.Properties)
+                        {
+                            if (ContainsUnsafeIdentifierChars(property.ColumnName))
+                            {
+                                spc.ReportDiagnostic(
+                                    Diagnostic.Create(
+                                        UnsafeSqlIdentifier,
+                                        entity.Location,
+                                        entity.FullName,
+                                        property.ColumnName
+                                    )
+                                );
+                            }
+                        }
+                    }
                 }
 
-                if (entity.HasFallbackPrimaryKey && entity.Location is not null)
+                foreach (var record in records)
                 {
-                    spc.ReportDiagnostic(Diagnostic.Create(
-                        PrimaryKeyFallback,
-                        entity.Location,
-                        entity.FullName));
+                    if (record.Location is null)
+                        continue;
+                    foreach (var baseTypeName in record.MetadataBaseTypeNames)
+                    {
+                        spc.ReportDiagnostic(
+                            Diagnostic.Create(
+                                DataRecordBaseTypeNotInCompilation,
+                                record.Location,
+                                record.ClassName,
+                                baseTypeName
+                            )
+                        );
+                    }
                 }
 
-                if (entity.SoftDeleteColumn is not null
-                    && entity.Location is not null
-                    && !entity.Properties.Any(property =>
-                        string.Equals(property.ColumnName, entity.SoftDeleteColumn, StringComparison.OrdinalIgnoreCase)))
+                if (
+                    entities.Count == 0
+                    && migrations.Count == 0
+                    && records.Count == 0
+                    && contexts.Count == 0
+                )
                 {
-                    spc.ReportDiagnostic(Diagnostic.Create(
-                        SoftDeleteColumnNotMapped,
-                        entity.Location,
-                        entity.FullName,
-                        entity.SoftDeleteColumn));
+                    return;
                 }
+
+                if (entities.Count > 0)
+                {
+                    // Generate Mappers
+                    var mappersSrc = GenerateMappers(entities, generatedNamespace);
+                    spc.AddSource(
+                        "LinKit.Data.Mappers.g.cs",
+                        SourceText.From(mappersSrc, Encoding.UTF8)
+                    );
+
+                    // Generate Schema Provider
+                    var schemaSrc = GenerateSchemaProvider(entities, generatedNamespace);
+                    spc.AddSource(
+                        "LinKit.Data.SchemaProvider.g.cs",
+                        SourceText.From(schemaSrc, Encoding.UTF8)
+                    );
+
+                    var repositoryInterfacesSrc = GenerateRepositoryInterfaces(entities);
+                    if (entities.Any(entity => entity.RepositoryInterfaceFullName is not null))
+                        spc.AddSource(
+                            "LinKit.Data.RepositoryContracts.g.cs",
+                            SourceText.From(repositoryInterfacesSrc, Encoding.UTF8)
+                        );
+
+                    // Generate Repositories
+                    var reposSrc = GenerateRepositories(entities, repos, rootNamespaceValue);
+                    spc.AddSource(
+                        "LinKit.Data.Repositories.g.cs",
+                        SourceText.From(reposSrc, Encoding.UTF8)
+                    );
+
+                    // Generate Typed AOT ORM (Table, Map, Patch, TypedRepository, Extensions)
+                    var typedOrmSrc = GenerateTypedORM(entities, generatedNamespace);
+                    spc.AddSource(
+                        "LinKit.Data.TypedORM.g.cs",
+                        SourceText.From(typedOrmSrc, Encoding.UTF8)
+                    );
+                }
+
+                if (records.Count > 0)
+                {
+                    var projectionsSrc = GenerateProjections(records, entities);
+                    spc.AddSource(
+                        "LinKit.Data.Projections.g.cs",
+                        SourceText.From(projectionsSrc, Encoding.UTF8)
+                    );
+                }
+
+                if (contexts.Count > 0)
+                {
+                    var contextsSrc = GenerateContexts(contexts, entities);
+                    spc.AddSource(
+                        "LinKit.Data.Contexts.g.cs",
+                        SourceText.From(contextsSrc, Encoding.UTF8)
+                    );
+                }
+
+                if (migrations.Count > 0)
+                {
+                    // Generate Migration Registry
+                    var migrationsSrc = GenerateMigrationsRegistry(migrations, generatedNamespace);
+                    spc.AddSource(
+                        "LinKit.Data.Migrations.g.cs",
+                        SourceText.From(migrationsSrc, Encoding.UTF8)
+                    );
+                }
+
+                // Generate Dependency Injection
+                var diSrc = GenerateDependencyInjection(
+                    entities,
+                    repos,
+                    migrations,
+                    contexts,
+                    rootNamespaceValue,
+                    generatedNamespace
+                );
+                spc.AddSource(
+                    "LinKit.Data.DependencyInjection.g.cs",
+                    SourceText.From(diSrc, Encoding.UTF8)
+                );
             }
-
-            if (entities.Count == 0 && migrations.Count == 0 && records.Count == 0 && contexts.Count == 0)
-            {
-                return;
-            }
-
-            if (entities.Count > 0)
-            {
-                // Generate Mappers
-                var mappersSrc = GenerateMappers(entities, generatedNamespace);
-                spc.AddSource("LinKit.Data.Mappers.g.cs", SourceText.From(mappersSrc, Encoding.UTF8));
-
-                // Generate Schema Provider
-                var schemaSrc = GenerateSchemaProvider(entities, generatedNamespace);
-                spc.AddSource("LinKit.Data.SchemaProvider.g.cs", SourceText.From(schemaSrc, Encoding.UTF8));
-
-                var repositoryInterfacesSrc = GenerateRepositoryInterfaces(entities);
-                if (entities.Any(entity => entity.RepositoryInterfaceFullName is not null))
-                    spc.AddSource("LinKit.Data.RepositoryContracts.g.cs", SourceText.From(repositoryInterfacesSrc, Encoding.UTF8));
-
-                // Generate Repositories
-                var reposSrc = GenerateRepositories(entities, repos, rootNamespaceValue);
-                spc.AddSource("LinKit.Data.Repositories.g.cs", SourceText.From(reposSrc, Encoding.UTF8));
-
-                // Generate Typed AOT ORM (Table, Map, Patch, TypedRepository, Extensions)
-                var typedOrmSrc = GenerateTypedORM(entities, generatedNamespace);
-                spc.AddSource("LinKit.Data.TypedORM.g.cs", SourceText.From(typedOrmSrc, Encoding.UTF8));
-            }
-
-            if (records.Count > 0)
-            {
-                var projectionsSrc = GenerateProjections(records, entities);
-                spc.AddSource("LinKit.Data.Projections.g.cs", SourceText.From(projectionsSrc, Encoding.UTF8));
-            }
-
-            if (contexts.Count > 0)
-            {
-                var contextsSrc = GenerateContexts(contexts, entities);
-                spc.AddSource("LinKit.Data.Contexts.g.cs", SourceText.From(contextsSrc, Encoding.UTF8));
-            }
-
-            if (migrations.Count > 0)
-            {
-                // Generate Migration Registry
-                var migrationsSrc = GenerateMigrationsRegistry(migrations, generatedNamespace);
-                spc.AddSource("LinKit.Data.Migrations.g.cs", SourceText.From(migrationsSrc, Encoding.UTF8));
-            }
-
-            // Generate Dependency Injection
-            var diSrc = GenerateDependencyInjection(entities, repos, migrations, contexts, rootNamespaceValue, generatedNamespace);
-            spc.AddSource("LinKit.Data.DependencyInjection.g.cs", SourceText.From(diSrc, Encoding.UTF8));
-        });
+        );
     }
 
     private static MigrationModel? GetMigrationSemanticModel(GeneratorSyntaxContext ctx)
     {
         var classDecl = (ClassDeclarationSyntax)ctx.Node;
         var symbol = ctx.SemanticModel.GetDeclaredSymbol(classDecl);
-        if (symbol == null) return null;
+        if (symbol == null)
+            return null;
 
-        var migrationAttr = symbol.GetAttributes().FirstOrDefault(a =>
-            a.AttributeClass?.Name is "MigrationAttribute" or "Migration" or "DataMigrationAttribute" or "DataMigration" ||
-            a.AttributeClass?.ToDisplayString() is "LinKit.Data.MigrationAttribute" or "LinKit.Data.DataMigrationAttribute");
+        var migrationAttr = symbol
+            .GetAttributes()
+            .FirstOrDefault(a =>
+                a.AttributeClass?.Name
+                    is "MigrationAttribute"
+                        or "Migration"
+                        or "DataMigrationAttribute"
+                        or "DataMigration"
+                || a.AttributeClass?.ToDisplayString()
+                    is "LinKit.Data.MigrationAttribute"
+                        or "LinKit.Data.DataMigrationAttribute"
+            );
 
-        if (migrationAttr == null) return null;
+        if (migrationAttr == null)
+            return null;
 
         string version = "";
         string description = "";
 
-        if (migrationAttr.ConstructorArguments.Length > 0 && migrationAttr.ConstructorArguments[0].Value is string v)
+        if (
+            migrationAttr.ConstructorArguments.Length > 0
+            && migrationAttr.ConstructorArguments[0].Value is string v
+        )
         {
             version = v;
         }
@@ -260,7 +432,8 @@ public class DataGenerator : IIncrementalGenerator
                 description = desc;
         }
 
-        if (string.IsNullOrWhiteSpace(version)) return null;
+        if (string.IsNullOrWhiteSpace(version))
+            return null;
 
         return new MigrationModel
         {
@@ -268,7 +441,7 @@ public class DataGenerator : IIncrementalGenerator
             ClassName = symbol.Name,
             AssemblyName = symbol.ContainingAssembly.Name,
             Version = version,
-            Description = description
+            Description = description,
         };
     }
 
@@ -276,16 +449,25 @@ public class DataGenerator : IIncrementalGenerator
     {
         var classDecl = (ClassDeclarationSyntax)ctx.Node;
         var symbol = ctx.SemanticModel.GetDeclaredSymbol(classDecl);
-        if (symbol is not INamedTypeSymbol classSymbol) return null;
+        if (symbol is not INamedTypeSymbol classSymbol)
+            return null;
 
-        var tableAttr = classSymbol.GetAttributes().FirstOrDefault(a =>
-            a.AttributeClass?.Name == "TableAttribute" ||
-            a.AttributeClass?.ToDisplayString() == "LinKit.Data.TableAttribute");
+        var tableAttr = classSymbol
+            .GetAttributes()
+            .FirstOrDefault(a =>
+                a.AttributeClass?.Name == "TableAttribute"
+                || a.AttributeClass?.ToDisplayString() == "LinKit.Data.TableAttribute"
+            );
 
-        if (tableAttr == null) return null;
+        if (tableAttr == null)
+            return null;
 
         string tableName = classSymbol.Name;
-        if (tableAttr.ConstructorArguments.Length > 0 && tableAttr.ConstructorArguments[0].Value is string customName && !string.IsNullOrWhiteSpace(customName))
+        if (
+            tableAttr.ConstructorArguments.Length > 0
+            && tableAttr.ConstructorArguments[0].Value is string customName
+            && !string.IsNullOrWhiteSpace(customName)
+        )
         {
             tableName = customName;
         }
@@ -305,82 +487,134 @@ public class DataGenerator : IIncrementalGenerator
         }
         else
         {
-            var commentAttr = classSymbol.GetAttributes().FirstOrDefault(a =>
-                a.AttributeClass?.Name == "CommentAttribute" ||
-                a.AttributeClass?.ToDisplayString() == "LinKit.Data.CommentAttribute");
-            if (commentAttr != null && commentAttr.ConstructorArguments.Length > 0 && commentAttr.ConstructorArguments[0].Value is string tcVal)
+            var commentAttr = classSymbol
+                .GetAttributes()
+                .FirstOrDefault(a =>
+                    a.AttributeClass?.Name == "CommentAttribute"
+                    || a.AttributeClass?.ToDisplayString() == "LinKit.Data.CommentAttribute"
+                );
+            if (
+                commentAttr != null
+                && commentAttr.ConstructorArguments.Length > 0
+                && commentAttr.ConstructorArguments[0].Value is string tcVal
+            )
             {
                 tableComment = tcVal;
             }
         }
 
         var checkConstraints = new List<CheckConstraintModel>();
-        foreach (var chkAttr in classSymbol.GetAttributes().Where(a =>
-            a.AttributeClass?.Name == "CheckConstraintAttribute" ||
-            a.AttributeClass?.ToDisplayString() == "LinKit.Data.CheckConstraintAttribute"))
+        foreach (
+            var chkAttr in classSymbol
+                .GetAttributes()
+                .Where(a =>
+                    a.AttributeClass?.Name == "CheckConstraintAttribute"
+                    || a.AttributeClass?.ToDisplayString() == "LinKit.Data.CheckConstraintAttribute"
+                )
+        )
         {
-            if (chkAttr.ConstructorArguments.Length > 0 && chkAttr.ConstructorArguments[0].Value is string sqlExpr)
+            if (
+                chkAttr.ConstructorArguments.Length > 0
+                && chkAttr.ConstructorArguments[0].Value is string sqlExpr
+            )
             {
                 string? chkName = null;
                 var nArg = chkAttr.NamedArguments.FirstOrDefault(k => k.Key == "Name");
-                if (nArg.Value.Value is string nameVal) chkName = nameVal;
-                checkConstraints.Add(new CheckConstraintModel { SqlExpression = sqlExpr, Name = chkName });
+                if (nArg.Value.Value is string nameVal)
+                    chkName = nameVal;
+                checkConstraints.Add(
+                    new CheckConstraintModel { SqlExpression = sqlExpr, Name = chkName }
+                );
             }
         }
 
         var compositeIndexes = new List<CompositeIndexModel>();
-        foreach (var cIdxAttr in classSymbol.GetAttributes().Where(a =>
-            a.AttributeClass?.Name == "CompositeIndexAttribute" ||
-            a.AttributeClass?.ToDisplayString() == "LinKit.Data.CompositeIndexAttribute"))
+        foreach (
+            var cIdxAttr in classSymbol
+                .GetAttributes()
+                .Where(a =>
+                    a.AttributeClass?.Name == "CompositeIndexAttribute"
+                    || a.AttributeClass?.ToDisplayString() == "LinKit.Data.CompositeIndexAttribute"
+                )
+        )
         {
-            if (cIdxAttr.ConstructorArguments.Length >= 2 &&
-                cIdxAttr.ConstructorArguments[0].Value is string idxName &&
-                cIdxAttr.ConstructorArguments[1].Values is var colConstants)
+            if (
+                cIdxAttr.ConstructorArguments.Length >= 2
+                && cIdxAttr.ConstructorArguments[0].Value is string idxName
+                && cIdxAttr.ConstructorArguments[1].Values is var colConstants
+            )
             {
-                var colList = colConstants.Select(c => c.Value?.ToString()).Where(s => !string.IsNullOrEmpty(s)).Select(s => s!).ToList();
+                var colList = colConstants
+                    .Select(c => c.Value?.ToString())
+                    .Where(s => !string.IsNullOrEmpty(s))
+                    .Select(s => s!)
+                    .ToList();
                 bool isUnique = false;
                 var uNamed = cIdxAttr.NamedArguments.FirstOrDefault(k => k.Key == "IsUnique");
-                if (uNamed.Value.Value is bool uVal) isUnique = uVal;
-                compositeIndexes.Add(new CompositeIndexModel { IndexName = idxName, ColumnNames = colList, IsUnique = isUnique });
+                if (uNamed.Value.Value is bool uVal)
+                    isUnique = uVal;
+                compositeIndexes.Add(
+                    new CompositeIndexModel
+                    {
+                        IndexName = idxName,
+                        ColumnNames = colList,
+                        IsUnique = isUnique,
+                    }
+                );
             }
-
         }
 
-        var repositoryAttribute = classSymbol.GetAttributes().FirstOrDefault(a =>
-            a.AttributeClass?.Name == "DataRepositoryAttribute" ||
-            a.AttributeClass?.ToDisplayString() == "LinKit.Data.DataRepositoryAttribute");
+        var repositoryAttribute = classSymbol
+            .GetAttributes()
+            .FirstOrDefault(a =>
+                a.AttributeClass?.Name == "DataRepositoryAttribute"
+                || a.AttributeClass?.ToDisplayString() == "LinKit.Data.DataRepositoryAttribute"
+            );
         string? repositoryInterfaceName = $"I{classSymbol.Name}Repository";
         string? repositoryInterfaceNamespace = null;
         if (repositoryAttribute != null)
         {
-            var configuredInterfaceName = repositoryAttribute.ConstructorArguments.FirstOrDefault().Value as string;
+            var configuredInterfaceName =
+                repositoryAttribute.ConstructorArguments.FirstOrDefault().Value as string;
             if (!string.IsNullOrWhiteSpace(configuredInterfaceName))
                 repositoryInterfaceName = configuredInterfaceName;
 
-            repositoryInterfaceNamespace = repositoryAttribute.NamedArguments
-                .FirstOrDefault(argument => argument.Key == "Namespace").Value.Value as string;
+            repositoryInterfaceNamespace =
+                repositoryAttribute
+                    .NamedArguments.FirstOrDefault(argument => argument.Key == "Namespace")
+                    .Value.Value as string;
         }
 
         string? softDeleteColumn = null;
-        var softDeleteAttr = classSymbol.GetAttributes().FirstOrDefault(a =>
-            a.AttributeClass?.Name == "SoftDeleteAttribute" ||
-            a.AttributeClass?.ToDisplayString() == "LinKit.Data.SoftDeleteAttribute");
+        var softDeleteAttr = classSymbol
+            .GetAttributes()
+            .FirstOrDefault(a =>
+                a.AttributeClass?.Name == "SoftDeleteAttribute"
+                || a.AttributeClass?.ToDisplayString() == "LinKit.Data.SoftDeleteAttribute"
+            );
         if (softDeleteAttr != null)
         {
-            softDeleteColumn = softDeleteAttr.ConstructorArguments.Length > 0 && softDeleteAttr.ConstructorArguments[0].Value is string sCol
-                ? sCol
-                : "DeletedAt";
+            softDeleteColumn =
+                softDeleteAttr.ConstructorArguments.Length > 0
+                && softDeleteAttr.ConstructorArguments[0].Value is string sCol
+                    ? sCol
+                    : "DeletedAt";
         }
 
         string? tenantColumn = null;
-        var tenantAttr = classSymbol.GetAttributes().FirstOrDefault(a =>
-            a.AttributeClass?.Name == "MultiTenantAttribute" ||
-            a.AttributeClass?.ToDisplayString() == "LinKit.Data.MultiTenantAttribute");
+        var tenantAttr = classSymbol
+            .GetAttributes()
+            .FirstOrDefault(a =>
+                a.AttributeClass?.Name == "MultiTenantAttribute"
+                || a.AttributeClass?.ToDisplayString() == "LinKit.Data.MultiTenantAttribute"
+            );
         if (tenantAttr != null)
         {
-            tenantColumn = tenantAttr.ConstructorArguments.Length > 0 && tenantAttr.ConstructorArguments[0].Value is string tCol
-                ? tCol
-                : "TenantId";
+            tenantColumn =
+                tenantAttr.ConstructorArguments.Length > 0
+                && tenantAttr.ConstructorArguments[0].Value is string tCol
+                    ? tCol
+                    : "TenantId";
         }
 
         var properties = new List<PropertyModel>();
@@ -393,239 +627,420 @@ public class DataGenerator : IIncrementalGenerator
             var levelStart = properties.Count;
             foreach (var member in currentSymbol.GetMembers().OfType<IPropertySymbol>())
             {
-                if (member.IsStatic || member.DeclaredAccessibility != Accessibility.Public) continue;
-                if (member.GetMethod == null || member.SetMethod == null) continue;
-                if (!seen.Add(member.Name)) continue; // derived class takes precedence
+                if (member.IsStatic || member.DeclaredAccessibility != Accessibility.Public)
+                    continue;
+                if (member.GetMethod == null || member.SetMethod == null)
+                    continue;
+                if (!seen.Add(member.Name))
+                    continue; // derived class takes precedence
 
-            // Check [IgnoreColumn]
-            if (member.GetAttributes().Any(a => a.AttributeClass?.Name == "IgnoreColumnAttribute" || a.AttributeClass?.ToDisplayString() == "LinKit.Data.IgnoreColumnAttribute"))
-                continue;
+                // Check [IgnoreColumn]
+                if (
+                    member
+                        .GetAttributes()
+                        .Any(a =>
+                            a.AttributeClass?.Name == "IgnoreColumnAttribute"
+                            || a.AttributeClass?.ToDisplayString()
+                                == "LinKit.Data.IgnoreColumnAttribute"
+                        )
+                )
+                    continue;
 
-            string colName = member.Name;
-            string? customSqlType = null;
-            int? maxLength = null;
-            bool isFixedLength = false;
-            int? precision = null;
-            int? scale = null;
-            bool? nullableOverride = null;
-            string? defaultValueSql = null;
-            bool isUnicode = true;
-            bool isJson = false;
-            bool isConcurrencyCheck = false;
-            string? colComment = null;
-            string? fkTargetTable = null;
-            string? fkTargetColumn = null;
-            int? fkOnDelete = null;
+                string colName = member.Name;
+                string? customSqlType = null;
+                int? maxLength = null;
+                bool isFixedLength = false;
+                int? precision = null;
+                int? scale = null;
+                bool? nullableOverride = null;
+                string? defaultValueSql = null;
+                bool isUnicode = true;
+                bool isJson = false;
+                bool isConcurrencyCheck = false;
+                string? colComment = null;
+                string? fkTargetTable = null;
+                string? fkTargetColumn = null;
+                int? fkOnDelete = null;
 
-            var colAttr = member.GetAttributes().FirstOrDefault(a =>
-                a.AttributeClass?.Name == "ColumnAttribute" || a.AttributeClass?.ToDisplayString() == "LinKit.Data.ColumnAttribute");
-            if (colAttr != null)
-            {
-                if (colAttr.ConstructorArguments.Length > 0 && colAttr.ConstructorArguments[0].Value is string cName)
-                    colName = cName;
-
-                var orderNamed = colAttr.NamedArguments.FirstOrDefault(kv => kv.Key == "Order");
-                if (orderNamed.Value.Value is int orderVal) columnOrders[member.Name] = orderVal;
-
-                var customSqlNamed = colAttr.NamedArguments.FirstOrDefault(kv => kv.Key == "CustomSqlType");
-                if (customSqlNamed.Value.Value is string cSql) customSqlType = cSql;
-
-                var lenNamed = colAttr.NamedArguments.FirstOrDefault(kv => kv.Key == "Length");
-                if (lenNamed.Value.Value is int lenVal && lenVal > 0) maxLength = lenVal;
-
-                var precNamed = colAttr.NamedArguments.FirstOrDefault(kv => kv.Key == "Precision");
-                if (precNamed.Value.Value is int pVal && pVal > 0) precision = pVal;
-
-                var scaleNamed = colAttr.NamedArguments.FirstOrDefault(kv => kv.Key == "Scale");
-                if (scaleNamed.Value.Value is int sScaleVal && sScaleVal > 0) scale = sScaleVal;
-
-                var nullableNamed = colAttr.NamedArguments.FirstOrDefault(kv => kv.Key == "IsNullable");
-                if (nullableNamed.Value.Value is bool nullableValue) nullableOverride = nullableValue;
-
-                var commNamed = colAttr.NamedArguments.FirstOrDefault(kv => kv.Key == "Comment");
-                if (commNamed.Value.Value is string cmVal) colComment = cmVal;
-            }
-
-            // [MaxLength]
-            var maxLenAttr = member.GetAttributes().FirstOrDefault(a =>
-                a.AttributeClass?.Name == "MaxLengthAttribute" || a.AttributeClass?.ToDisplayString() == "LinKit.Data.MaxLengthAttribute");
-            if (maxLenAttr != null && maxLenAttr.ConstructorArguments.Length > 0 && maxLenAttr.ConstructorArguments[0].Value is int mlVal)
-            {
-                maxLength = mlVal;
-            }
-
-            // [FixedLength]
-            var fixedLenAttr = member.GetAttributes().FirstOrDefault(a =>
-                a.AttributeClass?.Name == "FixedLengthAttribute" || a.AttributeClass?.ToDisplayString() == "LinKit.Data.FixedLengthAttribute");
-            if (fixedLenAttr != null && fixedLenAttr.ConstructorArguments.Length > 0 && fixedLenAttr.ConstructorArguments[0].Value is int flVal)
-            {
-                maxLength = flVal;
-                isFixedLength = true;
-            }
-
-            // [DecimalPrecision]
-            var decPrecAttr = member.GetAttributes().FirstOrDefault(a =>
-                a.AttributeClass?.Name == "DecimalPrecisionAttribute" || a.AttributeClass?.ToDisplayString() == "LinKit.Data.DecimalPrecisionAttribute");
-            if (decPrecAttr != null && decPrecAttr.ConstructorArguments.Length > 0)
-            {
-                if (decPrecAttr.ConstructorArguments[0].Value is int pVal) precision = pVal;
-                if (decPrecAttr.ConstructorArguments.Length > 1 && decPrecAttr.ConstructorArguments[1].Value is int scVal) scale = scVal;
-            }
-
-            // [DefaultValueSql]
-            var defValAttr = member.GetAttributes().FirstOrDefault(a =>
-                a.AttributeClass?.Name == "DefaultValueSqlAttribute" || a.AttributeClass?.ToDisplayString() == "LinKit.Data.DefaultValueSqlAttribute");
-            if (defValAttr != null && defValAttr.ConstructorArguments.Length > 0 && defValAttr.ConstructorArguments[0].Value is string defVal)
-            {
-                defaultValueSql = defVal;
-            }
-
-            // [Unicode]
-            var uniAttr = member.GetAttributes().FirstOrDefault(a =>
-                a.AttributeClass?.Name == "UnicodeAttribute" || a.AttributeClass?.ToDisplayString() == "LinKit.Data.UnicodeAttribute");
-            if (uniAttr != null && uniAttr.ConstructorArguments.Length > 0 && uniAttr.ConstructorArguments[0].Value is bool uniVal)
-            {
-                isUnicode = uniVal;
-            }
-
-            // [JsonColumn]
-            string? jsonContextTypeFullName = null;
-            var jsonAttr = member.GetAttributes().FirstOrDefault(a =>
-                a.AttributeClass?.Name == "JsonColumnAttribute" || a.AttributeClass?.ToDisplayString() == "LinKit.Data.JsonColumnAttribute");
-            if (jsonAttr != null)
-            {
-                isJson = true;
-                if (jsonAttr.ConstructorArguments.Length > 0 && jsonAttr.ConstructorArguments[0].Value is ITypeSymbol customCtx)
+                var colAttr = member
+                    .GetAttributes()
+                    .FirstOrDefault(a =>
+                        a.AttributeClass?.Name == "ColumnAttribute"
+                        || a.AttributeClass?.ToDisplayString() == "LinKit.Data.ColumnAttribute"
+                    );
+                if (colAttr != null)
                 {
-                    jsonContextTypeFullName = customCtx.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
+                    if (
+                        colAttr.ConstructorArguments.Length > 0
+                        && colAttr.ConstructorArguments[0].Value is string cName
+                    )
+                        colName = cName;
+
+                    var orderNamed = colAttr.NamedArguments.FirstOrDefault(kv => kv.Key == "Order");
+                    if (orderNamed.Value.Value is int orderVal)
+                        columnOrders[member.Name] = orderVal;
+
+                    var customSqlNamed = colAttr.NamedArguments.FirstOrDefault(kv =>
+                        kv.Key == "CustomSqlType"
+                    );
+                    if (customSqlNamed.Value.Value is string cSql)
+                        customSqlType = cSql;
+
+                    var lenNamed = colAttr.NamedArguments.FirstOrDefault(kv => kv.Key == "Length");
+                    if (lenNamed.Value.Value is int lenVal && lenVal > 0)
+                        maxLength = lenVal;
+
+                    var precNamed = colAttr.NamedArguments.FirstOrDefault(kv =>
+                        kv.Key == "Precision"
+                    );
+                    if (precNamed.Value.Value is int pVal && pVal > 0)
+                        precision = pVal;
+
+                    var scaleNamed = colAttr.NamedArguments.FirstOrDefault(kv => kv.Key == "Scale");
+                    if (scaleNamed.Value.Value is int sScaleVal && sScaleVal > 0)
+                        scale = sScaleVal;
+
+                    var nullableNamed = colAttr.NamedArguments.FirstOrDefault(kv =>
+                        kv.Key == "IsNullable"
+                    );
+                    if (nullableNamed.Value.Value is bool nullableValue)
+                        nullableOverride = nullableValue;
+
+                    var commNamed = colAttr.NamedArguments.FirstOrDefault(kv =>
+                        kv.Key == "Comment"
+                    );
+                    if (commNamed.Value.Value is string cmVal)
+                        colComment = cmVal;
                 }
-                else
+
+                // [MaxLength]
+                var maxLenAttr = member
+                    .GetAttributes()
+                    .FirstOrDefault(a =>
+                        a.AttributeClass?.Name == "MaxLengthAttribute"
+                        || a.AttributeClass?.ToDisplayString() == "LinKit.Data.MaxLengthAttribute"
+                    );
+                if (
+                    maxLenAttr != null
+                    && maxLenAttr.ConstructorArguments.Length > 0
+                    && maxLenAttr.ConstructorArguments[0].Value is int mlVal
+                )
                 {
-                    var namedCtx = jsonAttr.NamedArguments.FirstOrDefault(k => k.Key == "JsonSerializerContextType");
-                    if (namedCtx.Value.Value is ITypeSymbol namedCustomCtx)
+                    maxLength = mlVal;
+                }
+
+                // [FixedLength]
+                var fixedLenAttr = member
+                    .GetAttributes()
+                    .FirstOrDefault(a =>
+                        a.AttributeClass?.Name == "FixedLengthAttribute"
+                        || a.AttributeClass?.ToDisplayString() == "LinKit.Data.FixedLengthAttribute"
+                    );
+                if (
+                    fixedLenAttr != null
+                    && fixedLenAttr.ConstructorArguments.Length > 0
+                    && fixedLenAttr.ConstructorArguments[0].Value is int flVal
+                )
+                {
+                    maxLength = flVal;
+                    isFixedLength = true;
+                }
+
+                // [DecimalPrecision]
+                var decPrecAttr = member
+                    .GetAttributes()
+                    .FirstOrDefault(a =>
+                        a.AttributeClass?.Name == "DecimalPrecisionAttribute"
+                        || a.AttributeClass?.ToDisplayString()
+                            == "LinKit.Data.DecimalPrecisionAttribute"
+                    );
+                if (decPrecAttr != null && decPrecAttr.ConstructorArguments.Length > 0)
+                {
+                    if (decPrecAttr.ConstructorArguments[0].Value is int pVal)
+                        precision = pVal;
+                    if (
+                        decPrecAttr.ConstructorArguments.Length > 1
+                        && decPrecAttr.ConstructorArguments[1].Value is int scVal
+                    )
+                        scale = scVal;
+                }
+
+                // [DefaultValueSql]
+                var defValAttr = member
+                    .GetAttributes()
+                    .FirstOrDefault(a =>
+                        a.AttributeClass?.Name == "DefaultValueSqlAttribute"
+                        || a.AttributeClass?.ToDisplayString()
+                            == "LinKit.Data.DefaultValueSqlAttribute"
+                    );
+                if (
+                    defValAttr != null
+                    && defValAttr.ConstructorArguments.Length > 0
+                    && defValAttr.ConstructorArguments[0].Value is string defVal
+                )
+                {
+                    defaultValueSql = defVal;
+                }
+
+                // [Unicode]
+                var uniAttr = member
+                    .GetAttributes()
+                    .FirstOrDefault(a =>
+                        a.AttributeClass?.Name == "UnicodeAttribute"
+                        || a.AttributeClass?.ToDisplayString() == "LinKit.Data.UnicodeAttribute"
+                    );
+                if (
+                    uniAttr != null
+                    && uniAttr.ConstructorArguments.Length > 0
+                    && uniAttr.ConstructorArguments[0].Value is bool uniVal
+                )
+                {
+                    isUnicode = uniVal;
+                }
+
+                // [JsonColumn]
+                string? jsonContextTypeFullName = null;
+                var jsonAttr = member
+                    .GetAttributes()
+                    .FirstOrDefault(a =>
+                        a.AttributeClass?.Name == "JsonColumnAttribute"
+                        || a.AttributeClass?.ToDisplayString() == "LinKit.Data.JsonColumnAttribute"
+                    );
+                if (jsonAttr != null)
+                {
+                    isJson = true;
+                    if (
+                        jsonAttr.ConstructorArguments.Length > 0
+                        && jsonAttr.ConstructorArguments[0].Value is ITypeSymbol customCtx
+                    )
                     {
-                        jsonContextTypeFullName = namedCustomCtx.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
+                        jsonContextTypeFullName = customCtx.ToDisplayString(
+                            SymbolDisplayFormat.FullyQualifiedFormat
+                        );
+                    }
+                    else
+                    {
+                        var namedCtx = jsonAttr.NamedArguments.FirstOrDefault(k =>
+                            k.Key == "JsonSerializerContextType"
+                        );
+                        if (namedCtx.Value.Value is ITypeSymbol namedCustomCtx)
+                        {
+                            jsonContextTypeFullName = namedCustomCtx.ToDisplayString(
+                                SymbolDisplayFormat.FullyQualifiedFormat
+                            );
+                        }
                     }
                 }
-            }
 
-            // [ConcurrencyCheck]
-            if (member.GetAttributes().Any(a => a.AttributeClass?.Name == "ConcurrencyCheckAttribute" || a.AttributeClass?.ToDisplayString() == "LinKit.Data.ConcurrencyCheckAttribute"))
-            {
-                isConcurrencyCheck = true;
-            }
-
-            // [Comment]
-            var commAttr = member.GetAttributes().FirstOrDefault(a =>
-                a.AttributeClass?.Name == "CommentAttribute" || a.AttributeClass?.ToDisplayString() == "LinKit.Data.CommentAttribute");
-            if (commAttr != null && commAttr.ConstructorArguments.Length > 0 && commAttr.ConstructorArguments[0].Value is string commStr)
-            {
-                colComment = commStr;
-            }
-
-            // [ForeignKey]
-            var fkAttr = member.GetAttributes().FirstOrDefault(a =>
-                a.AttributeClass?.Name == "ForeignKeyAttribute" || a.AttributeClass?.ToDisplayString() == "LinKit.Data.ForeignKeyAttribute");
-            if (fkAttr != null && fkAttr.ConstructorArguments.Length > 0 && fkAttr.ConstructorArguments[0].Value is string targetTable)
-            {
-                fkTargetTable = targetTable;
-                var targetColArg = fkAttr.NamedArguments.FirstOrDefault(k => k.Key == "TargetColumn");
-                if (targetColArg.Value.Value is string tCol) fkTargetColumn = tCol;
-
-                var onDeleteArg = fkAttr.NamedArguments.FirstOrDefault(k => k.Key == "OnDelete");
-                if (onDeleteArg.Value.Value is int odVal) fkOnDelete = odVal;
-            }
-
-            // Check if member is Enum
-            bool isEnum = member.Type.TypeKind == TypeKind.Enum ||
-                         (member.Type is INamedTypeSymbol ntsEnum && ntsEnum.OriginalDefinition.SpecialType == SpecialType.System_Nullable_T && ntsEnum.TypeArguments[0].TypeKind == TypeKind.Enum);
-
-            bool isPk = false;
-            bool isAutoIncrement = false;
-            var pkAttr = member.GetAttributes().FirstOrDefault(a =>
-                a.AttributeClass?.Name == "PrimaryKeyAttribute" || a.AttributeClass?.ToDisplayString() == "LinKit.Data.PrimaryKeyAttribute");
-            if (pkAttr != null)
-            {
-                isPk = true;
-                if (pkAttr.ConstructorArguments.Length > 0 && pkAttr.ConstructorArguments[0].Value is bool auto)
+                // [ConcurrencyCheck]
+                if (
+                    member
+                        .GetAttributes()
+                        .Any(a =>
+                            a.AttributeClass?.Name == "ConcurrencyCheckAttribute"
+                            || a.AttributeClass?.ToDisplayString()
+                                == "LinKit.Data.ConcurrencyCheckAttribute"
+                        )
+                )
                 {
-                    isAutoIncrement = auto;
+                    isConcurrencyCheck = true;
                 }
-                var autoNamed = pkAttr.NamedArguments.FirstOrDefault(kv => kv.Key == "AutoIncrement");
-                if (autoNamed.Value.Value is bool autoNamedVal) isAutoIncrement = autoNamedVal;
-            }
-            else if (member.Name.Equals("Id", StringComparison.OrdinalIgnoreCase) ||
-                     member.Name.Equals(classSymbol.Name + "Id", StringComparison.OrdinalIgnoreCase))
-            {
-                isPk = true;
-                if (member.Type.SpecialType == SpecialType.System_Int32 || member.Type.SpecialType == SpecialType.System_Int64)
+
+                // [Comment]
+                var commAttr = member
+                    .GetAttributes()
+                    .FirstOrDefault(a =>
+                        a.AttributeClass?.Name == "CommentAttribute"
+                        || a.AttributeClass?.ToDisplayString() == "LinKit.Data.CommentAttribute"
+                    );
+                if (
+                    commAttr != null
+                    && commAttr.ConstructorArguments.Length > 0
+                    && commAttr.ConstructorArguments[0].Value is string commStr
+                )
                 {
-                    isAutoIncrement = true;
+                    colComment = commStr;
                 }
-            }
 
-            // Identity only makes sense for integral keys; Guid/string/etc. keys are assigned by the application.
-            if (isAutoIncrement && member.Type.SpecialType != SpecialType.System_Int32 && member.Type.SpecialType != SpecialType.System_Int64 && member.Type.SpecialType != SpecialType.System_Int16)
-                isAutoIncrement = false;
-
-            bool isIndexed = false;
-            bool isUniqueIndex = false;
-            string? idxName = null;
-            var idxAttr = member.GetAttributes().FirstOrDefault(a =>
-                a.AttributeClass?.Name == "IndexedAttribute" || a.AttributeClass?.ToDisplayString() == "LinKit.Data.IndexedAttribute");
-            if (idxAttr != null)
-            {
-                isIndexed = true;
-                if (idxAttr.ConstructorArguments.Length > 0 && idxAttr.ConstructorArguments[0].Value is bool uVal)
+                // [ForeignKey]
+                var fkAttr = member
+                    .GetAttributes()
+                    .FirstOrDefault(a =>
+                        a.AttributeClass?.Name == "ForeignKeyAttribute"
+                        || a.AttributeClass?.ToDisplayString() == "LinKit.Data.ForeignKeyAttribute"
+                    );
+                if (
+                    fkAttr != null
+                    && fkAttr.ConstructorArguments.Length > 0
+                    && fkAttr.ConstructorArguments[0].Value is string targetTable
+                )
                 {
-                    isUniqueIndex = uVal;
+                    fkTargetTable = targetTable;
+                    var targetColArg = fkAttr.NamedArguments.FirstOrDefault(k =>
+                        k.Key == "TargetColumn"
+                    );
+                    if (targetColArg.Value.Value is string tCol)
+                        fkTargetColumn = tCol;
+
+                    var onDeleteArg = fkAttr.NamedArguments.FirstOrDefault(k =>
+                        k.Key == "OnDelete"
+                    );
+                    if (onDeleteArg.Value.Value is int odVal)
+                        fkOnDelete = odVal;
                 }
-                var uNamed = idxAttr.NamedArguments.FirstOrDefault(kv => kv.Key == "IsUnique");
-                if (uNamed.Value.Value is bool uNamedVal) isUniqueIndex = uNamedVal;
 
-                var inNamed = idxAttr.NamedArguments.FirstOrDefault(kv => kv.Key == "IndexName");
-                if (inNamed.Value.Value is string inVal) idxName = inVal;
-            }
+                // Check if member is Enum
+                bool isEnum =
+                    member.Type.TypeKind == TypeKind.Enum
+                    || (
+                        member.Type is INamedTypeSymbol ntsEnum
+                        && ntsEnum.OriginalDefinition.SpecialType == SpecialType.System_Nullable_T
+                        && ntsEnum.TypeArguments[0].TypeKind == TypeKind.Enum
+                    );
 
-            bool isNullable = nullableOverride ??
-                              (member.NullableAnnotation == NullableAnnotation.Annotated ||
-                               (member.Type.IsReferenceType && member.NullableAnnotation == NullableAnnotation.None) ||
-                               (member.Type is INamedTypeSymbol nts && nts.OriginalDefinition.SpecialType == SpecialType.System_Nullable_T));
-            if (isPk) isNullable = false;
-
-            var underlyingType = (member.Type is INamedTypeSymbol ntsNullable && ntsNullable.OriginalDefinition.SpecialType == SpecialType.System_Nullable_T)
-                ? ntsNullable.TypeArguments[0]
-                : member.Type;
-
-                properties.Add(new PropertyModel
+                bool isPk = false;
+                bool isAutoIncrement = false;
+                var pkAttr = member
+                    .GetAttributes()
+                    .FirstOrDefault(a =>
+                        a.AttributeClass?.Name == "PrimaryKeyAttribute"
+                        || a.AttributeClass?.ToDisplayString() == "LinKit.Data.PrimaryKeyAttribute"
+                    );
+                if (pkAttr != null)
                 {
-                    PropertyName = member.Name,
-                    ColumnName = colName,
-                    TypeFullName = member.Type.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat),
-                    CleanTypeName = member.Type.ToDisplayString(SymbolDisplayFormat.MinimallyQualifiedFormat),
-                    UnderlyingClrTypeName = underlyingType.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat).Replace("global::", ""),
-                    IsPrimaryKey = isPk,
-                    IsAutoIncrement = isAutoIncrement,
-                    IsNullable = isNullable,
-                    IsIndexed = isIndexed,
-                    IsUniqueIndex = isUniqueIndex,
-                    IndexName = idxName,
-                    CustomSqlType = customSqlType,
-                    MaxLength = maxLength,
-                    IsFixedLength = isFixedLength,
-                    Precision = precision,
-                    Scale = scale,
-                    DefaultValueSql = defaultValueSql,
-                    IsUnicode = isUnicode,
-                    IsJson = isJson,
-                    IsConcurrencyCheck = isConcurrencyCheck,
-                    Comment = colComment,
-                    ForeignKeyTargetTable = fkTargetTable,
-                    ForeignKeyTargetColumn = fkTargetColumn,
-                    ForeignKeyOnDelete = fkOnDelete,
-                    IsEnum = isEnum,
-                    JsonContextTypeFullName = jsonContextTypeFullName
-                });
+                    isPk = true;
+                    if (
+                        pkAttr.ConstructorArguments.Length > 0
+                        && pkAttr.ConstructorArguments[0].Value is bool auto
+                    )
+                    {
+                        isAutoIncrement = auto;
+                    }
+                    var autoNamed = pkAttr.NamedArguments.FirstOrDefault(kv =>
+                        kv.Key == "AutoIncrement"
+                    );
+                    if (autoNamed.Value.Value is bool autoNamedVal)
+                        isAutoIncrement = autoNamedVal;
+                }
+                else if (
+                    member.Name.Equals("Id", StringComparison.OrdinalIgnoreCase)
+                    || member.Name.Equals(
+                        classSymbol.Name + "Id",
+                        StringComparison.OrdinalIgnoreCase
+                    )
+                )
+                {
+                    isPk = true;
+                    if (
+                        member.Type.SpecialType == SpecialType.System_Int32
+                        || member.Type.SpecialType == SpecialType.System_Int64
+                    )
+                    {
+                        isAutoIncrement = true;
+                    }
+                }
+
+                // Identity only makes sense for integral keys; Guid/string/etc. keys are assigned by the application.
+                if (
+                    isAutoIncrement
+                    && member.Type.SpecialType != SpecialType.System_Int32
+                    && member.Type.SpecialType != SpecialType.System_Int64
+                    && member.Type.SpecialType != SpecialType.System_Int16
+                )
+                    isAutoIncrement = false;
+
+                bool isIndexed = false;
+                bool isUniqueIndex = false;
+                string? idxName = null;
+                var idxAttr = member
+                    .GetAttributes()
+                    .FirstOrDefault(a =>
+                        a.AttributeClass?.Name == "IndexedAttribute"
+                        || a.AttributeClass?.ToDisplayString() == "LinKit.Data.IndexedAttribute"
+                    );
+                if (idxAttr != null)
+                {
+                    isIndexed = true;
+                    if (
+                        idxAttr.ConstructorArguments.Length > 0
+                        && idxAttr.ConstructorArguments[0].Value is bool uVal
+                    )
+                    {
+                        isUniqueIndex = uVal;
+                    }
+                    var uNamed = idxAttr.NamedArguments.FirstOrDefault(kv => kv.Key == "IsUnique");
+                    if (uNamed.Value.Value is bool uNamedVal)
+                        isUniqueIndex = uNamedVal;
+
+                    var inNamed = idxAttr.NamedArguments.FirstOrDefault(kv =>
+                        kv.Key == "IndexName"
+                    );
+                    if (inNamed.Value.Value is string inVal)
+                        idxName = inVal;
+                }
+
+                bool isNullable =
+                    nullableOverride
+                    ?? (
+                        member.NullableAnnotation == NullableAnnotation.Annotated
+                        || (
+                            member.Type.IsReferenceType
+                            && member.NullableAnnotation == NullableAnnotation.None
+                        )
+                        || (
+                            member.Type is INamedTypeSymbol nts
+                            && nts.OriginalDefinition.SpecialType == SpecialType.System_Nullable_T
+                        )
+                    );
+                if (isPk)
+                    isNullable = false;
+
+                var underlyingType =
+                    (
+                        member.Type is INamedTypeSymbol ntsNullable
+                        && ntsNullable.OriginalDefinition.SpecialType
+                            == SpecialType.System_Nullable_T
+                    )
+                        ? ntsNullable.TypeArguments[0]
+                        : member.Type;
+
+                properties.Add(
+                    new PropertyModel
+                    {
+                        PropertyName = member.Name,
+                        ColumnName = colName,
+                        TypeFullName = member.Type.ToDisplayString(
+                            SymbolDisplayFormat.FullyQualifiedFormat
+                        ),
+                        CleanTypeName = member.Type.ToDisplayString(
+                            SymbolDisplayFormat.MinimallyQualifiedFormat
+                        ),
+                        UnderlyingClrTypeName = underlyingType
+                            .ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat)
+                            .Replace("global::", ""),
+                        IsPrimaryKey = isPk,
+                        IsAutoIncrement = isAutoIncrement,
+                        IsNullable = isNullable,
+                        IsIndexed = isIndexed,
+                        IsUniqueIndex = isUniqueIndex,
+                        IndexName = idxName,
+                        CustomSqlType = customSqlType,
+                        MaxLength = maxLength,
+                        IsFixedLength = isFixedLength,
+                        Precision = precision,
+                        Scale = scale,
+                        DefaultValueSql = defaultValueSql,
+                        IsUnicode = isUnicode,
+                        IsJson = isJson,
+                        IsConcurrencyCheck = isConcurrencyCheck,
+                        Comment = colComment,
+                        ForeignKeyTargetTable = fkTargetTable,
+                        ForeignKeyTargetColumn = fkTargetColumn,
+                        ForeignKeyOnDelete = fkOnDelete,
+                        IsEnum = isEnum,
+                        JsonContextTypeFullName = jsonContextTypeFullName,
+                    }
+                );
             }
             // Base-class members go before derived ones.
             if (levelStart > 0 && properties.Count > levelStart)
@@ -640,7 +1055,9 @@ public class DataGenerator : IIncrementalGenerator
         if (columnOrders.Count > 0)
         {
             // Stable sort: LINQ OrderBy preserves relative order of equal keys.
-            var sorted = properties.OrderBy(p => columnOrders.TryGetValue(p.PropertyName, out var o) ? o : 0).ToList();
+            var sorted = properties
+                .OrderBy(p => columnOrders.TryGetValue(p.PropertyName, out var o) ? o : 0)
+                .ToList();
             properties.Clear();
             properties.AddRange(sorted);
         }
@@ -651,7 +1068,9 @@ public class DataGenerator : IIncrementalGenerator
         return new EntityModel
         {
             Name = classSymbol.Name,
-            Namespace = classSymbol.ContainingNamespace.IsGlobalNamespace ? "" : classSymbol.ContainingNamespace.ToDisplayString(),
+            Namespace = classSymbol.ContainingNamespace.IsGlobalNamespace
+                ? ""
+                : classSymbol.ContainingNamespace.ToDisplayString(),
             FullName = classSymbol.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat),
             AssemblyName = classSymbol.ContainingAssembly.Name,
             RepositoryInterfaceName = repositoryInterfaceName,
@@ -666,7 +1085,7 @@ public class DataGenerator : IIncrementalGenerator
             Location = classSymbol.Locations.FirstOrDefault(),
             HasFallbackPrimaryKey = !hasRecognizedPrimaryKey,
             Properties = properties,
-            PrimaryKey = pk
+            PrimaryKey = pk,
         };
     }
 
@@ -674,13 +1093,20 @@ public class DataGenerator : IIncrementalGenerator
     {
         var interfaceDecl = (InterfaceDeclarationSyntax)ctx.Node;
         var symbol = ctx.SemanticModel.GetDeclaredSymbol(interfaceDecl);
-        if (symbol is not INamedTypeSymbol interfaceSymbol) return null;
+        if (symbol is not INamedTypeSymbol interfaceSymbol)
+            return null;
 
-        var repoAttr = interfaceSymbol.GetAttributes().FirstOrDefault(a =>
-            a.AttributeClass?.Name == "DataRepositoryAttribute" ||
-            a.AttributeClass?.ToDisplayString() == "LinKit.Data.DataRepositoryAttribute");
+        var repoAttr = interfaceSymbol
+            .GetAttributes()
+            .FirstOrDefault(a =>
+                a.AttributeClass?.Name == "DataRepositoryAttribute"
+                || a.AttributeClass?.ToDisplayString() == "LinKit.Data.DataRepositoryAttribute"
+            );
 
-        if (repoAttr == null && !interfaceSymbol.Name.EndsWith("Repository", StringComparison.Ordinal))
+        if (
+            repoAttr == null
+            && !interfaceSymbol.Name.EndsWith("Repository", StringComparison.Ordinal)
+        )
             return null;
 
         string? entityFullName = null;
@@ -691,8 +1117,12 @@ public class DataGenerator : IIncrementalGenerator
         {
             if (iface.Name == "IRepository" && iface.TypeArguments.Length == 2)
             {
-                entityFullName = iface.TypeArguments[0].ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
-                idTypeFullName = iface.TypeArguments[1].ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
+                entityFullName = iface
+                    .TypeArguments[0]
+                    .ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
+                idTypeFullName = iface
+                    .TypeArguments[1]
+                    .ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
                 break;
             }
         }
@@ -700,41 +1130,58 @@ public class DataGenerator : IIncrementalGenerator
         var methods = new List<MethodQueryModel>();
         foreach (var member in interfaceSymbol.GetMembers().OfType<IMethodSymbol>())
         {
-            var sqlAttr = member.GetAttributes().FirstOrDefault(a =>
-                a.AttributeClass?.Name == "SqlQueryAttribute" || a.AttributeClass?.ToDisplayString() == "LinKit.Data.SqlQueryAttribute");
+            var sqlAttr = member
+                .GetAttributes()
+                .FirstOrDefault(a =>
+                    a.AttributeClass?.Name == "SqlQueryAttribute"
+                    || a.AttributeClass?.ToDisplayString() == "LinKit.Data.SqlQueryAttribute"
+                );
 
             string? sql = null;
-            if (sqlAttr != null && sqlAttr.ConstructorArguments.Length > 0 && sqlAttr.ConstructorArguments[0].Value is string sVal)
+            if (
+                sqlAttr != null
+                && sqlAttr.ConstructorArguments.Length > 0
+                && sqlAttr.ConstructorArguments[0].Value is string sVal
+            )
             {
                 sql = sVal;
             }
 
-            bool returnsList = member.ReturnType.ToDisplayString().Contains("List<") ||
-                               member.ReturnType.ToDisplayString().Contains("IEnumerable<");
+            bool returnsList =
+                member.ReturnType.ToDisplayString().Contains("List<")
+                || member.ReturnType.ToDisplayString().Contains("IEnumerable<");
 
-            var parameters = member.Parameters.Select(p => new ParameterModel
-            {
-                Name = p.Name,
-                TypeFullName = p.Type.ToDisplayString(FullyQualifiedNullableFormat)
-            }).ToList();
+            var parameters = member
+                .Parameters.Select(p => new ParameterModel
+                {
+                    Name = p.Name,
+                    TypeFullName = p.Type.ToDisplayString(FullyQualifiedNullableFormat),
+                })
+                .ToList();
 
-            methods.Add(new MethodQueryModel
-            {
-                MethodName = member.Name,
-                ReturnTypeFullName = member.ReturnType.ToDisplayString(FullyQualifiedNullableFormat),
-                ReturnsList = returnsList,
-                CustomSql = sql,
-                Parameters = parameters
-            });
+            methods.Add(
+                new MethodQueryModel
+                {
+                    MethodName = member.Name,
+                    ReturnTypeFullName = member.ReturnType.ToDisplayString(
+                        FullyQualifiedNullableFormat
+                    ),
+                    ReturnsList = returnsList,
+                    CustomSql = sql,
+                    Parameters = parameters,
+                }
+            );
         }
 
         return new RepositoryInterfaceModel
         {
             InterfaceName = interfaceSymbol.Name,
-            InterfaceFullName = interfaceSymbol.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat),
+            InterfaceFullName = interfaceSymbol.ToDisplayString(
+                SymbolDisplayFormat.FullyQualifiedFormat
+            ),
             EntityFullName = entityFullName ?? "",
             IdTypeFullName = idTypeFullName ?? "global::System.Guid",
-            QueryMethods = methods
+            QueryMethods = methods,
         };
     }
 
@@ -763,19 +1210,27 @@ public class DataGenerator : IIncrementalGenerator
         {
             // We build a ColumnOrdinalMap once per reader call using GetOrdinal(), which is O(1) per column
             // after the initial mapping. This is safe for any SQL that returns these columns.
-            sb.AppendLine($"    public static int[] {entity.Name}Ordinals(this DbDataReader reader)");
+            sb.AppendLine(
+                $"    public static int[] {entity.Name}Ordinals(this DbDataReader reader)"
+            );
             sb.AppendLine("    {");
             sb.AppendLine($"        var ords = new int[{entity.Properties.Count}];");
             for (int i = 0; i < entity.Properties.Count; i++)
             {
-                sb.AppendLine($"        ords[{i}] = ResolveOrdinal(reader, \"{entity.Properties[i].ColumnName}\");");
+                sb.AppendLine(
+                    $"        ords[{i}] = ResolveOrdinal(reader, \"{entity.Properties[i].ColumnName}\");"
+                );
             }
             sb.AppendLine("        return ords;");
             sb.AppendLine("    }");
             sb.AppendLine();
-            sb.AppendLine($"    public static {entity.FullName} Read{entity.Name}(this DbDataReader reader) => reader.Read{entity.Name}(reader.{entity.Name}Ordinals());");
+            sb.AppendLine(
+                $"    public static {entity.FullName} Read{entity.Name}(this DbDataReader reader) => reader.Read{entity.Name}(reader.{entity.Name}Ordinals());"
+            );
             sb.AppendLine();
-            sb.AppendLine($"    public static {entity.FullName} Read{entity.Name}(this DbDataReader reader, int[] ords)");
+            sb.AppendLine(
+                $"    public static {entity.FullName} Read{entity.Name}(this DbDataReader reader, int[] ords)"
+            );
             sb.AppendLine("    {");
             sb.AppendLine($"        var entity = new {entity.FullName}();");
 
@@ -787,111 +1242,42 @@ public class DataGenerator : IIncrementalGenerator
                 // Ordinals are resolved by column NAME once per result set; columns absent from the SELECT are skipped.
                 sb.AppendLine($"        {{");
                 sb.AppendLine($"            int ord_{p.PropertyName} = ords[{propIndex}];");
-                sb.AppendLine($"            if (ord_{p.PropertyName} >= 0 && !reader.IsDBNull(ord_{p.PropertyName}))");
+                sb.AppendLine(
+                    $"            if (ord_{p.PropertyName} >= 0 && !reader.IsDBNull(ord_{p.PropertyName}))"
+                );
                 sb.Append($"            ");
 
                 if (p.IsJson)
                 {
                     if (!string.IsNullOrEmpty(p.JsonContextTypeFullName))
                     {
-                        sb.AppendLine($"{{ var s = reader.GetString(ord_{p.PropertyName}); entity.{p.PropertyName} = !string.IsNullOrEmpty(s) ? ({p.TypeFullName})JsonSerializer.Deserialize(s, typeof({p.TypeFullName}), {p.JsonContextTypeFullName}.Default)! : default!; }}");
+                        sb.AppendLine(
+                            $"{{ var s = reader.GetString(ord_{p.PropertyName}); entity.{p.PropertyName} = !string.IsNullOrEmpty(s) ? ({p.TypeFullName})JsonSerializer.Deserialize(s, typeof({p.TypeFullName}), {p.JsonContextTypeFullName}.Default)! : default!; }}"
+                        );
                     }
                     else
                     {
-                        sb.AppendLine($"{{ var s = reader.GetString(ord_{p.PropertyName}); var ctx = LinKitDataJsonSerializerAccessor.Context; entity.{p.PropertyName} = !string.IsNullOrEmpty(s) ? (ctx != null ? ({p.TypeFullName})JsonSerializer.Deserialize(s, typeof({p.TypeFullName}), ctx)! : JsonSerializer.Deserialize<{p.TypeFullName}>(s)!) : default!; }}");
+                        sb.AppendLine(
+                            $"{{ var s = reader.GetString(ord_{p.PropertyName}); var ctx = LinKitDataJsonSerializerAccessor.Context; entity.{p.PropertyName} = !string.IsNullOrEmpty(s) ? (ctx != null ? ({p.TypeFullName})JsonSerializer.Deserialize(s, typeof({p.TypeFullName}), ctx)! : JsonSerializer.Deserialize<{p.TypeFullName}>(s)!) : default!; }}"
+                        );
                     }
                 }
                 else if (p.IsEnum)
                 {
-                    sb.AppendLine($"{{ var val = reader.GetValue(ord_{p.PropertyName}); entity.{p.PropertyName} = val is string s ? ({p.TypeFullName})Enum.Parse(typeof({p.TypeFullName}), s, true) : ({p.TypeFullName})Convert.ToInt32(val); }}");
-                }
-                else if (cleanType is "string" or "String")
-                {
-                    sb.AppendLine($"{{ var val = reader.GetValue(ord_{p.PropertyName}); entity.{p.PropertyName} = val?.ToString() ?? string.Empty; }}");
-                }
-                else if (cleanType is "int" or "Int32")
-                {
-                    sb.AppendLine($"{{ var val = reader.GetValue(ord_{p.PropertyName}); entity.{p.PropertyName} = val is int iv ? iv : Convert.ToInt32(val); }}");
-                }
-                else if (cleanType is "long" or "Int64")
-                {
-                    sb.AppendLine($"{{ var val = reader.GetValue(ord_{p.PropertyName}); entity.{p.PropertyName} = val is long lv ? lv : Convert.ToInt64(val); }}");
-                }
-                else if (cleanType is "short" or "Int16")
-                {
-                    sb.AppendLine($"{{ var val = reader.GetValue(ord_{p.PropertyName}); entity.{p.PropertyName} = val is short sv ? sv : Convert.ToInt16(val); }}");
-                }
-                else if (cleanType is "byte" or "Byte")
-                {
-                    sb.AppendLine($"{{ var val = reader.GetValue(ord_{p.PropertyName}); entity.{p.PropertyName} = val is byte bv ? bv : Convert.ToByte(val); }}");
-                }
-                else if (cleanType is "sbyte" or "SByte")
-                {
-                    sb.AppendLine($"{{ var val = reader.GetValue(ord_{p.PropertyName}); entity.{p.PropertyName} = val is sbyte sbv ? sbv : Convert.ToSByte(val); }}");
-                }
-                else if (cleanType is "uint" or "UInt32")
-                {
-                    sb.AppendLine($"{{ var val = reader.GetValue(ord_{p.PropertyName}); entity.{p.PropertyName} = val is uint uiv ? uiv : Convert.ToUInt32(val); }}");
-                }
-                else if (cleanType is "ulong" or "UInt64")
-                {
-                    sb.AppendLine($"{{ var val = reader.GetValue(ord_{p.PropertyName}); entity.{p.PropertyName} = val is ulong ulv ? ulv : Convert.ToUInt64(val); }}");
-                }
-                else if (cleanType is "ushort" or "UInt16")
-                {
-                    sb.AppendLine($"{{ var val = reader.GetValue(ord_{p.PropertyName}); entity.{p.PropertyName} = val is ushort usv ? usv : Convert.ToUInt16(val); }}");
-                }
-                else if (cleanType is "bool" or "Boolean")
-                {
-                    sb.AppendLine($"{{ var val = reader.GetValue(ord_{p.PropertyName}); entity.{p.PropertyName} = val is bool b ? b : (bool.TryParse(val.ToString(), out var pb) ? pb : (Convert.ToInt64(val) != 0)); }}");
-                }
-                else if (cleanType is "char" or "Char")
-                {
-                    sb.AppendLine($"{{ var val = reader.GetValue(ord_{p.PropertyName}); entity.{p.PropertyName} = val is char ch ? ch : (val.ToString()!.Length > 0 ? val.ToString()![0] : '\0'); }}");
-                }
-                else if (cleanType is "decimal" or "Decimal")
-                {
-                    sb.AppendLine($"{{ var val = reader.GetValue(ord_{p.PropertyName}); entity.{p.PropertyName} = val is decimal dec ? dec : Convert.ToDecimal(val, System.Globalization.CultureInfo.InvariantCulture); }}");
-                }
-                else if (cleanType is "double" or "Double")
-                {
-                    sb.AppendLine($"{{ var val = reader.GetValue(ord_{p.PropertyName}); entity.{p.PropertyName} = val is double dv ? dv : Convert.ToDouble(val, System.Globalization.CultureInfo.InvariantCulture); }}");
-                }
-                else if (cleanType is "float" or "Single")
-                {
-                    sb.AppendLine($"{{ var val = reader.GetValue(ord_{p.PropertyName}); entity.{p.PropertyName} = val is float fv ? fv : Convert.ToSingle(val, System.Globalization.CultureInfo.InvariantCulture); }}");
-                }
-                else if (cleanType is "Guid")
-                {
-                    sb.AppendLine($"{{ var val = reader.GetValue(ord_{p.PropertyName}); entity.{p.PropertyName} = val is Guid g ? g : (val is byte[] bytes && bytes.Length == 16 ? new Guid(bytes) : Guid.Parse(val.ToString()!)); }}");
-                }
-                else if (cleanType is "DateTime")
-                {
-                    sb.AppendLine($"{{ var val = reader.GetValue(ord_{p.PropertyName}); entity.{p.PropertyName} = val is DateTime dt ? dt : (val is long ticks ? new DateTime(ticks, DateTimeKind.Utc) : DateTime.Parse(val.ToString()!, System.Globalization.CultureInfo.InvariantCulture)); }}");
-                }
-                else if (cleanType is "DateTimeOffset")
-                {
-                    sb.AppendLine($"{{ var val = reader.GetValue(ord_{p.PropertyName}); entity.{p.PropertyName} = val is DateTimeOffset dto ? dto : (val is DateTime dt ? new DateTimeOffset(dt) : DateTimeOffset.Parse(val.ToString()!, System.Globalization.CultureInfo.InvariantCulture)); }}");
-                }
-                else if (cleanType is "DateOnly")
-                {
-                    sb.AppendLine($"{{ var val = reader.GetValue(ord_{p.PropertyName}); entity.{p.PropertyName} = val is DateOnly d ? d : (val is DateTime dt ? DateOnly.FromDateTime(dt) : DateOnly.Parse(val.ToString()!, System.Globalization.CultureInfo.InvariantCulture)); }}");
-                }
-                else if (cleanType is "TimeOnly")
-                {
-                    sb.AppendLine($"{{ var val = reader.GetValue(ord_{p.PropertyName}); entity.{p.PropertyName} = val is TimeOnly t ? t : (val is TimeSpan ts ? TimeOnly.FromTimeSpan(ts) : TimeOnly.Parse(val.ToString()!, System.Globalization.CultureInfo.InvariantCulture)); }}");
-                }
-                else if (cleanType is "TimeSpan")
-                {
-                    sb.AppendLine($"{{ var val = reader.GetValue(ord_{p.PropertyName}); entity.{p.PropertyName} = val is TimeSpan ts ? ts : (val is long ticks ? TimeSpan.FromTicks(ticks) : TimeSpan.Parse(val.ToString()!, System.Globalization.CultureInfo.InvariantCulture)); }}");
-                }
-                else if (cleanType is "byte[]" or "Byte[]")
-                {
-                    sb.AppendLine($"{{ var val = reader.GetValue(ord_{p.PropertyName}); entity.{p.PropertyName} = val is byte[] bytes ? bytes : (val is string s ? Convert.FromBase64String(s) : (byte[])val); }}");
+                    sb.AppendLine(
+                        $"{{ entity.{p.PropertyName} = global::LinKit.Data.DbValues.ReadEnum<{p.TypeFullName.TrimEnd('?')}>(reader, ord_{p.PropertyName}); }}"
+                    );
                 }
                 else
                 {
-                    sb.AppendLine($"{{ entity.{p.PropertyName} = ({p.TypeFullName})reader.GetValue(ord_{p.PropertyName}); }}");
+                    // Typed accessors avoid the boxing GetValue + Convert pair; the generated projection path
+                    // resolves them per provider with a documented fallback inside DbValues.
+                    var accessor = TypedAccessor(cleanType);
+                    sb.AppendLine(
+                        accessor is null
+                            ? $"{{ entity.{p.PropertyName} = ({p.TypeFullName})reader.GetValue(ord_{p.PropertyName}); }}"
+                            : $"{{ entity.{p.PropertyName} = global::LinKit.Data.DbValues.{accessor}(reader, ord_{p.PropertyName}); }}"
+                    );
                 }
                 sb.AppendLine($"        }}");
             }
@@ -905,7 +1291,41 @@ public class DataGenerator : IIncrementalGenerator
         return sb.ToString();
     }
 
-    private static string GenerateSchemaProvider(List<EntityModel> entities, string generatedNamespace)
+    /// <summary>
+    /// Maps a CLR type name to the matching typed <c>DbDataReader</c> accessor wrapper in
+    /// <c>LinKit.Data.DbValues</c>. Returns null so the caller falls back to a boxed read.
+    /// </summary>
+    private static string? TypedAccessor(string cleanType) =>
+        cleanType switch
+        {
+            "string" or "String" => "ReadString",
+            "int" or "Int32" => "ReadInt32",
+            "long" or "Int64" => "ReadInt64",
+            "short" or "Int16" => "ReadInt16",
+            "byte" or "Byte" => "ReadByte",
+            "sbyte" or "SByte" => "ReadSByte",
+            "uint" or "UInt32" => "ReadUInt32",
+            "ulong" or "UInt64" => "ReadUInt64",
+            "ushort" or "UInt16" => "ReadUInt16",
+            "bool" or "Boolean" => "ReadBoolean",
+            "char" or "Char" => "ReadChar",
+            "decimal" or "Decimal" => "ReadDecimal",
+            "double" or "Double" => "ReadDouble",
+            "float" or "Single" => "ReadSingle",
+            "Guid" => "ReadGuid",
+            "DateTime" => "ReadDateTime",
+            "DateTimeOffset" => "ReadDateTimeOffset",
+            "DateOnly" => "ReadDateOnly",
+            "TimeOnly" => "ReadTimeOnly",
+            "TimeSpan" => "ReadTimeSpan",
+            "byte[]" or "Byte[]" => "ReadBytes",
+            _ => null,
+        };
+
+    private static string GenerateSchemaProvider(
+        List<EntityModel> entities,
+        string generatedNamespace
+    )
     {
         var sb = new StringBuilder();
         sb.AppendLine("// <auto-generated/>");
@@ -918,13 +1338,18 @@ public class DataGenerator : IIncrementalGenerator
         sb.AppendLine();
         sb.AppendLine("public sealed class GeneratedTableSchemaProvider : ITableSchemaProvider");
         sb.AppendLine("{");
-        sb.AppendLine("    private static readonly TableSchemaMetadata[] _tables = new TableSchemaMetadata[]");
+        sb.AppendLine(
+            "    private static readonly TableSchemaMetadata[] _tables = new TableSchemaMetadata[]"
+        );
         sb.AppendLine("    {");
 
         foreach (var entity in entities)
         {
             var schemaStr = entity.Schema != null ? $"\"{entity.Schema}\"" : "null";
-            var commentStr = entity.TableComment != null ? $"\"{entity.TableComment.Replace("\"", "\\\"")}\"" : "null";
+            var commentStr =
+                entity.TableComment != null
+                    ? $"\"{entity.TableComment.Replace("\"", "\\\"")}\""
+                    : "null";
 
             sb.AppendLine("        new TableSchemaMetadata");
             sb.AppendLine("        {");
@@ -937,7 +1362,9 @@ public class DataGenerator : IIncrementalGenerator
             foreach (var chk in entity.CheckConstraints)
             {
                 var chkName = chk.Name != null ? $"\"{chk.Name}\"" : "null";
-                sb.AppendLine($"                new CheckConstraintMetadata {{ SqlExpression = \"{chk.SqlExpression.Replace("\"", "\\\"")}\", Name = {chkName} }},");
+                sb.AppendLine(
+                    $"                new CheckConstraintMetadata {{ SqlExpression = \"{chk.SqlExpression.Replace("\"", "\\\"")}\", Name = {chkName} }},"
+                );
             }
             sb.AppendLine("            },");
             sb.AppendLine("            Columns = new ColumnSchemaMetadata[]");
@@ -950,33 +1377,56 @@ public class DataGenerator : IIncrementalGenerator
                 var maxLen = p.MaxLength.HasValue ? p.MaxLength.Value.ToString() : "null";
                 var prec = p.Precision.HasValue ? p.Precision.Value.ToString() : "null";
                 var scale = p.Scale.HasValue ? p.Scale.Value.ToString() : "null";
-                var defVal = p.DefaultValueSql != null ? $"\"{p.DefaultValueSql.Replace("\"", "\\\"")}\"" : "null";
+                var defVal =
+                    p.DefaultValueSql != null
+                        ? $"\"{p.DefaultValueSql.Replace("\"", "\\\"")}\""
+                        : "null";
                 var comm = p.Comment != null ? $"\"{p.Comment.Replace("\"", "\\\"")}\"" : "null";
-                var fkTable = p.ForeignKeyTargetTable != null ? $"\"{p.ForeignKeyTargetTable}\"" : "null";
-                var fkCol = p.ForeignKeyTargetColumn != null ? $"\"{p.ForeignKeyTargetColumn}\"" : "null";
-                var fkOnDel = p.ForeignKeyOnDelete.HasValue ? $"(OnDeleteAction){p.ForeignKeyOnDelete.Value}" : "null";
+                var fkTable =
+                    p.ForeignKeyTargetTable != null ? $"\"{p.ForeignKeyTargetTable}\"" : "null";
+                var fkCol =
+                    p.ForeignKeyTargetColumn != null ? $"\"{p.ForeignKeyTargetColumn}\"" : "null";
+                var fkOnDel = p.ForeignKeyOnDelete.HasValue
+                    ? $"(OnDeleteAction){p.ForeignKeyOnDelete.Value}"
+                    : "null";
 
                 sb.AppendLine("                new ColumnSchemaMetadata");
                 sb.AppendLine("                {");
                 sb.AppendLine($"                    PropertyName = \"{p.PropertyName}\",");
                 sb.AppendLine($"                    ColumnName = \"{p.ColumnName}\",");
                 sb.AppendLine($"                    ClrTypeName = \"{p.UnderlyingClrTypeName}\",");
-                sb.AppendLine($"                    IsPrimaryKey = {(p.IsPrimaryKey ? "true" : "false")},");
-                sb.AppendLine($"                    IsAutoIncrement = {(p.IsAutoIncrement ? "true" : "false")},");
-                sb.AppendLine($"                    IsNullable = {(p.IsNullable ? "true" : "false")},");
-                sb.AppendLine($"                    IsIndexed = {(p.IsIndexed ? "true" : "false")},");
-                sb.AppendLine($"                    IsUniqueIndex = {(p.IsUniqueIndex ? "true" : "false")},");
+                sb.AppendLine(
+                    $"                    IsPrimaryKey = {(p.IsPrimaryKey ? "true" : "false")},"
+                );
+                sb.AppendLine(
+                    $"                    IsAutoIncrement = {(p.IsAutoIncrement ? "true" : "false")},"
+                );
+                sb.AppendLine(
+                    $"                    IsNullable = {(p.IsNullable ? "true" : "false")},"
+                );
+                sb.AppendLine(
+                    $"                    IsIndexed = {(p.IsIndexed ? "true" : "false")},"
+                );
+                sb.AppendLine(
+                    $"                    IsUniqueIndex = {(p.IsUniqueIndex ? "true" : "false")},"
+                );
                 sb.AppendLine($"                    IndexName = {idxName},");
                 sb.AppendLine($"                    CustomSqlType = {customSql},");
                 sb.AppendLine($"                    MaxLength = {maxLen},");
-                sb.AppendLine($"                    IsFixedLength = {(p.IsFixedLength ? "true" : "false")},");
+                sb.AppendLine(
+                    $"                    IsFixedLength = {(p.IsFixedLength ? "true" : "false")},"
+                );
                 sb.AppendLine($"                    Precision = {prec},");
                 sb.AppendLine($"                    Scale = {scale},");
                 sb.AppendLine($"                    DefaultValueSql = {defVal},");
-                sb.AppendLine($"                    IsUnicode = {(p.IsUnicode ? "true" : "false")},");
+                sb.AppendLine(
+                    $"                    IsUnicode = {(p.IsUnicode ? "true" : "false")},"
+                );
                 sb.AppendLine($"                    IsJson = {(p.IsJson ? "true" : "false")},");
                 sb.AppendLine($"                    IsEnum = {(p.IsEnum ? "true" : "false")},");
-                sb.AppendLine($"                    IsConcurrencyCheck = {(p.IsConcurrencyCheck ? "true" : "false")},");
+                sb.AppendLine(
+                    $"                    IsConcurrencyCheck = {(p.IsConcurrencyCheck ? "true" : "false")},"
+                );
                 sb.AppendLine($"                    Comment = {comm},");
                 sb.AppendLine($"                    ForeignKeyTargetTable = {fkTable},");
                 sb.AppendLine($"                    ForeignKeyTargetColumn = {fkCol},");
@@ -990,7 +1440,9 @@ public class DataGenerator : IIncrementalGenerator
             foreach (var cIdx in entity.CompositeIndexes)
             {
                 var colList = string.Join(", ", cIdx.ColumnNames.Select(c => $"\"{c}\""));
-                sb.AppendLine($"                new IndexSchemaMetadata {{ IndexName = \"{cIdx.IndexName}\", ColumnNames = new string[] {{ {colList} }}, IsUnique = {(cIdx.IsUnique ? "true" : "false")} }},");
+                sb.AppendLine(
+                    $"                new IndexSchemaMetadata {{ IndexName = \"{cIdx.IndexName}\", ColumnNames = new string[] {{ {colList} }}, IsUnique = {(cIdx.IsUnique ? "true" : "false")} }},"
+                );
             }
             sb.AppendLine("            }");
             sb.AppendLine("        },");
@@ -1006,7 +1458,8 @@ public class DataGenerator : IIncrementalGenerator
     private static string GenerateRepositories(
         List<EntityModel> entities,
         List<RepositoryInterfaceModel> repos,
-        string repositoryNamespace)
+        string repositoryNamespace
+    )
     {
         var sb = new StringBuilder();
         sb.AppendLine("// <auto-generated/>");
@@ -1038,39 +1491,75 @@ public class DataGenerator : IIncrementalGenerator
 
             // Find matching custom interface if declared
             var customInterface = repos.FirstOrDefault(r =>
-                r.EntityFullName == entity.FullName ||
-                r.InterfaceFullName == entity.RepositoryInterfaceFullName);
+                r.EntityFullName == entity.FullName
+                || r.InterfaceFullName == entity.RepositoryInterfaceFullName
+            );
             var implementedInterfaces = new List<string>();
             if (entity.RepositoryInterfaceFullName is not null)
                 implementedInterfaces.Add(entity.RepositoryInterfaceFullName);
-            if (customInterface is not null &&
-                !implementedInterfaces.Contains(customInterface.InterfaceFullName, StringComparer.Ordinal))
+            if (
+                customInterface is not null
+                && !implementedInterfaces.Contains(
+                    customInterface.InterfaceFullName,
+                    StringComparer.Ordinal
+                )
+            )
                 implementedInterfaces.Add(customInterface.InterfaceFullName);
             implementedInterfaces.Add($"IRepository<{entity.FullName}, {pkType}>");
             var interfaceInheritance = $": {string.Join(", ", implementedInterfaces)}";
 
             // ANSI (PostgreSQL, SQLite)
-            var allColsAnsi = string.Join(", ", entity.Properties.Select(p => $"\\\"{p.ColumnName}\\\""));
+            var allColsAnsi = string.Join(
+                ", ",
+                entity.Properties.Select(p => $"\\\"{p.ColumnName}\\\"")
+            );
             var insertCols = entity.Properties.Where(p => !p.IsAutoIncrement).ToList();
-            var autoPk = pk != null && pk.IsAutoIncrement && (pk.TypeFullName == "int" || pk.TypeFullName == "long");
-            var insertColNamesAnsi = string.Join(", ", insertCols.Select(p => $"\\\"{p.ColumnName}\\\""));
+            var autoPk =
+                pk != null
+                && pk.IsAutoIncrement
+                && (pk.TypeFullName == "int" || pk.TypeFullName == "long");
+            var insertColNamesAnsi = string.Join(
+                ", ",
+                insertCols.Select(p => $"\\\"{p.ColumnName}\\\"")
+            );
             var insertParamNames = string.Join(", ", insertCols.Select(p => $"@{p.ColumnName}"));
             var updateCols = entity.Properties.Where(p => !p.IsPrimaryKey).ToList();
-            var updateSetsAnsi = string.Join(", ", updateCols.Select(p => $"\\\"{p.ColumnName}\\\" = @{p.ColumnName}"));
+            var updateSetsAnsi = string.Join(
+                ", ",
+                updateCols.Select(p => $"\\\"{p.ColumnName}\\\" = @{p.ColumnName}")
+            );
 
             // SQL Server (T-SQL)
             var allColsSql = string.Join(", ", entity.Properties.Select(p => $"[{p.ColumnName}]"));
             var insertColNamesSql = string.Join(", ", insertCols.Select(p => $"[{p.ColumnName}]"));
-            var updateSetsSql = string.Join(", ", updateCols.Select(p => $"[{p.ColumnName}] = @{p.ColumnName}"));
+            var updateSetsSql = string.Join(
+                ", ",
+                updateCols.Select(p => $"[{p.ColumnName}] = @{p.ColumnName}")
+            );
 
             // MySQL
-            var allColsMySql = string.Join(", ", entity.Properties.Select(p => $"`{p.ColumnName}`"));
-            var insertColNamesMySql = string.Join(", ", insertCols.Select(p => $"`{p.ColumnName}`"));
-            var updateSetsMySql = string.Join(", ", updateCols.Select(p => $"`{p.ColumnName}` = @{p.ColumnName}"));
+            var allColsMySql = string.Join(
+                ", ",
+                entity.Properties.Select(p => $"`{p.ColumnName}`")
+            );
+            var insertColNamesMySql = string.Join(
+                ", ",
+                insertCols.Select(p => $"`{p.ColumnName}`")
+            );
+            var updateSetsMySql = string.Join(
+                ", ",
+                updateCols.Select(p => $"`{p.ColumnName}` = @{p.ColumnName}")
+            );
 
             // Oracle
-            var insertParamNamesOracle = string.Join(", ", insertCols.Select(p => $":{p.ColumnName}"));
-            var updateSetsOracle = string.Join(", ", updateCols.Select(p => $"\\\"{p.ColumnName}\\\" = :{p.ColumnName}"));
+            var insertParamNamesOracle = string.Join(
+                ", ",
+                insertCols.Select(p => $":{p.ColumnName}")
+            );
+            var updateSetsOracle = string.Join(
+                ", ",
+                updateCols.Select(p => $"\\\"{p.ColumnName}\\\" = :{p.ColumnName}")
+            );
 
             sb.AppendLine($"public partial class {entity.Name}Repository {interfaceInheritance}");
             sb.AppendLine("{");
@@ -1087,7 +1576,9 @@ public class DataGenerator : IIncrementalGenerator
             sb.AppendLine("    private readonly string _countSql;");
             sb.AppendLine("    private readonly string _existsSql;");
             sb.AppendLine();
-            sb.AppendLine("    private static readonly Dictionary<string, string> _propertyToColumn = new(StringComparer.OrdinalIgnoreCase)");
+            sb.AppendLine(
+                "    private static readonly Dictionary<string, string> _propertyToColumn = new(StringComparer.OrdinalIgnoreCase)"
+            );
             sb.AppendLine("    {");
             foreach (var prop in entity.Properties)
             {
@@ -1095,7 +1586,9 @@ public class DataGenerator : IIncrementalGenerator
             }
             sb.AppendLine("    };");
             sb.AppendLine();
-            sb.AppendLine($"    public {entity.Name}Repository(IDbConnectionFactory factory, IUnitOfWork uow)");
+            sb.AppendLine(
+                $"    public {entity.Name}Repository(IDbConnectionFactory factory, IUnitOfWork uow)"
+            );
             sb.AppendLine("    {");
             sb.AppendLine("        _factory = factory;");
             sb.AppendLine("        _uow = uow;");
@@ -1108,116 +1601,256 @@ public class DataGenerator : IIncrementalGenerator
             sb.AppendLine("            case DatabaseDialect.SqlServer:");
             if (hasSoftDelete)
             {
-                sb.AppendLine($"                _selectByIdSql = \"SELECT TOP 1 {allColsSql} FROM [{entity.TableName}] WHERE [{pkColName}] = @id AND [{softCol}] IS NULL;\";");
-                sb.AppendLine($"                _selectListSql = \"SELECT {allColsSql} FROM [{entity.TableName}] WHERE [{softCol}] IS NULL ORDER BY [{pkColName}] ASC OFFSET @skip ROWS FETCH NEXT @take ROWS ONLY;\";");
-                sb.AppendLine($"                _pagedCountSql = \"SELECT COUNT(*) FROM [{entity.TableName}] WHERE [{softCol}] IS NULL;\";");
-                sb.AppendLine($"                _pagedItemsSql = \"SELECT {allColsSql} FROM [{entity.TableName}] WHERE [{softCol}] IS NULL ORDER BY [{pkColName}] ASC OFFSET @skip ROWS FETCH NEXT @take ROWS ONLY;\";");
-                sb.AppendLine($"                _deleteSql = \"UPDATE [{entity.TableName}] SET [{softCol}] = SYSUTCDATETIME() WHERE [{pkColName}] = @id;\";");
-                sb.AppendLine($"                _countSql = \"SELECT COUNT(*) FROM [{entity.TableName}] WHERE [{softCol}] IS NULL;\";");
-                sb.AppendLine($"                _existsSql = \"SELECT TOP 1 1 FROM [{entity.TableName}] WHERE [{pkColName}] = @id AND [{softCol}] IS NULL;\";");
+                sb.AppendLine(
+                    $"                _selectByIdSql = \"SELECT TOP 1 {allColsSql} FROM [{entity.TableName}] WHERE [{pkColName}] = @id AND [{softCol}] IS NULL;\";"
+                );
+                sb.AppendLine(
+                    $"                _selectListSql = \"SELECT {allColsSql} FROM [{entity.TableName}] WHERE [{softCol}] IS NULL ORDER BY [{pkColName}] ASC OFFSET @skip ROWS FETCH NEXT @take ROWS ONLY;\";"
+                );
+                sb.AppendLine(
+                    $"                _pagedCountSql = \"SELECT COUNT(*) FROM [{entity.TableName}] WHERE [{softCol}] IS NULL;\";"
+                );
+                sb.AppendLine(
+                    $"                _pagedItemsSql = \"SELECT {allColsSql} FROM [{entity.TableName}] WHERE [{softCol}] IS NULL ORDER BY [{pkColName}] ASC OFFSET @skip ROWS FETCH NEXT @take ROWS ONLY;\";"
+                );
+                sb.AppendLine(
+                    $"                _deleteSql = \"UPDATE [{entity.TableName}] SET [{softCol}] = SYSUTCDATETIME() WHERE [{pkColName}] = @id;\";"
+                );
+                sb.AppendLine(
+                    $"                _countSql = \"SELECT COUNT(*) FROM [{entity.TableName}] WHERE [{softCol}] IS NULL;\";"
+                );
+                sb.AppendLine(
+                    $"                _existsSql = \"SELECT TOP 1 1 FROM [{entity.TableName}] WHERE [{pkColName}] = @id AND [{softCol}] IS NULL;\";"
+                );
             }
             else
             {
-                sb.AppendLine($"                _selectByIdSql = \"SELECT TOP 1 {allColsSql} FROM [{entity.TableName}] WHERE [{pkColName}] = @id;\";");
-                sb.AppendLine($"                _selectListSql = \"SELECT {allColsSql} FROM [{entity.TableName}] ORDER BY [{pkColName}] ASC OFFSET @skip ROWS FETCH NEXT @take ROWS ONLY;\";");
-                sb.AppendLine($"                _pagedCountSql = \"SELECT COUNT(*) FROM [{entity.TableName}];\";");
-                sb.AppendLine($"                _pagedItemsSql = \"SELECT {allColsSql} FROM [{entity.TableName}] ORDER BY [{pkColName}] ASC OFFSET @skip ROWS FETCH NEXT @take ROWS ONLY;\";");
-                sb.AppendLine($"                _deleteSql = \"DELETE FROM [{entity.TableName}] WHERE [{pkColName}] = @id;\";");
-                sb.AppendLine($"                _countSql = \"SELECT COUNT(*) FROM [{entity.TableName}];\";");
-                sb.AppendLine($"                _existsSql = \"SELECT TOP 1 1 FROM [{entity.TableName}] WHERE [{pkColName}] = @id;\";");
+                sb.AppendLine(
+                    $"                _selectByIdSql = \"SELECT TOP 1 {allColsSql} FROM [{entity.TableName}] WHERE [{pkColName}] = @id;\";"
+                );
+                sb.AppendLine(
+                    $"                _selectListSql = \"SELECT {allColsSql} FROM [{entity.TableName}] ORDER BY [{pkColName}] ASC OFFSET @skip ROWS FETCH NEXT @take ROWS ONLY;\";"
+                );
+                sb.AppendLine(
+                    $"                _pagedCountSql = \"SELECT COUNT(*) FROM [{entity.TableName}];\";"
+                );
+                sb.AppendLine(
+                    $"                _pagedItemsSql = \"SELECT {allColsSql} FROM [{entity.TableName}] ORDER BY [{pkColName}] ASC OFFSET @skip ROWS FETCH NEXT @take ROWS ONLY;\";"
+                );
+                sb.AppendLine(
+                    $"                _deleteSql = \"DELETE FROM [{entity.TableName}] WHERE [{pkColName}] = @id;\";"
+                );
+                sb.AppendLine(
+                    $"                _countSql = \"SELECT COUNT(*) FROM [{entity.TableName}];\";"
+                );
+                sb.AppendLine(
+                    $"                _existsSql = \"SELECT TOP 1 1 FROM [{entity.TableName}] WHERE [{pkColName}] = @id;\";"
+                );
             }
-            sb.AppendLine($"                _insertSql = \"INSERT INTO [{entity.TableName}] ({insertColNamesSql}){(autoPk ? " OUTPUT INSERTED.[" + pkColName + "]" : "")} VALUES ({insertParamNames});\";");
-            sb.AppendLine($"                _updateSql = \"UPDATE [{entity.TableName}] SET {updateSetsSql} WHERE [{pkColName}] = @id;\";");
+            sb.AppendLine(
+                $"                _insertSql = \"INSERT INTO [{entity.TableName}] ({insertColNamesSql}){(autoPk ? " OUTPUT INSERTED.[" + pkColName + "]" : "")} VALUES ({insertParamNames});\";"
+            );
+            sb.AppendLine(
+                $"                _updateSql = \"UPDATE [{entity.TableName}] SET {updateSetsSql} WHERE [{pkColName}] = @id;\";"
+            );
             sb.AppendLine("                break;");
             sb.AppendLine("            case DatabaseDialect.MySql:");
             if (hasSoftDelete)
             {
-                sb.AppendLine($"                _selectByIdSql = \"SELECT {allColsMySql} FROM `{entity.TableName}` WHERE `{pkColName}` = @id AND `{softCol}` IS NULL LIMIT 1;\";");
-                sb.AppendLine($"                _selectListSql = \"SELECT {allColsMySql} FROM `{entity.TableName}` WHERE `{softCol}` IS NULL ORDER BY `{pkColName}` ASC LIMIT @take OFFSET @skip;\";");
-                sb.AppendLine($"                _pagedCountSql = \"SELECT COUNT(*) FROM `{entity.TableName}` WHERE `{softCol}` IS NULL;\";");
-                sb.AppendLine($"                _pagedItemsSql = \"SELECT {allColsMySql} FROM `{entity.TableName}` WHERE `{softCol}` IS NULL ORDER BY `{pkColName}` ASC LIMIT @take OFFSET @skip;\";");
-                sb.AppendLine($"                _deleteSql = \"UPDATE `{entity.TableName}` SET `{softCol}` = CURRENT_TIMESTAMP WHERE `{pkColName}` = @id;\";");
-                sb.AppendLine($"                _countSql = \"SELECT COUNT(*) FROM `{entity.TableName}` WHERE `{softCol}` IS NULL;\";");
-                sb.AppendLine($"                _existsSql = \"SELECT 1 FROM `{entity.TableName}` WHERE `{pkColName}` = @id AND `{softCol}` IS NULL LIMIT 1;\";");
+                sb.AppendLine(
+                    $"                _selectByIdSql = \"SELECT {allColsMySql} FROM `{entity.TableName}` WHERE `{pkColName}` = @id AND `{softCol}` IS NULL LIMIT 1;\";"
+                );
+                sb.AppendLine(
+                    $"                _selectListSql = \"SELECT {allColsMySql} FROM `{entity.TableName}` WHERE `{softCol}` IS NULL ORDER BY `{pkColName}` ASC LIMIT @take OFFSET @skip;\";"
+                );
+                sb.AppendLine(
+                    $"                _pagedCountSql = \"SELECT COUNT(*) FROM `{entity.TableName}` WHERE `{softCol}` IS NULL;\";"
+                );
+                sb.AppendLine(
+                    $"                _pagedItemsSql = \"SELECT {allColsMySql} FROM `{entity.TableName}` WHERE `{softCol}` IS NULL ORDER BY `{pkColName}` ASC LIMIT @take OFFSET @skip;\";"
+                );
+                sb.AppendLine(
+                    $"                _deleteSql = \"UPDATE `{entity.TableName}` SET `{softCol}` = CURRENT_TIMESTAMP WHERE `{pkColName}` = @id;\";"
+                );
+                sb.AppendLine(
+                    $"                _countSql = \"SELECT COUNT(*) FROM `{entity.TableName}` WHERE `{softCol}` IS NULL;\";"
+                );
+                sb.AppendLine(
+                    $"                _existsSql = \"SELECT 1 FROM `{entity.TableName}` WHERE `{pkColName}` = @id AND `{softCol}` IS NULL LIMIT 1;\";"
+                );
             }
             else
             {
-                sb.AppendLine($"                _selectByIdSql = \"SELECT {allColsMySql} FROM `{entity.TableName}` WHERE `{pkColName}` = @id LIMIT 1;\";");
-                sb.AppendLine($"                _selectListSql = \"SELECT {allColsMySql} FROM `{entity.TableName}` ORDER BY `{pkColName}` ASC LIMIT @take OFFSET @skip;\";");
-                sb.AppendLine($"                _pagedCountSql = \"SELECT COUNT(*) FROM `{entity.TableName}`;\";");
-                sb.AppendLine($"                _pagedItemsSql = \"SELECT {allColsMySql} FROM `{entity.TableName}` ORDER BY `{pkColName}` ASC LIMIT @take OFFSET @skip;\";");
-                sb.AppendLine($"                _deleteSql = \"DELETE FROM `{entity.TableName}` WHERE `{pkColName}` = @id;\";");
-                sb.AppendLine($"                _countSql = \"SELECT COUNT(*) FROM `{entity.TableName}`;\";");
-                sb.AppendLine($"                _existsSql = \"SELECT 1 FROM `{entity.TableName}` WHERE `{pkColName}` = @id LIMIT 1;\";");
+                sb.AppendLine(
+                    $"                _selectByIdSql = \"SELECT {allColsMySql} FROM `{entity.TableName}` WHERE `{pkColName}` = @id LIMIT 1;\";"
+                );
+                sb.AppendLine(
+                    $"                _selectListSql = \"SELECT {allColsMySql} FROM `{entity.TableName}` ORDER BY `{pkColName}` ASC LIMIT @take OFFSET @skip;\";"
+                );
+                sb.AppendLine(
+                    $"                _pagedCountSql = \"SELECT COUNT(*) FROM `{entity.TableName}`;\";"
+                );
+                sb.AppendLine(
+                    $"                _pagedItemsSql = \"SELECT {allColsMySql} FROM `{entity.TableName}` ORDER BY `{pkColName}` ASC LIMIT @take OFFSET @skip;\";"
+                );
+                sb.AppendLine(
+                    $"                _deleteSql = \"DELETE FROM `{entity.TableName}` WHERE `{pkColName}` = @id;\";"
+                );
+                sb.AppendLine(
+                    $"                _countSql = \"SELECT COUNT(*) FROM `{entity.TableName}`;\";"
+                );
+                sb.AppendLine(
+                    $"                _existsSql = \"SELECT 1 FROM `{entity.TableName}` WHERE `{pkColName}` = @id LIMIT 1;\";"
+                );
             }
-            sb.AppendLine($"                _insertSql = \"INSERT INTO `{entity.TableName}` ({insertColNamesMySql}) VALUES ({insertParamNames});{(autoPk ? " SELECT LAST_INSERT_ID();" : "")}\";");
-            sb.AppendLine($"                _updateSql = \"UPDATE `{entity.TableName}` SET {updateSetsMySql} WHERE `{pkColName}` = @id;\";");
+            sb.AppendLine(
+                $"                _insertSql = \"INSERT INTO `{entity.TableName}` ({insertColNamesMySql}) VALUES ({insertParamNames});{(autoPk ? " SELECT LAST_INSERT_ID();" : "")}\";"
+            );
+            sb.AppendLine(
+                $"                _updateSql = \"UPDATE `{entity.TableName}` SET {updateSetsMySql} WHERE `{pkColName}` = @id;\";"
+            );
             sb.AppendLine("                break;");
             sb.AppendLine("            case DatabaseDialect.Oracle:");
             if (hasSoftDelete)
             {
-                sb.AppendLine($"                _selectByIdSql = \"SELECT {allColsAnsi} FROM \\\"{entity.TableName}\\\" WHERE \\\"{pkColName}\\\" = :id AND \\\"{softCol}\\\" IS NULL FETCH FIRST 1 ROWS ONLY;\";");
-                sb.AppendLine($"                _selectListSql = \"SELECT {allColsAnsi} FROM \\\"{entity.TableName}\\\" WHERE \\\"{softCol}\\\" IS NULL ORDER BY \\\"{pkColName}\\\" ASC OFFSET :skip ROWS FETCH NEXT :take ROWS ONLY;\";");
-                sb.AppendLine($"                _pagedCountSql = \"SELECT COUNT(*) FROM \\\"{entity.TableName}\\\" WHERE \\\"{softCol}\\\" IS NULL;\";");
-                sb.AppendLine($"                _pagedItemsSql = \"SELECT {allColsAnsi} FROM \\\"{entity.TableName}\\\" WHERE \\\"{softCol}\\\" IS NULL ORDER BY \\\"{pkColName}\\\" ASC OFFSET :skip ROWS FETCH NEXT :take ROWS ONLY;\";");
-                sb.AppendLine($"                _deleteSql = \"UPDATE \\\"{entity.TableName}\\\" SET \\\"{softCol}\\\" = CURRENT_TIMESTAMP WHERE \\\"{pkColName}\\\" = :id;\";");
-                sb.AppendLine($"                _countSql = \"SELECT COUNT(*) FROM \\\"{entity.TableName}\\\" WHERE \\\"{softCol}\\\" IS NULL;\";");
-                sb.AppendLine($"                _existsSql = \"SELECT 1 FROM \\\"{entity.TableName}\\\" WHERE \\\"{pkColName}\\\" = :id AND \\\"{softCol}\\\" IS NULL FETCH FIRST 1 ROWS ONLY;\";");
+                sb.AppendLine(
+                    $"                _selectByIdSql = \"SELECT {allColsAnsi} FROM \\\"{entity.TableName}\\\" WHERE \\\"{pkColName}\\\" = :id AND \\\"{softCol}\\\" IS NULL FETCH FIRST 1 ROWS ONLY;\";"
+                );
+                sb.AppendLine(
+                    $"                _selectListSql = \"SELECT {allColsAnsi} FROM \\\"{entity.TableName}\\\" WHERE \\\"{softCol}\\\" IS NULL ORDER BY \\\"{pkColName}\\\" ASC OFFSET :skip ROWS FETCH NEXT :take ROWS ONLY;\";"
+                );
+                sb.AppendLine(
+                    $"                _pagedCountSql = \"SELECT COUNT(*) FROM \\\"{entity.TableName}\\\" WHERE \\\"{softCol}\\\" IS NULL;\";"
+                );
+                sb.AppendLine(
+                    $"                _pagedItemsSql = \"SELECT {allColsAnsi} FROM \\\"{entity.TableName}\\\" WHERE \\\"{softCol}\\\" IS NULL ORDER BY \\\"{pkColName}\\\" ASC OFFSET :skip ROWS FETCH NEXT :take ROWS ONLY;\";"
+                );
+                sb.AppendLine(
+                    $"                _deleteSql = \"UPDATE \\\"{entity.TableName}\\\" SET \\\"{softCol}\\\" = CURRENT_TIMESTAMP WHERE \\\"{pkColName}\\\" = :id;\";"
+                );
+                sb.AppendLine(
+                    $"                _countSql = \"SELECT COUNT(*) FROM \\\"{entity.TableName}\\\" WHERE \\\"{softCol}\\\" IS NULL;\";"
+                );
+                sb.AppendLine(
+                    $"                _existsSql = \"SELECT 1 FROM \\\"{entity.TableName}\\\" WHERE \\\"{pkColName}\\\" = :id AND \\\"{softCol}\\\" IS NULL FETCH FIRST 1 ROWS ONLY;\";"
+                );
             }
             else
             {
-                sb.AppendLine($"                _selectByIdSql = \"SELECT {allColsAnsi} FROM \\\"{entity.TableName}\\\" WHERE \\\"{pkColName}\\\" = :id FETCH FIRST 1 ROWS ONLY;\";");
-                sb.AppendLine($"                _selectListSql = \"SELECT {allColsAnsi} FROM \\\"{entity.TableName}\\\" ORDER BY \\\"{pkColName}\\\" ASC OFFSET :skip ROWS FETCH NEXT :take ROWS ONLY;\";");
-                sb.AppendLine($"                _pagedCountSql = \"SELECT COUNT(*) FROM \\\"{entity.TableName}\\\";\";");
-                sb.AppendLine($"                _pagedItemsSql = \"SELECT {allColsAnsi} FROM \\\"{entity.TableName}\\\" ORDER BY \\\"{pkColName}\\\" ASC OFFSET :skip ROWS FETCH NEXT :take ROWS ONLY;\";");
-                sb.AppendLine($"                _deleteSql = \"DELETE FROM \\\"{entity.TableName}\\\" WHERE \\\"{pkColName}\\\" = :id;\";");
-                sb.AppendLine($"                _countSql = \"SELECT COUNT(*) FROM \\\"{entity.TableName}\\\";\";");
-                sb.AppendLine($"                _existsSql = \"SELECT 1 FROM \\\"{entity.TableName}\\\" WHERE \\\"{pkColName}\\\" = :id FETCH FIRST 1 ROWS ONLY;\";");
+                sb.AppendLine(
+                    $"                _selectByIdSql = \"SELECT {allColsAnsi} FROM \\\"{entity.TableName}\\\" WHERE \\\"{pkColName}\\\" = :id FETCH FIRST 1 ROWS ONLY;\";"
+                );
+                sb.AppendLine(
+                    $"                _selectListSql = \"SELECT {allColsAnsi} FROM \\\"{entity.TableName}\\\" ORDER BY \\\"{pkColName}\\\" ASC OFFSET :skip ROWS FETCH NEXT :take ROWS ONLY;\";"
+                );
+                sb.AppendLine(
+                    $"                _pagedCountSql = \"SELECT COUNT(*) FROM \\\"{entity.TableName}\\\";\";"
+                );
+                sb.AppendLine(
+                    $"                _pagedItemsSql = \"SELECT {allColsAnsi} FROM \\\"{entity.TableName}\\\" ORDER BY \\\"{pkColName}\\\" ASC OFFSET :skip ROWS FETCH NEXT :take ROWS ONLY;\";"
+                );
+                sb.AppendLine(
+                    $"                _deleteSql = \"DELETE FROM \\\"{entity.TableName}\\\" WHERE \\\"{pkColName}\\\" = :id;\";"
+                );
+                sb.AppendLine(
+                    $"                _countSql = \"SELECT COUNT(*) FROM \\\"{entity.TableName}\\\";\";"
+                );
+                sb.AppendLine(
+                    $"                _existsSql = \"SELECT 1 FROM \\\"{entity.TableName}\\\" WHERE \\\"{pkColName}\\\" = :id FETCH FIRST 1 ROWS ONLY;\";"
+                );
             }
-            sb.AppendLine($"                _insertSql = \"INSERT INTO \\\"{entity.TableName}\\\" ({insertColNamesAnsi}) VALUES ({insertParamNamesOracle}){(autoPk ? " RETURNING \\\"" + pkColName + "\\\" INTO :lkid" : "")}\";");
-            sb.AppendLine($"                _updateSql = \"UPDATE \\\"{entity.TableName}\\\" SET {updateSetsOracle} WHERE \\\"{pkColName}\\\" = :id;\";");
+            sb.AppendLine(
+                $"                _insertSql = \"INSERT INTO \\\"{entity.TableName}\\\" ({insertColNamesAnsi}) VALUES ({insertParamNamesOracle}){(autoPk ? " RETURNING \\\"" + pkColName + "\\\" INTO :lkid" : "")}\";"
+            );
+            sb.AppendLine(
+                $"                _updateSql = \"UPDATE \\\"{entity.TableName}\\\" SET {updateSetsOracle} WHERE \\\"{pkColName}\\\" = :id;\";"
+            );
             sb.AppendLine("                break;");
             sb.AppendLine("            default: // Sqlite, PostgreSql (ANSI standard)");
             if (hasSoftDelete)
             {
-                sb.AppendLine($"                _selectByIdSql = \"SELECT {allColsAnsi} FROM \\\"{entity.TableName}\\\" WHERE \\\"{pkColName}\\\" = @id AND \\\"{softCol}\\\" IS NULL LIMIT 1;\";");
-                sb.AppendLine($"                _selectListSql = \"SELECT {allColsAnsi} FROM \\\"{entity.TableName}\\\" WHERE \\\"{softCol}\\\" IS NULL ORDER BY \\\"{pkColName}\\\" ASC LIMIT @take OFFSET @skip;\";");
-                sb.AppendLine($"                _pagedCountSql = \"SELECT COUNT(*) FROM \\\"{entity.TableName}\\\" WHERE \\\"{softCol}\\\" IS NULL;\";");
-                sb.AppendLine($"                _pagedItemsSql = \"SELECT {allColsAnsi} FROM \\\"{entity.TableName}\\\" ORDER BY \\\"{pkColName}\\\" ASC LIMIT @take OFFSET @skip;\";");
-                sb.AppendLine($"                _deleteSql = \"UPDATE \\\"{entity.TableName}\\\" SET \\\"{softCol}\\\" = CURRENT_TIMESTAMP WHERE \\\"{pkColName}\\\" = @id;\";");
-                sb.AppendLine($"                _countSql = \"SELECT COUNT(*) FROM \\\"{entity.TableName}\\\" WHERE \\\"{softCol}\\\" IS NULL;\";");
-                sb.AppendLine($"                _existsSql = \"SELECT 1 FROM \\\"{entity.TableName}\\\" WHERE \\\"{pkColName}\\\" = @id AND \\\"{softCol}\\\" IS NULL LIMIT 1;\";");
+                sb.AppendLine(
+                    $"                _selectByIdSql = \"SELECT {allColsAnsi} FROM \\\"{entity.TableName}\\\" WHERE \\\"{pkColName}\\\" = @id AND \\\"{softCol}\\\" IS NULL LIMIT 1;\";"
+                );
+                sb.AppendLine(
+                    $"                _selectListSql = \"SELECT {allColsAnsi} FROM \\\"{entity.TableName}\\\" WHERE \\\"{softCol}\\\" IS NULL ORDER BY \\\"{pkColName}\\\" ASC LIMIT @take OFFSET @skip;\";"
+                );
+                sb.AppendLine(
+                    $"                _pagedCountSql = \"SELECT COUNT(*) FROM \\\"{entity.TableName}\\\" WHERE \\\"{softCol}\\\" IS NULL;\";"
+                );
+                sb.AppendLine(
+                    $"                _pagedItemsSql = \"SELECT {allColsAnsi} FROM \\\"{entity.TableName}\\\" ORDER BY \\\"{pkColName}\\\" ASC LIMIT @take OFFSET @skip;\";"
+                );
+                sb.AppendLine(
+                    $"                _deleteSql = \"UPDATE \\\"{entity.TableName}\\\" SET \\\"{softCol}\\\" = CURRENT_TIMESTAMP WHERE \\\"{pkColName}\\\" = @id;\";"
+                );
+                sb.AppendLine(
+                    $"                _countSql = \"SELECT COUNT(*) FROM \\\"{entity.TableName}\\\" WHERE \\\"{softCol}\\\" IS NULL;\";"
+                );
+                sb.AppendLine(
+                    $"                _existsSql = \"SELECT 1 FROM \\\"{entity.TableName}\\\" WHERE \\\"{pkColName}\\\" = @id AND \\\"{softCol}\\\" IS NULL LIMIT 1;\";"
+                );
             }
             else
             {
-                sb.AppendLine($"                _selectByIdSql = \"SELECT {allColsAnsi} FROM \\\"{entity.TableName}\\\" WHERE \\\"{pkColName}\\\" = @id LIMIT 1;\";");
-                sb.AppendLine($"                _selectListSql = \"SELECT {allColsAnsi} FROM \\\"{entity.TableName}\\\" ORDER BY \\\"{pkColName}\\\" ASC LIMIT @take OFFSET @skip;\";");
-                sb.AppendLine($"                _pagedCountSql = \"SELECT COUNT(*) FROM \\\"{entity.TableName}\\\";\";");
-                sb.AppendLine($"                _pagedItemsSql = \"SELECT {allColsAnsi} FROM \\\"{entity.TableName}\\\" ORDER BY \\\"{pkColName}\\\" ASC LIMIT @take OFFSET @skip;\";");
-                sb.AppendLine($"                _deleteSql = \"DELETE FROM \\\"{entity.TableName}\\\" WHERE \\\"{pkColName}\\\" = @id;\";");
-                sb.AppendLine($"                _countSql = \"SELECT COUNT(*) FROM \\\"{entity.TableName}\\\";\";");
-                sb.AppendLine($"                _existsSql = \"SELECT 1 FROM \\\"{entity.TableName}\\\" WHERE \\\"{pkColName}\\\" = @id LIMIT 1;\";");
+                sb.AppendLine(
+                    $"                _selectByIdSql = \"SELECT {allColsAnsi} FROM \\\"{entity.TableName}\\\" WHERE \\\"{pkColName}\\\" = @id LIMIT 1;\";"
+                );
+                sb.AppendLine(
+                    $"                _selectListSql = \"SELECT {allColsAnsi} FROM \\\"{entity.TableName}\\\" ORDER BY \\\"{pkColName}\\\" ASC LIMIT @take OFFSET @skip;\";"
+                );
+                sb.AppendLine(
+                    $"                _pagedCountSql = \"SELECT COUNT(*) FROM \\\"{entity.TableName}\\\";\";"
+                );
+                sb.AppendLine(
+                    $"                _pagedItemsSql = \"SELECT {allColsAnsi} FROM \\\"{entity.TableName}\\\" ORDER BY \\\"{pkColName}\\\" ASC LIMIT @take OFFSET @skip;\";"
+                );
+                sb.AppendLine(
+                    $"                _deleteSql = \"DELETE FROM \\\"{entity.TableName}\\\" WHERE \\\"{pkColName}\\\" = @id;\";"
+                );
+                sb.AppendLine(
+                    $"                _countSql = \"SELECT COUNT(*) FROM \\\"{entity.TableName}\\\";\";"
+                );
+                sb.AppendLine(
+                    $"                _existsSql = \"SELECT 1 FROM \\\"{entity.TableName}\\\" WHERE \\\"{pkColName}\\\" = @id LIMIT 1;\";"
+                );
             }
-            sb.AppendLine($"                _insertSql = \"INSERT INTO \\\"{entity.TableName}\\\" ({insertColNamesAnsi}) VALUES ({insertParamNames}){(autoPk ? " RETURNING \\\"" + pkColName + "\\\"" : "")};\";");
-            sb.AppendLine($"                _updateSql = \"UPDATE \\\"{entity.TableName}\\\" SET {updateSetsAnsi} WHERE \\\"{pkColName}\\\" = @id;\";");
+            sb.AppendLine(
+                $"                _insertSql = \"INSERT INTO \\\"{entity.TableName}\\\" ({insertColNamesAnsi}) VALUES ({insertParamNames}){(autoPk ? " RETURNING \\\"" + pkColName + "\\\"" : "")};\";"
+            );
+            sb.AppendLine(
+                $"                _updateSql = \"UPDATE \\\"{entity.TableName}\\\" SET {updateSetsAnsi} WHERE \\\"{pkColName}\\\" = @id;\";"
+            );
             sb.AppendLine("                break;");
             sb.AppendLine("        }");
             sb.AppendLine("    }");
             sb.AppendLine();
-            sb.AppendLine("    private string ParamName(string name) => _dialect == DatabaseDialect.Oracle ? \":\" + name : \"@\" + name;");
-            sb.AppendLine("    // Oracle stores Guid as VARCHAR2(36) and its driver cannot bind Guid parameters.");
-            sb.AppendLine("    private object DbValue(object? value) => value is null ? DBNull.Value : (value is Guid guid && _dialect == DatabaseDialect.Oracle ? guid.ToString() : value);");
+            sb.AppendLine(
+                "    private string ParamName(string name) => _dialect == DatabaseDialect.Oracle ? \":\" + name : \"@\" + name;"
+            );
+            sb.AppendLine(
+                "    // Oracle stores Guid as VARCHAR2(36) and its driver cannot bind Guid parameters."
+            );
+            sb.AppendLine(
+                "    private object DbValue(object? value) => value is null ? DBNull.Value : (value is Guid guid && _dialect == DatabaseDialect.Oracle ? guid.ToString() : value);"
+            );
             sb.AppendLine();
 
             // Helper to get connection and transaction
-            sb.AppendLine("    private async ValueTask<(DbConnection Connection, DbTransaction? Transaction, bool ShouldDispose)> GetConnectionAsync(CancellationToken ct)");
+            sb.AppendLine(
+                "    private async ValueTask<(DbConnection Connection, DbTransaction? Transaction, bool ShouldDispose)> GetConnectionAsync(CancellationToken ct)"
+            );
             sb.AppendLine("    {");
             sb.AppendLine("        if (_uow.CurrentTransaction != null)");
             sb.AppendLine("        {");
-            sb.AppendLine("            return (_uow.CurrentTransaction.Connection!, _uow.CurrentTransaction, false);");
+            sb.AppendLine(
+                "            return (_uow.CurrentTransaction.Connection!, _uow.CurrentTransaction, false);"
+            );
             sb.AppendLine("        }");
             sb.AppendLine("        var conn = await _factory.CreateConnectionAsync(ct);");
-            sb.AppendLine("        if (conn.State != ConnectionState.Open) await conn.OpenAsync(ct);");
+            sb.AppendLine(
+                "        if (conn.State != ConnectionState.Open) await conn.OpenAsync(ct);"
+            );
             sb.AppendLine("        return (conn, null, true);");
             sb.AppendLine("    }");
             sb.AppendLine();
@@ -1231,8 +1864,12 @@ public class DataGenerator : IIncrementalGenerator
             sb.AppendLine("            foreach (var p in dbParams) cmd.Parameters.Add(p);");
             sb.AppendLine("            return;");
             sb.AppendLine("        }");
-            sb.AppendLine("        var prefix = _dialect == DatabaseDialect.Oracle ? \":\" : \"@\";");
-            sb.AppendLine("        if (parameters is IEnumerable<KeyValuePair<string, object?>> kvpParams)");
+            sb.AppendLine(
+                "        var prefix = _dialect == DatabaseDialect.Oracle ? \":\" : \"@\";"
+            );
+            sb.AppendLine(
+                "        if (parameters is IEnumerable<KeyValuePair<string, object?>> kvpParams)"
+            );
             sb.AppendLine("        {");
             sb.AppendLine("            foreach (var kvp in kvpParams)");
             sb.AppendLine("            {");
@@ -1244,7 +1881,9 @@ public class DataGenerator : IIncrementalGenerator
             sb.AppendLine("            }");
             sb.AppendLine("            return;");
             sb.AppendLine("        }");
-            sb.AppendLine("        if (parameters is IEnumerable<(string Name, object? Value)> tupleParams)");
+            sb.AppendLine(
+                "        if (parameters is IEnumerable<(string Name, object? Value)> tupleParams)"
+            );
             sb.AppendLine("        {");
             sb.AppendLine("            foreach (var item in tupleParams)");
             sb.AppendLine("            {");
@@ -1256,15 +1895,25 @@ public class DataGenerator : IIncrementalGenerator
             sb.AppendLine("            }");
             sb.AppendLine("            return;");
             sb.AppendLine("        }");
-            sb.AppendLine("        // Native AOT: reflection on anonymous/POCO types is NOT supported.");
-            sb.AppendLine("        // Use IEnumerable<(string Name, object? Value)>, Dictionary<string, object?>, or IEnumerable<DbParameter>.");
+            sb.AppendLine(
+                "        // Native AOT: reflection on anonymous/POCO types is NOT supported."
+            );
+            sb.AppendLine(
+                "        // Use IEnumerable<(string Name, object? Value)>, Dictionary<string, object?>, or IEnumerable<DbParameter>."
+            );
             sb.AppendLine("        throw new NotSupportedException(");
-            sb.AppendLine("            $\"AttachParameters: parameter type '{parameters?.GetType().Name}' is not supported in AOT mode. \"");
-            sb.AppendLine("            + \"Use IEnumerable<(string Name, object? Value)>, Dictionary<string, object?>, or IEnumerable<DbParameter>.\");");
+            sb.AppendLine(
+                "            $\"AttachParameters: parameter type '{parameters?.GetType().Name}' is not supported in AOT mode. \""
+            );
+            sb.AppendLine(
+                "            + \"Use IEnumerable<(string Name, object? Value)>, Dictionary<string, object?>, or IEnumerable<DbParameter>.\");"
+            );
             sb.AppendLine("    }");
             sb.AppendLine();
 
-            sb.AppendLine($"    public async Task<{entity.FullName}?> GetByIdAsync({pkType} id, CancellationToken ct = default)");
+            sb.AppendLine(
+                $"    public async Task<{entity.FullName}?> GetByIdAsync({pkType} id, CancellationToken ct = default)"
+            );
             sb.AppendLine("    {");
             sb.AppendLine("        var (conn, tx, shouldDispose) = await GetConnectionAsync(ct);");
             sb.AppendLine("        try");
@@ -1278,7 +1927,9 @@ public class DataGenerator : IIncrementalGenerator
             sb.AppendLine("            cmd.Parameters.Add(p);");
             sb.AppendLine();
             sb.AppendLine("            await using var reader = await cmd.ExecuteReaderAsync(ct);");
-            sb.AppendLine($"            return await reader.ReadAsync(ct) ? reader.Read{entity.Name}() : null;");
+            sb.AppendLine(
+                $"            return await reader.ReadAsync(ct) ? reader.Read{entity.Name}() : null;"
+            );
             sb.AppendLine("        }");
             sb.AppendLine("        finally");
             sb.AppendLine("        {");
@@ -1287,7 +1938,9 @@ public class DataGenerator : IIncrementalGenerator
             sb.AppendLine("    }");
             sb.AppendLine();
 
-            sb.AppendLine($"    public async Task<List<{entity.FullName}>> ListAsync(int skip = 0, int take = 100, CancellationToken ct = default)");
+            sb.AppendLine(
+                $"    public async Task<List<{entity.FullName}>> ListAsync(int skip = 0, int take = 100, CancellationToken ct = default)"
+            );
             sb.AppendLine("    {");
             sb.AppendLine("        var (conn, tx, shouldDispose) = await GetConnectionAsync(ct);");
             sb.AppendLine("        try");
@@ -1295,8 +1948,12 @@ public class DataGenerator : IIncrementalGenerator
             sb.AppendLine("            await using var cmd = conn.CreateCommand();");
             sb.AppendLine("            cmd.Transaction = tx;");
             sb.AppendLine("            cmd.CommandText = _selectListSql;");
-            sb.AppendLine("            var pTake = cmd.CreateParameter(); pTake.ParameterName = ParamName(\"take\"); pTake.Value = take; cmd.Parameters.Add(pTake);");
-            sb.AppendLine("            var pSkip = cmd.CreateParameter(); pSkip.ParameterName = ParamName(\"skip\"); pSkip.Value = skip; cmd.Parameters.Add(pSkip);");
+            sb.AppendLine(
+                "            var pTake = cmd.CreateParameter(); pTake.ParameterName = ParamName(\"take\"); pTake.Value = take; cmd.Parameters.Add(pTake);"
+            );
+            sb.AppendLine(
+                "            var pSkip = cmd.CreateParameter(); pSkip.ParameterName = ParamName(\"skip\"); pSkip.Value = skip; cmd.Parameters.Add(pSkip);"
+            );
             sb.AppendLine();
             sb.AppendLine($"            var list = new List<{entity.FullName}>();");
             sb.AppendLine("            await using var reader = await cmd.ExecuteReaderAsync(ct);");
@@ -1314,7 +1971,9 @@ public class DataGenerator : IIncrementalGenerator
             sb.AppendLine("    }");
             sb.AppendLine();
 
-            sb.AppendLine($"    public async Task<PagedResult<{entity.FullName}>> GetPagedAsync(int pageNumber, int pageSize, CancellationToken ct = default)");
+            sb.AppendLine(
+                $"    public async Task<PagedResult<{entity.FullName}>> GetPagedAsync(int pageNumber, int pageSize, CancellationToken ct = default)"
+            );
             sb.AppendLine("    {");
             sb.AppendLine("        if (pageNumber < 1) pageNumber = 1;");
             sb.AppendLine("        if (pageSize < 1) pageSize = 10;");
@@ -1331,8 +1990,12 @@ public class DataGenerator : IIncrementalGenerator
             sb.AppendLine("            await using var cmd = conn.CreateCommand();");
             sb.AppendLine("            cmd.Transaction = tx;");
             sb.AppendLine("            cmd.CommandText = _pagedItemsSql;");
-            sb.AppendLine("            var pTake = cmd.CreateParameter(); pTake.ParameterName = ParamName(\"take\"); pTake.Value = pageSize; cmd.Parameters.Add(pTake);");
-            sb.AppendLine("            var pSkip = cmd.CreateParameter(); pSkip.ParameterName = ParamName(\"skip\"); pSkip.Value = skip; cmd.Parameters.Add(pSkip);");
+            sb.AppendLine(
+                "            var pTake = cmd.CreateParameter(); pTake.ParameterName = ParamName(\"take\"); pTake.Value = pageSize; cmd.Parameters.Add(pTake);"
+            );
+            sb.AppendLine(
+                "            var pSkip = cmd.CreateParameter(); pSkip.ParameterName = ParamName(\"skip\"); pSkip.Value = skip; cmd.Parameters.Add(pSkip);"
+            );
             sb.AppendLine();
             sb.AppendLine($"            var items = new List<{entity.FullName}>();");
             sb.AppendLine("            await using var reader = await cmd.ExecuteReaderAsync(ct);");
@@ -1357,7 +2020,9 @@ public class DataGenerator : IIncrementalGenerator
             sb.AppendLine("    }");
             sb.AppendLine();
 
-            sb.AppendLine($"    public async Task InsertAsync({entity.FullName} entity, CancellationToken ct = default)");
+            sb.AppendLine(
+                $"    public async Task InsertAsync({entity.FullName} entity, CancellationToken ct = default)"
+            );
             sb.AppendLine("    {");
             sb.AppendLine("        var (conn, tx, shouldDispose) = await GetConnectionAsync(ct);");
             sb.AppendLine("        try");
@@ -1370,17 +2035,25 @@ public class DataGenerator : IIncrementalGenerator
             {
                 sb.AppendLine("            {");
                 sb.AppendLine("                var p = cmd.CreateParameter();");
-                sb.AppendLine($"                p.ParameterName = ParamName(\"{col.ColumnName}\");");
+                sb.AppendLine(
+                    $"                p.ParameterName = ParamName(\"{col.ColumnName}\");"
+                );
                 if (col.IsJson)
                 {
                     if (!string.IsNullOrEmpty(col.JsonContextTypeFullName))
                     {
-                        sb.AppendLine($"                p.Value = entity.{col.PropertyName} != null ? JsonSerializer.Serialize(entity.{col.PropertyName}, typeof({col.TypeFullName}), {col.JsonContextTypeFullName}.Default) : DBNull.Value;");
+                        sb.AppendLine(
+                            $"                p.Value = entity.{col.PropertyName} != null ? JsonSerializer.Serialize(entity.{col.PropertyName}, typeof({col.TypeFullName}), {col.JsonContextTypeFullName}.Default) : DBNull.Value;"
+                        );
                     }
                     else
                     {
-                        sb.AppendLine($"                var jsonCtx = LinKitDataJsonSerializerAccessor.Context;");
-                        sb.AppendLine($"                p.Value = entity.{col.PropertyName} != null ? (jsonCtx != null ? JsonSerializer.Serialize(entity.{col.PropertyName}, typeof({col.TypeFullName}), jsonCtx) : JsonSerializer.Serialize(entity.{col.PropertyName})) : DBNull.Value;");
+                        sb.AppendLine(
+                            $"                var jsonCtx = LinKitDataJsonSerializerAccessor.Context;"
+                        );
+                        sb.AppendLine(
+                            $"                p.Value = entity.{col.PropertyName} != null ? (jsonCtx != null ? JsonSerializer.Serialize(entity.{col.PropertyName}, typeof({col.TypeFullName}), jsonCtx) : JsonSerializer.Serialize(entity.{col.PropertyName})) : DBNull.Value;"
+                        );
                     }
                 }
                 else if (col.IsEnum)
@@ -1403,15 +2076,21 @@ public class DataGenerator : IIncrementalGenerator
                 sb.AppendLine("                var idParam = cmd.CreateParameter();");
                 sb.AppendLine("                idParam.ParameterName = \":lkid\";");
                 sb.AppendLine("                idParam.Direction = ParameterDirection.Output;");
-                sb.AppendLine($"                idParam.DbType = {(pk.TypeFullName == "long" ? "DbType.Int64" : "DbType.Int32")};");
+                sb.AppendLine(
+                    $"                idParam.DbType = {(pk.TypeFullName == "long" ? "DbType.Int64" : "DbType.Int32")};"
+                );
                 sb.AppendLine("                cmd.Parameters.Add(idParam);");
                 sb.AppendLine("                await cmd.ExecuteNonQueryAsync(ct);");
                 sb.AppendLine($"                entity.{pkPropName} = {convert}(idParam.Value);");
                 sb.AppendLine("            }");
                 sb.AppendLine("            else");
                 sb.AppendLine("            {");
-                sb.AppendLine("                var generatedId = await cmd.ExecuteScalarAsync(ct);");
-                sb.AppendLine($"                if (generatedId != null && generatedId != DBNull.Value) entity.{pkPropName} = {convert}(generatedId);");
+                sb.AppendLine(
+                    "                var generatedId = await cmd.ExecuteScalarAsync(ct);"
+                );
+                sb.AppendLine(
+                    $"                if (generatedId != null && generatedId != DBNull.Value) entity.{pkPropName} = {convert}(generatedId);"
+                );
                 sb.AppendLine("            }");
             }
             else
@@ -1428,32 +2107,44 @@ public class DataGenerator : IIncrementalGenerator
 
             // InsertRangeAsync — Batch INSERT with dynamic batch size to respect SQL parameter limits (< 2100)
             int maxInsertBatch = Math.Max(1, Math.Min(500, 2000 / Math.Max(1, insertCols.Count)));
-            sb.AppendLine($"    public async Task InsertRangeAsync(IEnumerable<{entity.FullName}> entities, CancellationToken ct = default)");
+            sb.AppendLine(
+                $"    public async Task InsertRangeAsync(IEnumerable<{entity.FullName}> entities, CancellationToken ct = default)"
+            );
             sb.AppendLine("    {");
             if (autoPk)
             {
                 // Identity keys must be written back to each entity, so rows are inserted one by one.
-                sb.AppendLine("        foreach (var item in entities) await InsertAsync(item, ct);");
+                sb.AppendLine(
+                    "        foreach (var item in entities) await InsertAsync(item, ct);"
+                );
                 sb.AppendLine("    }");
             }
             else
             {
-            sb.AppendLine("        if (_dialect == DatabaseDialect.Oracle)");
-            sb.AppendLine("        {");
-            sb.AppendLine("            foreach (var item in entities) await InsertAsync(item, ct);");
-            sb.AppendLine("            return;");
-            sb.AppendLine("        }");
-            sb.AppendLine($"        var batch = new List<{entity.FullName}>({maxInsertBatch});");
-            sb.AppendLine("        foreach (var item in entities)");
-            sb.AppendLine("        {");
-            sb.AppendLine("            batch.Add(item);");
-            sb.AppendLine($"            if (batch.Count >= {maxInsertBatch}) {{ await InsertBatchAsync(batch, ct); batch.Clear(); }}");
-            sb.AppendLine("        }");
-            sb.AppendLine("        if (batch.Count > 0) await InsertBatchAsync(batch, ct);");
-            sb.AppendLine("    }");
+                sb.AppendLine("        if (_dialect == DatabaseDialect.Oracle)");
+                sb.AppendLine("        {");
+                sb.AppendLine(
+                    "            foreach (var item in entities) await InsertAsync(item, ct);"
+                );
+                sb.AppendLine("            return;");
+                sb.AppendLine("        }");
+                sb.AppendLine(
+                    $"        var batch = new List<{entity.FullName}>({maxInsertBatch});"
+                );
+                sb.AppendLine("        foreach (var item in entities)");
+                sb.AppendLine("        {");
+                sb.AppendLine("            batch.Add(item);");
+                sb.AppendLine(
+                    $"            if (batch.Count >= {maxInsertBatch}) {{ await InsertBatchAsync(batch, ct); batch.Clear(); }}"
+                );
+                sb.AppendLine("        }");
+                sb.AppendLine("        if (batch.Count > 0) await InsertBatchAsync(batch, ct);");
+                sb.AppendLine("    }");
             }
             sb.AppendLine();
-            sb.AppendLine($"    private async Task InsertBatchAsync(List<{entity.FullName}> items, CancellationToken ct)");
+            sb.AppendLine(
+                $"    private async Task InsertBatchAsync(List<{entity.FullName}> items, CancellationToken ct)"
+            );
             sb.AppendLine("    {");
             sb.AppendLine("        if (items.Count == 0) return;");
             sb.AppendLine("        var (conn, tx, shouldDispose) = await GetConnectionAsync(ct);");
@@ -1464,27 +2155,41 @@ public class DataGenerator : IIncrementalGenerator
             sb.AppendLine("            var sqlSb = new System.Text.StringBuilder();");
 
             // Build dialect-aware table + column prefix once
-            string batchColsSql    = string.Join(", ", insertCols.Select(p => $"[{p.ColumnName}]"));
-            string batchColsAnsi   = string.Join(", ", insertCols.Select(p => $"\\\"{p.ColumnName}\\\""));
-            string batchColsMySql  = string.Join(", ", insertCols.Select(p => $"`{p.ColumnName}`"));
+            string batchColsSql = string.Join(", ", insertCols.Select(p => $"[{p.ColumnName}]"));
+            string batchColsAnsi = string.Join(
+                ", ",
+                insertCols.Select(p => $"\\\"{p.ColumnName}\\\"")
+            );
+            string batchColsMySql = string.Join(", ", insertCols.Select(p => $"`{p.ColumnName}`"));
             sb.AppendLine("            string tablePrefix = _dialect switch");
             sb.AppendLine("            {");
-            sb.AppendLine($"                DatabaseDialect.SqlServer => \"INSERT INTO [{entity.TableName}] ({batchColsSql}) VALUES \",");
-            sb.AppendLine($"                DatabaseDialect.MySql => \"INSERT INTO `{entity.TableName}` ({batchColsMySql}) VALUES \",");
-            sb.AppendLine($"                _ => \"INSERT INTO \\\"{entity.TableName}\\\" ({batchColsAnsi}) VALUES \"");
+            sb.AppendLine(
+                $"                DatabaseDialect.SqlServer => \"INSERT INTO [{entity.TableName}] ({batchColsSql}) VALUES \","
+            );
+            sb.AppendLine(
+                $"                DatabaseDialect.MySql => \"INSERT INTO `{entity.TableName}` ({batchColsMySql}) VALUES \","
+            );
+            sb.AppendLine(
+                $"                _ => \"INSERT INTO \\\"{entity.TableName}\\\" ({batchColsAnsi}) VALUES \""
+            );
             sb.AppendLine("            };");
             sb.AppendLine("            sqlSb.Append(tablePrefix);");
             sb.AppendLine("            for (int row = 0; row < items.Count; row++)");
             sb.AppendLine("            {");
             sb.AppendLine("                if (row > 0) sqlSb.Append(',');");
-            string rowParams = string.Join(", ", insertCols.Select(p => "\" + ParamName(\"" + p.ColumnName + "\" + row) + \""));
+            string rowParams = string.Join(
+                ", ",
+                insertCols.Select(p => "\" + ParamName(\"" + p.ColumnName + "\" + row) + \"")
+            );
             sb.AppendLine($"                sqlSb.Append('(');");
             for (int ci = 0; ci < insertCols.Count; ci++)
             {
                 var col = insertCols[ci];
                 if (ci > 0)
                     sb.AppendLine("                sqlSb.Append(',');");
-                sb.AppendLine($"                sqlSb.Append(ParamName(\"{col.ColumnName}\" + row));");
+                sb.AppendLine(
+                    $"                sqlSb.Append(ParamName(\"{col.ColumnName}\" + row));"
+                );
             }
             sb.AppendLine("                sqlSb.Append(')');");
             sb.AppendLine("                var rowItem = items[row];");
@@ -1492,18 +2197,28 @@ public class DataGenerator : IIncrementalGenerator
             {
                 sb.AppendLine("                {");
                 sb.AppendLine("                    var p = cmd.CreateParameter();");
-                sb.AppendLine($"                    p.ParameterName = ParamName(\"{col.ColumnName}\" + row);");
+                sb.AppendLine(
+                    $"                    p.ParameterName = ParamName(\"{col.ColumnName}\" + row);"
+                );
                 if (col.IsJson)
                 {
                     if (!string.IsNullOrEmpty(col.JsonContextTypeFullName))
-                        sb.AppendLine($"                    p.Value = rowItem.{col.PropertyName} != null ? JsonSerializer.Serialize(rowItem.{col.PropertyName}, typeof({col.TypeFullName}), {col.JsonContextTypeFullName}.Default) : (object)DBNull.Value;");
+                        sb.AppendLine(
+                            $"                    p.Value = rowItem.{col.PropertyName} != null ? JsonSerializer.Serialize(rowItem.{col.PropertyName}, typeof({col.TypeFullName}), {col.JsonContextTypeFullName}.Default) : (object)DBNull.Value;"
+                        );
                     else
-                        sb.AppendLine($"                    {{ var jctx = LinKitDataJsonSerializerAccessor.Context; p.Value = rowItem.{col.PropertyName} != null ? (jctx != null ? JsonSerializer.Serialize(rowItem.{col.PropertyName}, typeof({col.TypeFullName}), jctx) : JsonSerializer.Serialize(rowItem.{col.PropertyName})) : (object)DBNull.Value; }}");
+                        sb.AppendLine(
+                            $"                    {{ var jctx = LinKitDataJsonSerializerAccessor.Context; p.Value = rowItem.{col.PropertyName} != null ? (jctx != null ? JsonSerializer.Serialize(rowItem.{col.PropertyName}, typeof({col.TypeFullName}), jctx) : JsonSerializer.Serialize(rowItem.{col.PropertyName})) : (object)DBNull.Value; }}"
+                        );
                 }
                 else if (col.IsEnum)
-                    sb.AppendLine($"                    p.Value = (int)rowItem.{col.PropertyName};");
+                    sb.AppendLine(
+                        $"                    p.Value = (int)rowItem.{col.PropertyName};"
+                    );
                 else
-                    sb.AppendLine($"                    p.Value = DbValue(rowItem.{col.PropertyName});");
+                    sb.AppendLine(
+                        $"                    p.Value = DbValue(rowItem.{col.PropertyName});"
+                    );
                 sb.AppendLine("                    cmd.Parameters.Add(p);");
                 sb.AppendLine("                }");
             }
@@ -1518,7 +2233,9 @@ public class DataGenerator : IIncrementalGenerator
             sb.AppendLine("    }");
             sb.AppendLine();
 
-            sb.AppendLine($"    public async Task UpdateAsync({entity.FullName} entity, CancellationToken ct = default)");
+            sb.AppendLine(
+                $"    public async Task UpdateAsync({entity.FullName} entity, CancellationToken ct = default)"
+            );
             sb.AppendLine("    {");
             sb.AppendLine("        var (conn, tx, shouldDispose) = await GetConnectionAsync(ct);");
             sb.AppendLine("        try");
@@ -1531,17 +2248,25 @@ public class DataGenerator : IIncrementalGenerator
             {
                 sb.AppendLine("            {");
                 sb.AppendLine("                var p = cmd.CreateParameter();");
-                sb.AppendLine($"                p.ParameterName = ParamName(\"{col.ColumnName}\");");
+                sb.AppendLine(
+                    $"                p.ParameterName = ParamName(\"{col.ColumnName}\");"
+                );
                 if (col.IsJson)
                 {
                     if (!string.IsNullOrEmpty(col.JsonContextTypeFullName))
                     {
-                        sb.AppendLine($"                p.Value = entity.{col.PropertyName} != null ? JsonSerializer.Serialize(entity.{col.PropertyName}, typeof({col.TypeFullName}), {col.JsonContextTypeFullName}.Default) : DBNull.Value;");
+                        sb.AppendLine(
+                            $"                p.Value = entity.{col.PropertyName} != null ? JsonSerializer.Serialize(entity.{col.PropertyName}, typeof({col.TypeFullName}), {col.JsonContextTypeFullName}.Default) : DBNull.Value;"
+                        );
                     }
                     else
                     {
-                        sb.AppendLine($"                var jsonCtx = LinKitDataJsonSerializerAccessor.Context;");
-                        sb.AppendLine($"                p.Value = entity.{col.PropertyName} != null ? (jsonCtx != null ? JsonSerializer.Serialize(entity.{col.PropertyName}, typeof({col.TypeFullName}), jsonCtx) : JsonSerializer.Serialize(entity.{col.PropertyName})) : DBNull.Value;");
+                        sb.AppendLine(
+                            $"                var jsonCtx = LinKitDataJsonSerializerAccessor.Context;"
+                        );
+                        sb.AppendLine(
+                            $"                p.Value = entity.{col.PropertyName} != null ? (jsonCtx != null ? JsonSerializer.Serialize(entity.{col.PropertyName}, typeof({col.TypeFullName}), jsonCtx) : JsonSerializer.Serialize(entity.{col.PropertyName})) : DBNull.Value;"
+                        );
                     }
                 }
                 else if (col.IsEnum)
@@ -1572,11 +2297,15 @@ public class DataGenerator : IIncrementalGenerator
             sb.AppendLine();
 
             // Reuses one connection and transaction for the entire batch.
-            sb.AppendLine($"    public async Task UpdateRangeAsync(IEnumerable<{entity.FullName}> entities, CancellationToken ct = default)");
+            sb.AppendLine(
+                $"    public async Task UpdateRangeAsync(IEnumerable<{entity.FullName}> entities, CancellationToken ct = default)"
+            );
             sb.AppendLine("    {");
             sb.AppendLine("        var (conn, tx, shouldDispose) = await GetConnectionAsync(ct);");
             sb.AppendLine("        DbTransaction? localTx = null;");
-            sb.AppendLine("        if (tx == null) localTx = await conn.BeginTransactionAsync(ct);");
+            sb.AppendLine(
+                "        if (tx == null) localTx = await conn.BeginTransactionAsync(ct);"
+            );
             sb.AppendLine("        var activeTx = tx ?? localTx;");
             sb.AppendLine("        try");
             sb.AppendLine("        {");
@@ -1589,17 +2318,25 @@ public class DataGenerator : IIncrementalGenerator
             {
                 sb.AppendLine("                {");
                 sb.AppendLine("                    var p = cmd.CreateParameter();");
-                sb.AppendLine($"                    p.ParameterName = ParamName(\"{col.ColumnName}\");");
+                sb.AppendLine(
+                    $"                    p.ParameterName = ParamName(\"{col.ColumnName}\");"
+                );
                 if (col.IsJson)
                 {
                     if (!string.IsNullOrEmpty(col.JsonContextTypeFullName))
                     {
-                        sb.AppendLine($"                    p.Value = item.{col.PropertyName} != null ? JsonSerializer.Serialize(item.{col.PropertyName}, typeof({col.TypeFullName}), {col.JsonContextTypeFullName}.Default) : DBNull.Value;");
+                        sb.AppendLine(
+                            $"                    p.Value = item.{col.PropertyName} != null ? JsonSerializer.Serialize(item.{col.PropertyName}, typeof({col.TypeFullName}), {col.JsonContextTypeFullName}.Default) : DBNull.Value;"
+                        );
                     }
                     else
                     {
-                        sb.AppendLine($"                    var jsonCtx = LinKitDataJsonSerializerAccessor.Context;");
-                        sb.AppendLine($"                    p.Value = item.{col.PropertyName} != null ? (jsonCtx != null ? JsonSerializer.Serialize(item.{col.PropertyName}, typeof({col.TypeFullName}), jsonCtx) : JsonSerializer.Serialize(item.{col.PropertyName})) : DBNull.Value;");
+                        sb.AppendLine(
+                            $"                    var jsonCtx = LinKitDataJsonSerializerAccessor.Context;"
+                        );
+                        sb.AppendLine(
+                            $"                    p.Value = item.{col.PropertyName} != null ? (jsonCtx != null ? JsonSerializer.Serialize(item.{col.PropertyName}, typeof({col.TypeFullName}), jsonCtx) : JsonSerializer.Serialize(item.{col.PropertyName})) : DBNull.Value;"
+                        );
                     }
                 }
                 else if (col.IsEnum)
@@ -1608,7 +2345,9 @@ public class DataGenerator : IIncrementalGenerator
                 }
                 else
                 {
-                    sb.AppendLine($"                    p.Value = DbValue(item.{col.PropertyName});");
+                    sb.AppendLine(
+                        $"                    p.Value = DbValue(item.{col.PropertyName});"
+                    );
                 }
                 sb.AppendLine("                    cmd.Parameters.Add(p);");
                 sb.AppendLine("                }");
@@ -1636,7 +2375,9 @@ public class DataGenerator : IIncrementalGenerator
             sb.AppendLine("    }");
             sb.AppendLine();
 
-            sb.AppendLine($"    public async Task DeleteAsync({pkType} id, CancellationToken ct = default)");
+            sb.AppendLine(
+                $"    public async Task DeleteAsync({pkType} id, CancellationToken ct = default)"
+            );
             sb.AppendLine("    {");
             sb.AppendLine("        var (conn, tx, shouldDispose) = await GetConnectionAsync(ct);");
             sb.AppendLine("        try");
@@ -1659,18 +2400,24 @@ public class DataGenerator : IIncrementalGenerator
             sb.AppendLine();
 
             // Splits large deletes into chunks to stay within database parameter limits.
-            sb.AppendLine($"    public async Task DeleteRangeAsync(IEnumerable<{pkType}> ids, CancellationToken ct = default)");
+            sb.AppendLine(
+                $"    public async Task DeleteRangeAsync(IEnumerable<{pkType}> ids, CancellationToken ct = default)"
+            );
             sb.AppendLine("    {");
             sb.AppendLine($"        var batch = new List<{pkType}>();");
             sb.AppendLine("        foreach (var id in ids)");
             sb.AppendLine("        {");
             sb.AppendLine("            batch.Add(id);");
-            sb.AppendLine("            if (batch.Count >= 500) { await DeleteBatchAsync(batch, ct); batch.Clear(); }");
+            sb.AppendLine(
+                "            if (batch.Count >= 500) { await DeleteBatchAsync(batch, ct); batch.Clear(); }"
+            );
             sb.AppendLine("        }");
             sb.AppendLine("        if (batch.Count > 0) await DeleteBatchAsync(batch, ct);");
             sb.AppendLine("    }");
             sb.AppendLine();
-            sb.AppendLine($"    private async Task DeleteBatchAsync(List<{pkType}> batch, CancellationToken ct)");
+            sb.AppendLine(
+                $"    private async Task DeleteBatchAsync(List<{pkType}> batch, CancellationToken ct)"
+            );
             sb.AppendLine("    {");
             sb.AppendLine("        if (batch.Count == 0) return;");
             sb.AppendLine("        var (conn, tx, shouldDispose) = await GetConnectionAsync(ct);");
@@ -1683,15 +2430,27 @@ public class DataGenerator : IIncrementalGenerator
             sb.AppendLine("            {");
             if (hasSoftDelete)
             {
-                sb.AppendLine($"                DatabaseDialect.SqlServer => \"UPDATE [{entity.TableName}] SET [{softCol}] = SYSUTCDATETIME() WHERE [{pkColName}] IN (\",");
-                sb.AppendLine($"                DatabaseDialect.MySql => \"UPDATE `{entity.TableName}` SET `{softCol}` = CURRENT_TIMESTAMP WHERE `{pkColName}` IN (\",");
-                sb.AppendLine($"                _ => \"UPDATE \\\"{entity.TableName}\\\" SET \\\"{softCol}\\\" = CURRENT_TIMESTAMP WHERE \\\"{pkColName}\\\" IN (\"");
+                sb.AppendLine(
+                    $"                DatabaseDialect.SqlServer => \"UPDATE [{entity.TableName}] SET [{softCol}] = SYSUTCDATETIME() WHERE [{pkColName}] IN (\","
+                );
+                sb.AppendLine(
+                    $"                DatabaseDialect.MySql => \"UPDATE `{entity.TableName}` SET `{softCol}` = CURRENT_TIMESTAMP WHERE `{pkColName}` IN (\","
+                );
+                sb.AppendLine(
+                    $"                _ => \"UPDATE \\\"{entity.TableName}\\\" SET \\\"{softCol}\\\" = CURRENT_TIMESTAMP WHERE \\\"{pkColName}\\\" IN (\""
+                );
             }
             else
             {
-                sb.AppendLine($"                DatabaseDialect.SqlServer => \"DELETE FROM [{entity.TableName}] WHERE [{pkColName}] IN (\",");
-                sb.AppendLine($"                DatabaseDialect.MySql => \"DELETE FROM `{entity.TableName}` WHERE `{pkColName}` IN (\",");
-                sb.AppendLine($"                _ => \"DELETE FROM \\\"{entity.TableName}\\\" WHERE \\\"{pkColName}\\\" IN (\"");
+                sb.AppendLine(
+                    $"                DatabaseDialect.SqlServer => \"DELETE FROM [{entity.TableName}] WHERE [{pkColName}] IN (\","
+                );
+                sb.AppendLine(
+                    $"                DatabaseDialect.MySql => \"DELETE FROM `{entity.TableName}` WHERE `{pkColName}` IN (\","
+                );
+                sb.AppendLine(
+                    $"                _ => \"DELETE FROM \\\"{entity.TableName}\\\" WHERE \\\"{pkColName}\\\" IN (\""
+                );
             }
             sb.AppendLine("            };");
             sb.AppendLine("            sqlSb.Append(tablePrefix);");
@@ -1733,7 +2492,9 @@ public class DataGenerator : IIncrementalGenerator
             sb.AppendLine("    }");
             sb.AppendLine();
 
-            sb.AppendLine($"    public async Task<bool> ExistsAsync({pkType} id, CancellationToken ct = default)");
+            sb.AppendLine(
+                $"    public async Task<bool> ExistsAsync({pkType} id, CancellationToken ct = default)"
+            );
             sb.AppendLine("    {");
             sb.AppendLine("        var (conn, tx, shouldDispose) = await GetConnectionAsync(ct);");
             sb.AppendLine("        try");
@@ -1756,7 +2517,9 @@ public class DataGenerator : IIncrementalGenerator
             sb.AppendLine("    }");
             sb.AppendLine();
 
-            sb.AppendLine($"    public async Task<List<{entity.FullName}>> QuerySqlAsync(string sql, object? parameters = null, CancellationToken ct = default)");
+            sb.AppendLine(
+                $"    public async Task<List<{entity.FullName}>> QuerySqlAsync(string sql, object? parameters = null, CancellationToken ct = default)"
+            );
             sb.AppendLine("    {");
             sb.AppendLine("        var (conn, tx, shouldDispose) = await GetConnectionAsync(ct);");
             sb.AppendLine("        try");
@@ -1782,7 +2545,9 @@ public class DataGenerator : IIncrementalGenerator
             sb.AppendLine("    }");
             sb.AppendLine();
 
-            sb.AppendLine($"    public async Task<{entity.FullName}?> QuerySingleSqlAsync(string sql, object? parameters = null, CancellationToken ct = default)");
+            sb.AppendLine(
+                $"    public async Task<{entity.FullName}?> QuerySingleSqlAsync(string sql, object? parameters = null, CancellationToken ct = default)"
+            );
             sb.AppendLine("    {");
             sb.AppendLine("        var (conn, tx, shouldDispose) = await GetConnectionAsync(ct);");
             sb.AppendLine("        try");
@@ -1793,7 +2558,9 @@ public class DataGenerator : IIncrementalGenerator
             sb.AppendLine("            AttachParameters(cmd, parameters);");
             sb.AppendLine();
             sb.AppendLine("            await using var reader = await cmd.ExecuteReaderAsync(ct);");
-            sb.AppendLine($"            return await reader.ReadAsync(ct) ? reader.Read{entity.Name}() : null;");
+            sb.AppendLine(
+                $"            return await reader.ReadAsync(ct) ? reader.Read{entity.Name}() : null;"
+            );
             sb.AppendLine("        }");
             sb.AppendLine("        finally");
             sb.AppendLine("        {");
@@ -1802,7 +2569,9 @@ public class DataGenerator : IIncrementalGenerator
             sb.AppendLine("    }");
             sb.AppendLine();
 
-            sb.AppendLine("    public async Task<int> ExecuteSqlAsync(string sql, object? parameters = null, CancellationToken ct = default)");
+            sb.AppendLine(
+                "    public async Task<int> ExecuteSqlAsync(string sql, object? parameters = null, CancellationToken ct = default)"
+            );
             sb.AppendLine("    {");
             sb.AppendLine("        var (conn, tx, shouldDispose) = await GetConnectionAsync(ct);");
             sb.AppendLine("        try");
@@ -1820,7 +2589,9 @@ public class DataGenerator : IIncrementalGenerator
             sb.AppendLine("    }");
             sb.AppendLine();
 
-            sb.AppendLine("    public async Task<TScalar?> ExecuteScalarSqlAsync<TScalar>(string sql, object? parameters = null, CancellationToken ct = default)");
+            sb.AppendLine(
+                "    public async Task<TScalar?> ExecuteScalarSqlAsync<TScalar>(string sql, object? parameters = null, CancellationToken ct = default)"
+            );
             sb.AppendLine("    {");
             sb.AppendLine("        var (conn, tx, shouldDispose) = await GetConnectionAsync(ct);");
             sb.AppendLine("        try");
@@ -1841,10 +2612,16 @@ public class DataGenerator : IIncrementalGenerator
             sb.AppendLine("    }");
             sb.AppendLine();
 
-            sb.AppendLine($"    public IFluentQuery<{entity.FullName}> Query() => new {entity.Name}FluentQuery(this);");
+            sb.AppendLine(
+                $"    public IFluentQuery<{entity.FullName}> Query() => new {entity.Name}FluentQuery(this);"
+            );
             sb.AppendLine();
-            sb.AppendLine($"    public ILinKitQueryable<{entity.FullName}> AsQueryable() => new LinKitQueryable<{entity.FullName}>(new LinKitQueryProvider<{entity.FullName}>(() => Query(), _dialect, _propertyToColumn));");
-            sb.AppendLine($"    public ILinKitQueryable<{entity.FullName}> Table => AsQueryable();");
+            sb.AppendLine(
+                $"    public ILinKitQueryable<{entity.FullName}> AsQueryable() => new LinKitQueryable<{entity.FullName}>(new LinKitQueryProvider<{entity.FullName}>(() => Query(), _dialect, _propertyToColumn));"
+            );
+            sb.AppendLine(
+                $"    public ILinKitQueryable<{entity.FullName}> Table => AsQueryable();"
+            );
             sb.AppendLine();
 
             // Custom methods from interface if any
@@ -1855,30 +2632,65 @@ public class DataGenerator : IIncrementalGenerator
                     if (method.CustomSql is null)
                         continue;
 
-                    if (method.MethodName is "GetByIdAsync" or "ListAsync" or "GetPagedAsync" or "InsertAsync" or "InsertRangeAsync" or "UpdateAsync" or "UpdateRangeAsync" or "DeleteAsync" or "DeleteRangeAsync" or "CountAsync" or "ExistsAsync" or "QuerySqlAsync" or "QuerySingleSqlAsync" or "ExecuteSqlAsync" or "ExecuteScalarSqlAsync" or "Query" or "Table" or "AsQueryable")
+                    if (
+                        method.MethodName
+                        is "GetByIdAsync"
+                            or "ListAsync"
+                            or "GetPagedAsync"
+                            or "InsertAsync"
+                            or "InsertRangeAsync"
+                            or "UpdateAsync"
+                            or "UpdateRangeAsync"
+                            or "DeleteAsync"
+                            or "DeleteRangeAsync"
+                            or "CountAsync"
+                            or "ExistsAsync"
+                            or "QuerySqlAsync"
+                            or "QuerySingleSqlAsync"
+                            or "ExecuteSqlAsync"
+                            or "ExecuteScalarSqlAsync"
+                            or "Query"
+                            or "Table"
+                            or "AsQueryable"
+                    )
                         continue;
 
-                    var paramList = string.Join(", ", method.Parameters.Select(p => $"{p.TypeFullName} {p.Name}"));
-                    var cancellationToken = method.Parameters.FirstOrDefault(p =>
-                        p.TypeFullName == "global::System.Threading.CancellationToken")?.Name
+                    var paramList = string.Join(
+                        ", ",
+                        method.Parameters.Select(p => $"{p.TypeFullName} {p.Name}")
+                    );
+                    var cancellationToken =
+                        method
+                            .Parameters.FirstOrDefault(p =>
+                                p.TypeFullName == "global::System.Threading.CancellationToken"
+                            )
+                            ?.Name
                         ?? "global::System.Threading.CancellationToken.None";
                     sb.AppendLine();
-                    sb.AppendLine($"    public async {method.ReturnTypeFullName} {method.MethodName}({paramList})");
+                    sb.AppendLine(
+                        $"    public async {method.ReturnTypeFullName} {method.MethodName}({paramList})"
+                    );
                     sb.AppendLine("    {");
-                    sb.AppendLine($"        var (conn, tx, shouldDispose) = await GetConnectionAsync({cancellationToken});");
+                    sb.AppendLine(
+                        $"        var (conn, tx, shouldDispose) = await GetConnectionAsync({cancellationToken});"
+                    );
                     sb.AppendLine("        try");
                     sb.AppendLine("        {");
                     sb.AppendLine("            await using var cmd = conn.CreateCommand();");
                     sb.AppendLine("            cmd.Transaction = tx;");
-                    string sqlToRun = method.CustomSql ?? $"SELECT {allColsAnsi} FROM \\\"{entity.TableName}\\\"";
+                    string sqlToRun =
+                        method.CustomSql ?? $"SELECT {allColsAnsi} FROM \\\"{entity.TableName}\\\"";
                     sb.AppendLine($"            cmd.CommandText = @\"{sqlToRun}\";");
 
                     foreach (var p in method.Parameters)
                     {
-                        if (p.TypeFullName == "global::System.Threading.CancellationToken") continue;
+                        if (p.TypeFullName == "global::System.Threading.CancellationToken")
+                            continue;
                         sb.AppendLine("            {");
                         sb.AppendLine("                var p = cmd.CreateParameter();");
-                        sb.AppendLine($"                p.ParameterName = ParamName(\"{p.Name}\");");
+                        sb.AppendLine(
+                            $"                p.ParameterName = ParamName(\"{p.Name}\");"
+                        );
                         sb.AppendLine($"                p.Value = DbValue({p.Name});");
                         sb.AppendLine("                cmd.Parameters.Add(p);");
                         sb.AppendLine("            }");
@@ -1887,9 +2699,13 @@ public class DataGenerator : IIncrementalGenerator
                     if (method.ReturnsList)
                     {
                         sb.AppendLine($"            var list = new List<{entity.FullName}>();");
-                        sb.AppendLine($"            await using var reader = await cmd.ExecuteReaderAsync({cancellationToken});");
+                        sb.AppendLine(
+                            $"            await using var reader = await cmd.ExecuteReaderAsync({cancellationToken});"
+                        );
                         sb.AppendLine($"            var ords = reader.{entity.Name}Ordinals();");
-                        sb.AppendLine($"            while (await reader.ReadAsync({cancellationToken}))");
+                        sb.AppendLine(
+                            $"            while (await reader.ReadAsync({cancellationToken}))"
+                        );
                         sb.AppendLine("            {");
                         sb.AppendLine($"                list.Add(reader.Read{entity.Name}(ords));");
                         sb.AppendLine("            }");
@@ -1897,8 +2713,12 @@ public class DataGenerator : IIncrementalGenerator
                     }
                     else
                     {
-                        sb.AppendLine($"            await using var reader = await cmd.ExecuteReaderAsync({cancellationToken});");
-                        sb.AppendLine($"            return await reader.ReadAsync({cancellationToken}) ? reader.Read{entity.Name}() : null;");
+                        sb.AppendLine(
+                            $"            await using var reader = await cmd.ExecuteReaderAsync({cancellationToken});"
+                        );
+                        sb.AppendLine(
+                            $"            return await reader.ReadAsync({cancellationToken}) ? reader.Read{entity.Name}() : null;"
+                        );
                     }
 
                     sb.AppendLine("        }");
@@ -1910,15 +2730,21 @@ public class DataGenerator : IIncrementalGenerator
                 }
             }
 
-            sb.AppendLine($"        public class {entity.Name}FluentQuery : IFluentQuery<{entity.FullName}>");
+            sb.AppendLine(
+                $"        public class {entity.Name}FluentQuery : IFluentQuery<{entity.FullName}>"
+            );
             sb.AppendLine("    {");
             sb.AppendLine($"        private readonly {entity.Name}Repository _repo;");
-            sb.AppendLine("        private readonly List<string> _whereConditions = new List<string>();");
-            sb.AppendLine("        private readonly List<object?> _parameters = new List<object?>();");
+            sb.AppendLine(
+                "        private readonly List<string> _whereConditions = new List<string>();"
+            );
+            sb.AppendLine(
+                "        private readonly List<object?> _parameters = new List<object?>();"
+            );
             sb.AppendLine("        private int _expressionParameterIndex;");
             sb.AppendLine("        private string? _orderBy;");
             sb.AppendLine("        private int _skip = 0;");
-            sb.AppendLine("        private int _take = 100;");
+            sb.AppendLine("        private int _take = int.MaxValue;");
             sb.AppendLine("        private bool _takeSet;");
             sb.AppendLine();
             sb.AppendLine($"        public {entity.Name}FluentQuery({entity.Name}Repository repo)");
@@ -1926,7 +2752,9 @@ public class DataGenerator : IIncrementalGenerator
             sb.AppendLine("            _repo = repo;");
             sb.AppendLine("        }");
             sb.AppendLine();
-            sb.AppendLine($"        public IFluentQuery<{entity.FullName}> Where(string sqlCondition, object? parameters = null)");
+            sb.AppendLine(
+                $"        public IFluentQuery<{entity.FullName}> Where(string sqlCondition, object? parameters = null)"
+            );
             sb.AppendLine("        {");
             sb.AppendLine("            if (!string.IsNullOrWhiteSpace(sqlCondition))");
             sb.AppendLine("            {");
@@ -1936,18 +2764,24 @@ public class DataGenerator : IIncrementalGenerator
             sb.AppendLine("            return this;");
             sb.AppendLine("        }");
             sb.AppendLine();
-            sb.AppendLine($"        public IFluentQuery<{entity.FullName}> Where(Expression<Func<{entity.FullName}, bool>> predicate)");
+            sb.AppendLine(
+                $"        public IFluentQuery<{entity.FullName}> Where(Expression<Func<{entity.FullName}, bool>> predicate)"
+            );
             sb.AppendLine("        {");
             sb.AppendLine("            ArgumentNullException.ThrowIfNull(predicate);");
             sb.AppendLine("            var translated = new ExpressionSqlTranslator(");
             sb.AppendLine("                _repo._dialect,");
             sb.AppendLine("                _propertyToColumn,");
-            sb.AppendLine("                _expressionParameterIndex).TranslatePredicate(predicate);");
+            sb.AppendLine(
+                "                _expressionParameterIndex).TranslatePredicate(predicate);"
+            );
             sb.AppendLine("            if (!string.IsNullOrWhiteSpace(translated.WhereSql))");
             sb.AppendLine("            {");
             sb.AppendLine("                _whereConditions.Add(translated.WhereSql);");
             sb.AppendLine("                _parameters.Add(translated.Parameters);");
-            sb.AppendLine("                _expressionParameterIndex += translated.Parameters.Count;");
+            sb.AppendLine(
+                "                _expressionParameterIndex += translated.Parameters.Count;"
+            );
             sb.AppendLine("            }");
             sb.AppendLine("            return this;");
             sb.AppendLine("        }");
@@ -1956,9 +2790,15 @@ public class DataGenerator : IIncrementalGenerator
             sb.AppendLine("        {");
             sb.AppendLine("            return _repo._dialect switch");
             sb.AppendLine("            {");
-            sb.AppendLine("                DatabaseDialect.SqlServer => $\"[{col}]\",");
-            sb.AppendLine("                DatabaseDialect.MySql => $\"`{col}`\",");
-            sb.AppendLine("                _ => $\"\\\"{col}\\\"\"");
+            sb.AppendLine(
+                "                DatabaseDialect.SqlServer => \"[\" + col.Replace(\"]\", \"]]\") + \"]\","
+            );
+            sb.AppendLine(
+                "                DatabaseDialect.MySql => \"`\" + col.Replace(\"`\", \"``\") + \"`\","
+            );
+            sb.AppendLine(
+                "                _ => \"\\\"\" + col.Replace(\"\\\"\", \"\\\"\\\"\") + \"\\\"\""
+            );
             sb.AppendLine("            };");
             sb.AppendLine("        }");
             sb.AppendLine();
@@ -1968,55 +2808,85 @@ public class DataGenerator : IIncrementalGenerator
             sb.AppendLine("            return this;");
             sb.AppendLine("        }");
             sb.AppendLine();
-            sb.AppendLine($"        public IFluentQuery<{entity.FullName}> OrderBy<TKey>(Expression<Func<{entity.FullName}, TKey>> keySelector)");
+            sb.AppendLine(
+                $"        public IFluentQuery<{entity.FullName}> OrderBy<TKey>(Expression<Func<{entity.FullName}, TKey>> keySelector)"
+            );
             sb.AppendLine("        {");
-            sb.AppendLine("            _orderBy = new ExpressionSqlTranslator(_repo._dialect, _propertyToColumn).TranslateOrderBy(keySelector);");
+            sb.AppendLine(
+                "            _orderBy = new ExpressionSqlTranslator(_repo._dialect, _propertyToColumn).TranslateOrderBy(keySelector);"
+            );
             sb.AppendLine("            return this;");
             sb.AppendLine("        }");
             sb.AppendLine();
-            sb.AppendLine($"        public IFluentQuery<{entity.FullName}> OrderByDescending(string column)");
+            sb.AppendLine(
+                $"        public IFluentQuery<{entity.FullName}> OrderByDescending(string column)"
+            );
             sb.AppendLine("        {");
             sb.AppendLine("            _orderBy = $\"{QuoteCol(column)} DESC\";");
             sb.AppendLine("            return this;");
             sb.AppendLine("        }");
             sb.AppendLine();
-            sb.AppendLine($"        public IFluentQuery<{entity.FullName}> OrderByDescending<TKey>(Expression<Func<{entity.FullName}, TKey>> keySelector)");
+            sb.AppendLine(
+                $"        public IFluentQuery<{entity.FullName}> OrderByDescending<TKey>(Expression<Func<{entity.FullName}, TKey>> keySelector)"
+            );
             sb.AppendLine("        {");
-            sb.AppendLine("            _orderBy = new ExpressionSqlTranslator(_repo._dialect, _propertyToColumn).TranslateOrderBy(keySelector, descending: true);");
+            sb.AppendLine(
+                "            _orderBy = new ExpressionSqlTranslator(_repo._dialect, _propertyToColumn).TranslateOrderBy(keySelector, descending: true);"
+            );
             sb.AppendLine("            return this;");
             sb.AppendLine("        }");
             sb.AppendLine();
-            sb.AppendLine($"        public IFluentQuery<{entity.FullName}> ThenBy<TKey>(Expression<Func<{entity.FullName}, TKey>> keySelector)");
+            sb.AppendLine(
+                $"        public IFluentQuery<{entity.FullName}> ThenBy<TKey>(Expression<Func<{entity.FullName}, TKey>> keySelector)"
+            );
             sb.AppendLine("        {");
-            sb.AppendLine("            if (_orderBy is null) throw new InvalidOperationException(\"ThenBy requires an OrderBy expression first.\");");
-            sb.AppendLine("            _orderBy += \", \" + new ExpressionSqlTranslator(_repo._dialect, _propertyToColumn).TranslateOrderBy(keySelector);");
+            sb.AppendLine(
+                "            if (_orderBy is null) throw new InvalidOperationException(\"ThenBy requires an OrderBy expression first.\");"
+            );
+            sb.AppendLine(
+                "            _orderBy += \", \" + new ExpressionSqlTranslator(_repo._dialect, _propertyToColumn).TranslateOrderBy(keySelector);"
+            );
             sb.AppendLine("            return this;");
             sb.AppendLine("        }");
             sb.AppendLine();
-            sb.AppendLine($"        public IFluentQuery<{entity.FullName}> ThenByDescending<TKey>(Expression<Func<{entity.FullName}, TKey>> keySelector)");
+            sb.AppendLine(
+                $"        public IFluentQuery<{entity.FullName}> ThenByDescending<TKey>(Expression<Func<{entity.FullName}, TKey>> keySelector)"
+            );
             sb.AppendLine("        {");
-            sb.AppendLine("            if (_orderBy is null) throw new InvalidOperationException(\"ThenByDescending requires an OrderBy expression first.\");");
-            sb.AppendLine("            _orderBy += \", \" + new ExpressionSqlTranslator(_repo._dialect, _propertyToColumn).TranslateOrderBy(keySelector, descending: true);");
+            sb.AppendLine(
+                "            if (_orderBy is null) throw new InvalidOperationException(\"ThenByDescending requires an OrderBy expression first.\");"
+            );
+            sb.AppendLine(
+                "            _orderBy += \", \" + new ExpressionSqlTranslator(_repo._dialect, _propertyToColumn).TranslateOrderBy(keySelector, descending: true);"
+            );
             sb.AppendLine("            return this;");
             sb.AppendLine("        }");
             sb.AppendLine();
             sb.AppendLine($"        public IFluentQuery<{entity.FullName}> ThenBy(string column)");
             sb.AppendLine("        {");
-            sb.AppendLine("            if (_orderBy is null) throw new InvalidOperationException(\"ThenBy requires an OrderBy expression first.\");");
+            sb.AppendLine(
+                "            if (_orderBy is null) throw new InvalidOperationException(\"ThenBy requires an OrderBy expression first.\");"
+            );
             sb.AppendLine("            _orderBy += \", \" + QuoteCol(column) + \" ASC\";");
             sb.AppendLine("            return this;");
             sb.AppendLine("        }");
             sb.AppendLine();
-            sb.AppendLine($"        public IFluentQuery<{entity.FullName}> ThenByDescending(string column)");
+            sb.AppendLine(
+                $"        public IFluentQuery<{entity.FullName}> ThenByDescending(string column)"
+            );
             sb.AppendLine("        {");
-            sb.AppendLine("            if (_orderBy is null) throw new InvalidOperationException(\"ThenByDescending requires an OrderBy expression first.\");");
+            sb.AppendLine(
+                "            if (_orderBy is null) throw new InvalidOperationException(\"ThenByDescending requires an OrderBy expression first.\");"
+            );
             sb.AppendLine("            _orderBy += \", \" + QuoteCol(column) + \" DESC\";");
             sb.AppendLine("            return this;");
             sb.AppendLine("        }");
             sb.AppendLine();
             sb.AppendLine($"        public IFluentQuery<{entity.FullName}> Skip(int count)");
             sb.AppendLine("        {");
-            sb.AppendLine("            _skip = Math.Max(0, count);");
+            sb.AppendLine("            count = Math.Max(0, count);");
+            sb.AppendLine("            _skip += count;");
+            sb.AppendLine("            if (_takeSet) _take = Math.Max(0, _take - count);");
             sb.AppendLine("            return this;");
             sb.AppendLine("        }");
             sb.AppendLine();
@@ -2035,39 +2905,66 @@ public class DataGenerator : IIncrementalGenerator
             {
                 sb.AppendLine("            var softDeleteCondition = _repo._dialect switch");
                 sb.AppendLine("            {");
-                sb.AppendLine($"                DatabaseDialect.SqlServer => \"[{softCol}] IS NULL\",");
+                sb.AppendLine(
+                    $"                DatabaseDialect.SqlServer => \"[{softCol}] IS NULL\","
+                );
                 sb.AppendLine($"                DatabaseDialect.MySql => \"`{softCol}` IS NULL\",");
                 sb.AppendLine($"                _ => \"\\\"{softCol}\\\" IS NULL\"");
                 sb.AppendLine("            };");
                 sb.AppendLine("            conditions.Insert(0, softDeleteCondition);");
             }
             sb.AppendLine("            if (conditions.Count == 0) return \"\";");
-            sb.AppendLine("            return \" WHERE \" + string.Join(\" AND \", conditions.Select(c => $\"({c})\"));");
+            sb.AppendLine(
+                "            return \" WHERE \" + string.Join(\" AND \", conditions.Select(c => $\"({c})\"));"
+            );
             sb.AppendLine("        }");
             sb.AppendLine();
-            sb.AppendLine($"        public async Task<List<{entity.FullName}>> ToListAsync(CancellationToken ct = default)");
+            sb.AppendLine(
+                $"        public async Task<List<{entity.FullName}>> ToListAsync(CancellationToken ct = default)"
+            );
             sb.AppendLine("        {");
             sb.AppendLine("            ct.ThrowIfCancellationRequested();");
             sb.AppendLine($"            if (_take == 0) return new List<{entity.FullName}>();");
-            sb.AppendLine($"            var order = _orderBy ?? $\"{{QuoteCol(\"{pkColName}\")}} ASC\";");
+            sb.AppendLine(
+                $"            var order = _orderBy ?? $\"{{QuoteCol(\"{pkColName}\")}} ASC\";"
+            );
+            sb.AppendLine("            bool hasPaging = _takeSet || _skip > 0;");
             sb.AppendLine("            string sql = _repo._dialect switch");
             sb.AppendLine("            {");
-            sb.AppendLine($"                DatabaseDialect.SqlServer => $\"SELECT {allColsSql} FROM [{entity.TableName}]{{BuildWhereClause()}} ORDER BY {{order}} OFFSET {{_skip}} ROWS FETCH NEXT {{_take}} ROWS ONLY;\",");
-            sb.AppendLine($"                DatabaseDialect.MySql => $\"SELECT {allColsMySql} FROM `{entity.TableName}`{{BuildWhereClause()}} ORDER BY {{order}} LIMIT {{_take}} OFFSET {{_skip}};\",");
-            sb.AppendLine($"                DatabaseDialect.Oracle => $\"SELECT {allColsAnsi} FROM \\\"{entity.TableName}\\\"{{BuildWhereClause()}} ORDER BY {{order}} OFFSET {{_skip}} ROWS FETCH NEXT {{_take}} ROWS ONLY;\",");
-            sb.AppendLine($"                _ => $\"SELECT {allColsAnsi} FROM \\\"{entity.TableName}\\\"{{BuildWhereClause()}} ORDER BY {{order}} LIMIT {{_take}} OFFSET {{_skip}};\"");
+            sb.AppendLine(
+                $"                DatabaseDialect.SqlServer => hasPaging ? $\"SELECT {allColsSql} FROM [{entity.TableName}]{{BuildWhereClause()}} ORDER BY {{order}} OFFSET {{_skip}} ROWS FETCH NEXT {{_take}} ROWS ONLY;\" : $\"SELECT {allColsSql} FROM [{entity.TableName}]{{BuildWhereClause()}} ORDER BY {{order}};\","
+            );
+            sb.AppendLine(
+                $"                DatabaseDialect.MySql => hasPaging ? $\"SELECT {allColsMySql} FROM `{entity.TableName}`{{BuildWhereClause()}} ORDER BY {{order}} LIMIT {{_take}} OFFSET {{_skip}};\" : $\"SELECT {allColsMySql} FROM `{entity.TableName}`{{BuildWhereClause()}} ORDER BY {{order}};\","
+            );
+            sb.AppendLine(
+                $"                DatabaseDialect.Oracle => hasPaging ? $\"SELECT {allColsAnsi} FROM \\\"{entity.TableName}\\\"{{BuildWhereClause()}} ORDER BY {{order}} OFFSET {{_skip}} ROWS FETCH NEXT {{_take}} ROWS ONLY;\" : $\"SELECT {allColsAnsi} FROM \\\"{entity.TableName}\\\"{{BuildWhereClause()}} ORDER BY {{order}};\","
+            );
+            sb.AppendLine(
+                $"                _ => hasPaging ? $\"SELECT {allColsAnsi} FROM \\\"{entity.TableName}\\\"{{BuildWhereClause()}} ORDER BY {{order}} LIMIT {{_take}} OFFSET {{_skip}};\" : $\"SELECT {allColsAnsi} FROM \\\"{entity.TableName}\\\"{{BuildWhereClause()}} ORDER BY {{order}};\""
+            );
             sb.AppendLine("            };");
-            sb.AppendLine("            var (conn, tx, shouldDispose) = await _repo.GetConnectionAsync(ct);");
+            sb.AppendLine(
+                "            var (conn, tx, shouldDispose) = await _repo.GetConnectionAsync(ct);"
+            );
             sb.AppendLine("            try");
             sb.AppendLine("            {");
             sb.AppendLine("                await using var cmd = conn.CreateCommand();");
             sb.AppendLine("                cmd.Transaction = tx;");
             sb.AppendLine("                cmd.CommandText = sql;");
-            sb.AppendLine("                foreach (var p in _parameters) _repo.AttachParameters(cmd, p);");
+            sb.AppendLine(
+                "                foreach (var p in _parameters) _repo.AttachParameters(cmd, p);"
+            );
             sb.AppendLine($"                var list = new List<{entity.FullName}>();");
-            sb.AppendLine("                await using var reader = await cmd.ExecuteReaderAsync(ct);");
+            sb.AppendLine(
+                "                await using var reader = await cmd.ExecuteReaderAsync(ct);"
+            );
             sb.AppendLine($"                var ords = reader.{entity.Name}Ordinals();");
-            sb.AppendLine("                while (await reader.ReadAsync(ct)) list.Add(reader.Read" + entity.Name + "(ords));");
+            sb.AppendLine(
+                "                while (await reader.ReadAsync(ct)) list.Add(reader.Read"
+                    + entity.Name
+                    + "(ords));"
+            );
             sb.AppendLine("                return list;");
             sb.AppendLine("            }");
             sb.AppendLine("            finally");
@@ -2076,25 +2973,47 @@ public class DataGenerator : IIncrementalGenerator
             sb.AppendLine("            }");
             sb.AppendLine("        }");
             sb.AppendLine();
-            sb.AppendLine($"        public async Task<{entity.FullName}?> FirstOrDefaultAsync(CancellationToken ct = default)");
+            sb.AppendLine(
+                $"        public async Task<{entity.FullName}?> FirstOrDefaultAsync(CancellationToken ct = default)"
+            );
             sb.AppendLine("        {");
-            sb.AppendLine($"            var order = _orderBy ?? $\"{{QuoteCol(\"{pkColName}\")}} ASC\";");
+            sb.AppendLine("            ct.ThrowIfCancellationRequested();");
+            sb.AppendLine("            if (_take == 0) return null;");
+            sb.AppendLine(
+                $"            var order = _orderBy ?? $\"{{QuoteCol(\"{pkColName}\")}} ASC\";"
+            );
             sb.AppendLine("            string sql = _repo._dialect switch");
             sb.AppendLine("            {");
-            sb.AppendLine($"                DatabaseDialect.SqlServer => $\"SELECT TOP 1 {allColsSql} FROM [{entity.TableName}]{{BuildWhereClause()}} ORDER BY {{order}};\",");
-            sb.AppendLine($"                DatabaseDialect.MySql => $\"SELECT {allColsMySql} FROM `{entity.TableName}`{{BuildWhereClause()}} ORDER BY {{order}} LIMIT 1;\",");
-            sb.AppendLine($"                DatabaseDialect.Oracle => $\"SELECT {allColsAnsi} FROM \\\"{entity.TableName}\\\"{{BuildWhereClause()}} ORDER BY {{order}} FETCH FIRST 1 ROWS ONLY;\",");
-            sb.AppendLine($"                _ => $\"SELECT {allColsAnsi} FROM \\\"{entity.TableName}\\\"{{BuildWhereClause()}} ORDER BY {{order}} LIMIT 1;\"");
+            sb.AppendLine(
+                $"                DatabaseDialect.SqlServer => _skip > 0 ? $\"SELECT {allColsSql} FROM [{entity.TableName}]{{BuildWhereClause()}} ORDER BY {{order}} OFFSET {{_skip}} ROWS FETCH NEXT 1 ROWS ONLY;\" : $\"SELECT TOP 1 {allColsSql} FROM [{entity.TableName}]{{BuildWhereClause()}} ORDER BY {{order}};\","
+            );
+            sb.AppendLine(
+                $"                DatabaseDialect.MySql => _skip > 0 ? $\"SELECT {allColsMySql} FROM `{entity.TableName}`{{BuildWhereClause()}} ORDER BY {{order}} LIMIT 1 OFFSET {{_skip}};\" : $\"SELECT {allColsMySql} FROM `{entity.TableName}`{{BuildWhereClause()}} ORDER BY {{order}} LIMIT 1;\","
+            );
+            sb.AppendLine(
+                $"                DatabaseDialect.Oracle => _skip > 0 ? $\"SELECT {allColsAnsi} FROM \\\"{entity.TableName}\\\"{{BuildWhereClause()}} ORDER BY {{order}} OFFSET {{_skip}} ROWS FETCH NEXT 1 ROWS ONLY;\" : $\"SELECT {allColsAnsi} FROM \\\"{entity.TableName}\\\"{{BuildWhereClause()}} ORDER BY {{order}} FETCH FIRST 1 ROWS ONLY;\","
+            );
+            sb.AppendLine(
+                $"                _ => _skip > 0 ? $\"SELECT {allColsAnsi} FROM \\\"{entity.TableName}\\\"{{BuildWhereClause()}} ORDER BY {{order}} LIMIT 1 OFFSET {{_skip}};\" : $\"SELECT {allColsAnsi} FROM \\\"{entity.TableName}\\\"{{BuildWhereClause()}} ORDER BY {{order}} LIMIT 1;\""
+            );
             sb.AppendLine("            };");
-            sb.AppendLine("            var (conn, tx, shouldDispose) = await _repo.GetConnectionAsync(ct);");
+            sb.AppendLine(
+                "            var (conn, tx, shouldDispose) = await _repo.GetConnectionAsync(ct);"
+            );
             sb.AppendLine("            try");
             sb.AppendLine("            {");
             sb.AppendLine("                await using var cmd = conn.CreateCommand();");
             sb.AppendLine("                cmd.Transaction = tx;");
             sb.AppendLine("                cmd.CommandText = sql;");
-            sb.AppendLine("                foreach (var p in _parameters) _repo.AttachParameters(cmd, p);");
-            sb.AppendLine("                await using var reader = await cmd.ExecuteReaderAsync(ct);");
-            sb.AppendLine($"                return await reader.ReadAsync(ct) ? reader.Read{entity.Name}() : null;");
+            sb.AppendLine(
+                "                foreach (var p in _parameters) _repo.AttachParameters(cmd, p);"
+            );
+            sb.AppendLine(
+                "                await using var reader = await cmd.ExecuteReaderAsync(ct);"
+            );
+            sb.AppendLine(
+                $"                return await reader.ReadAsync(ct) ? reader.Read{entity.Name}() : null;"
+            );
             sb.AppendLine("            }");
             sb.AppendLine("            finally");
             sb.AppendLine("            {");
@@ -2102,21 +3021,34 @@ public class DataGenerator : IIncrementalGenerator
             sb.AppendLine("            }");
             sb.AppendLine("        }");
             sb.AppendLine();
-            sb.AppendLine("        public async Task<long> CountAsync(CancellationToken ct = default)");
+            sb.AppendLine(
+                "        public async Task<long> CountAsync(CancellationToken ct = default)"
+            );
             sb.AppendLine("        {");
+            sb.AppendLine("            ct.ThrowIfCancellationRequested();");
             sb.AppendLine("            string sql = _repo._dialect switch");
             sb.AppendLine("            {");
-            sb.AppendLine($"                DatabaseDialect.SqlServer => $\"SELECT COUNT(*) FROM [{entity.TableName}]{{BuildWhereClause()}};\",");
-            sb.AppendLine($"                DatabaseDialect.MySql => $\"SELECT COUNT(*) FROM `{entity.TableName}`{{BuildWhereClause()}};\",");
-            sb.AppendLine($"                _ => $\"SELECT COUNT(*) FROM \\\"{entity.TableName}\\\"{{BuildWhereClause()}};\"");
+            sb.AppendLine(
+                $"                DatabaseDialect.SqlServer => $\"SELECT COUNT(*) FROM [{entity.TableName}]{{BuildWhereClause()}};\","
+            );
+            sb.AppendLine(
+                $"                DatabaseDialect.MySql => $\"SELECT COUNT(*) FROM `{entity.TableName}`{{BuildWhereClause()}};\","
+            );
+            sb.AppendLine(
+                $"                _ => $\"SELECT COUNT(*) FROM \\\"{entity.TableName}\\\"{{BuildWhereClause()}};\""
+            );
             sb.AppendLine("            };");
-            sb.AppendLine("            var (conn, tx, shouldDispose) = await _repo.GetConnectionAsync(ct);");
+            sb.AppendLine(
+                "            var (conn, tx, shouldDispose) = await _repo.GetConnectionAsync(ct);"
+            );
             sb.AppendLine("            try");
             sb.AppendLine("            {");
             sb.AppendLine("                await using var cmd = conn.CreateCommand();");
             sb.AppendLine("                cmd.Transaction = tx;");
             sb.AppendLine("                cmd.CommandText = sql;");
-            sb.AppendLine("                foreach (var p in _parameters) _repo.AttachParameters(cmd, p);");
+            sb.AppendLine(
+                "                foreach (var p in _parameters) _repo.AttachParameters(cmd, p);"
+            );
             sb.AppendLine("                var res = await cmd.ExecuteScalarAsync(ct);");
             sb.AppendLine("                return Convert.ToInt64(res);");
             sb.AppendLine("            }");
@@ -2126,22 +3058,41 @@ public class DataGenerator : IIncrementalGenerator
             sb.AppendLine("            }");
             sb.AppendLine("        }");
             sb.AppendLine();
-            sb.AppendLine("        public async Task<bool> AnyAsync(CancellationToken ct = default)");
+            sb.AppendLine(
+                "        public async Task<bool> AnyAsync(CancellationToken ct = default)"
+            );
             sb.AppendLine("        {");
+            sb.AppendLine("            ct.ThrowIfCancellationRequested();");
+            sb.AppendLine("            if (_take == 0) return false;");
+            sb.AppendLine(
+                $"            var order = _orderBy ?? $\"{{QuoteCol(\"{pkColName}\")}} ASC\";"
+            );
             sb.AppendLine("            string sql = _repo._dialect switch");
             sb.AppendLine("            {");
-            sb.AppendLine($"                DatabaseDialect.SqlServer => $\"SELECT TOP 1 1 FROM [{entity.TableName}]{{BuildWhereClause()}};\",");
-            sb.AppendLine($"                DatabaseDialect.MySql => $\"SELECT 1 FROM `{entity.TableName}`{{BuildWhereClause()}} LIMIT 1;\",");
-            sb.AppendLine($"                DatabaseDialect.Oracle => $\"SELECT 1 FROM \\\"{entity.TableName}\\\"{{BuildWhereClause()}} FETCH FIRST 1 ROWS ONLY;\",");
-            sb.AppendLine($"                _ => $\"SELECT 1 FROM \\\"{entity.TableName}\\\"{{BuildWhereClause()}} LIMIT 1;\"");
+            sb.AppendLine(
+                $"                DatabaseDialect.SqlServer => _skip > 0 ? $\"SELECT 1 FROM [{entity.TableName}]{{BuildWhereClause()}} ORDER BY {{order}} OFFSET {{_skip}} ROWS FETCH NEXT 1 ROWS ONLY;\" : $\"SELECT TOP 1 1 FROM [{entity.TableName}]{{BuildWhereClause()}};\","
+            );
+            sb.AppendLine(
+                $"                DatabaseDialect.MySql => _skip > 0 ? $\"SELECT 1 FROM `{entity.TableName}`{{BuildWhereClause()}} ORDER BY {{order}} LIMIT 1 OFFSET {{_skip}};\" : $\"SELECT 1 FROM `{entity.TableName}`{{BuildWhereClause()}} LIMIT 1;\","
+            );
+            sb.AppendLine(
+                $"                DatabaseDialect.Oracle => _skip > 0 ? $\"SELECT 1 FROM \\\"{entity.TableName}\\\"{{BuildWhereClause()}} ORDER BY {{order}} OFFSET {{_skip}} ROWS FETCH NEXT 1 ROWS ONLY;\" : $\"SELECT 1 FROM \\\"{entity.TableName}\\\"{{BuildWhereClause()}} FETCH FIRST 1 ROWS ONLY;\","
+            );
+            sb.AppendLine(
+                $"                _ => _skip > 0 ? $\"SELECT 1 FROM \\\"{entity.TableName}\\\"{{BuildWhereClause()}} ORDER BY {{order}} LIMIT 1 OFFSET {{_skip}};\" : $\"SELECT 1 FROM \\\"{entity.TableName}\\\"{{BuildWhereClause()}} LIMIT 1;\""
+            );
             sb.AppendLine("            };");
-            sb.AppendLine("            var (conn, tx, shouldDispose) = await _repo.GetConnectionAsync(ct);");
+            sb.AppendLine(
+                "            var (conn, tx, shouldDispose) = await _repo.GetConnectionAsync(ct);"
+            );
             sb.AppendLine("            try");
             sb.AppendLine("            {");
             sb.AppendLine("                await using var cmd = conn.CreateCommand();");
             sb.AppendLine("                cmd.Transaction = tx;");
             sb.AppendLine("                cmd.CommandText = sql;");
-            sb.AppendLine("                foreach (var p in _parameters) _repo.AttachParameters(cmd, p);");
+            sb.AppendLine(
+                "                foreach (var p in _parameters) _repo.AttachParameters(cmd, p);"
+            );
             sb.AppendLine("                var res = await cmd.ExecuteScalarAsync(ct);");
             sb.AppendLine("                return res != null && res != DBNull.Value;");
             sb.AppendLine("            }");
@@ -2151,7 +3102,9 @@ public class DataGenerator : IIncrementalGenerator
             sb.AppendLine("            }");
             sb.AppendLine("        }");
             sb.AppendLine();
-            sb.AppendLine($"        public async Task<PagedResult<{entity.FullName}>> ToPagedListAsync(int pageNumber, int pageSize, CancellationToken ct = default)");
+            sb.AppendLine(
+                $"        public async Task<PagedResult<{entity.FullName}>> ToPagedListAsync(int pageNumber, int pageSize, CancellationToken ct = default)"
+            );
             sb.AppendLine("        {");
             sb.AppendLine("            if (pageNumber < 1) pageNumber = 1;");
             sb.AppendLine("            if (pageSize < 1) pageSize = 10;");
@@ -2177,9 +3130,12 @@ public class DataGenerator : IIncrementalGenerator
         return sb.ToString();
     }
 
-    private static string GenerateMigrationsRegistry(List<MigrationModel> migrations, string generatedNamespace)
+    private static string GenerateMigrationsRegistry(
+        List<MigrationModel> migrations,
+        string generatedNamespace
+    )
     {
-        var sorted = migrations.OrderBy(m => m.Version, StringComparer.Ordinal).ToList();
+        var sorted = migrations.OrderBy(m => m.Version, NaturalVersionComparer.Instance).ToList();
         var sb = new StringBuilder();
         sb.AppendLine("// <auto-generated/>");
         sb.AppendLine("#nullable enable");
@@ -2192,18 +3148,61 @@ public class DataGenerator : IIncrementalGenerator
         sb.AppendLine();
         sb.AppendLine("public sealed class GeneratedMigrationRegistry : IMigrationRegistry");
         sb.AppendLine("{");
-        sb.AppendLine("    public IReadOnlyList<MigrationDescriptor> GetMigrations() => _migrations;");
+        sb.AppendLine(
+            "    public IReadOnlyList<MigrationDescriptor> GetMigrations() => _migrations;"
+        );
         sb.AppendLine();
-        sb.AppendLine("    private static readonly MigrationDescriptor[] _migrations = new MigrationDescriptor[]");
+        sb.AppendLine(
+            "    private static readonly MigrationDescriptor[] _migrations = new MigrationDescriptor[]"
+        );
         sb.AppendLine("    {");
         foreach (var m in sorted)
         {
-            var escapedDesc = (m.Description ?? "").Replace("\"", "\\\"");
-            sb.AppendLine($"        new MigrationDescriptor(\"{m.Version}\", \"{escapedDesc}\", typeof({m.ClassFullName}), sp => (IMigration?)sp.GetService(typeof({m.ClassFullName})) ?? new {m.ClassFullName}()),");
+            var versionLiteral = Microsoft.CodeAnalysis.CSharp.SymbolDisplay.FormatLiteral(
+                m.Version ?? "",
+                true
+            );
+            var descLiteral = Microsoft.CodeAnalysis.CSharp.SymbolDisplay.FormatLiteral(
+                m.Description ?? "",
+                true
+            );
+            sb.AppendLine(
+                $"        new MigrationDescriptor({versionLiteral}, {descLiteral}, typeof({m.ClassFullName}), sp => (IMigration?)sp.GetService(typeof({m.ClassFullName})) ?? new {m.ClassFullName}()),"
+            );
         }
         sb.AppendLine("    };");
         sb.AppendLine("}");
         return sb.ToString();
+    }
+
+    private sealed class NaturalVersionComparer : IComparer<string?>
+    {
+        public static readonly NaturalVersionComparer Instance = new();
+        private static readonly char[] Separators = ['.', '_', '-'];
+
+        public int Compare(string? x, string? y)
+        {
+            if (ReferenceEquals(x, y))
+                return 0;
+            if (x is null)
+                return -1;
+            if (y is null)
+                return 1;
+
+            var xParts = x.Split(Separators);
+            var yParts = y.Split(Separators);
+            int minLen = Math.Min(xParts.Length, yParts.Length);
+            for (int i = 0; i < minLen; i++)
+            {
+                int cmp =
+                    long.TryParse(xParts[i], out var xNum) && long.TryParse(yParts[i], out var yNum)
+                        ? xNum.CompareTo(yNum)
+                        : StringComparer.Ordinal.Compare(xParts[i], yParts[i]);
+                if (cmp != 0)
+                    return cmp;
+            }
+            return xParts.Length.CompareTo(yParts.Length);
+        }
     }
 
     private static string GenerateDependencyInjection(
@@ -2212,7 +3211,8 @@ public class DataGenerator : IIncrementalGenerator
         List<MigrationModel> migrations,
         List<DataContextModel> contexts,
         string rootNamespace,
-        string generatedNamespace)
+        string generatedNamespace
+    )
     {
         var sb = new StringBuilder();
         sb.AppendLine("// <auto-generated/>");
@@ -2226,7 +3226,9 @@ public class DataGenerator : IIncrementalGenerator
         sb.AppendLine();
         sb.AppendLine("public static class LinKitDataGeneratedServiceExtensions");
         sb.AppendLine("{");
-        sb.AppendLine("    public static IServiceCollection AddLinKitData(this IServiceCollection services, Action<LinKitDataOptions> configure)");
+        sb.AppendLine(
+            "    public static IServiceCollection AddLinKitData(this IServiceCollection services, Action<LinKitDataOptions> configure)"
+        );
         sb.AppendLine("    {");
         sb.AppendLine("        services.AddLinKitDataCore(configure);");
         sb.AppendLine();
@@ -2236,7 +3238,9 @@ public class DataGenerator : IIncrementalGenerator
             var schemaProviderType = string.IsNullOrWhiteSpace(rootNamespace)
                 ? "GeneratedTableSchemaProvider"
                 : $"global::{generatedNamespace}.GeneratedTableSchemaProvider";
-            sb.AppendLine($"        services.AddSingleton<ITableSchemaProvider, {schemaProviderType}>();");
+            sb.AppendLine(
+                $"        services.AddSingleton<ITableSchemaProvider, {schemaProviderType}>();"
+            );
             foreach (var entity in entities)
             {
                 var pk = entity.PrimaryKey;
@@ -2246,7 +3250,9 @@ public class DataGenerator : IIncrementalGenerator
                     : $"global::{rootNamespace}.{entity.Name}Repository";
 
                 // Default IRepository<Entity, TId>
-                sb.AppendLine($"        services.AddScoped<IRepository<{entity.FullName}, {pkType}>, {repositoryType}>();");
+                sb.AppendLine(
+                    $"        services.AddScoped<IRepository<{entity.FullName}, {pkType}>, {repositoryType}>();"
+                );
 
                 // Typed AOT Repository
                 var typedRepoType = string.IsNullOrWhiteSpace(entity.Namespace)
@@ -2256,13 +3262,22 @@ public class DataGenerator : IIncrementalGenerator
 
                 if (entity.RepositoryInterfaceFullName is not null)
                 {
-                    sb.AppendLine($"        services.AddScoped<{entity.RepositoryInterfaceFullName}, {repositoryType}>();");
+                    sb.AppendLine(
+                        $"        services.AddScoped<{entity.RepositoryInterfaceFullName}, {repositoryType}>();"
+                    );
                 }
 
-                var customInterface = repos.FirstOrDefault(r => r.EntityFullName == entity.FullName);
-                if (customInterface != null && customInterface.InterfaceFullName != entity.RepositoryInterfaceFullName)
+                var customInterface = repos.FirstOrDefault(r =>
+                    r.EntityFullName == entity.FullName
+                );
+                if (
+                    customInterface != null
+                    && customInterface.InterfaceFullName != entity.RepositoryInterfaceFullName
+                )
                 {
-                    sb.AppendLine($"        services.AddScoped<{customInterface.InterfaceFullName}, {repositoryType}>();");
+                    sb.AppendLine(
+                        $"        services.AddScoped<{customInterface.InterfaceFullName}, {repositoryType}>();"
+                    );
                 }
             }
             sb.AppendLine();
@@ -2282,7 +3297,9 @@ public class DataGenerator : IIncrementalGenerator
             var migrationRegistryType = string.IsNullOrWhiteSpace(rootNamespace)
                 ? "GeneratedMigrationRegistry"
                 : $"global::{generatedNamespace}.GeneratedMigrationRegistry";
-            sb.AppendLine($"        services.AddSingleton<LinKit.Data.Migrations.IMigrationRegistry, {migrationRegistryType}>();");
+            sb.AppendLine(
+                $"        services.AddSingleton<LinKit.Data.Migrations.IMigrationRegistry, {migrationRegistryType}>();"
+            );
             foreach (var m in migrations)
             {
                 sb.AppendLine($"        services.AddTransient<{m.ClassFullName}>();");
@@ -2299,13 +3316,20 @@ public class DataGenerator : IIncrementalGenerator
     private static string GetDbTypeString(PropertyModel p)
     {
         var clean = p.CleanTypeName.TrimEnd('?').Trim();
-        if (clean.StartsWith("System.Nullable<", StringComparison.Ordinal) && clean.EndsWith(">", StringComparison.Ordinal))
+        if (
+            clean.StartsWith("System.Nullable<", StringComparison.Ordinal)
+            && clean.EndsWith(">", StringComparison.Ordinal)
+        )
             clean = clean.Substring(16, clean.Length - 17).Trim();
-        else if (clean.StartsWith("Nullable<", StringComparison.Ordinal) && clean.EndsWith(">", StringComparison.Ordinal))
+        else if (
+            clean.StartsWith("Nullable<", StringComparison.Ordinal)
+            && clean.EndsWith(">", StringComparison.Ordinal)
+        )
             clean = clean.Substring(9, clean.Length - 10).Trim();
         if (clean.StartsWith("System.", StringComparison.Ordinal))
             clean = clean.Substring(7);
-        if (p.IsEnum) return "Int32";
+        if (p.IsEnum)
+            return "Int32";
         return clean switch
         {
             "short" or "Int16" => "Int16",
@@ -2322,7 +3346,7 @@ public class DataGenerator : IIncrementalGenerator
             "TimeOnly" => "Time",
             "DateTimeOffset" => "DateTimeOffset",
             "byte[]" => "Binary",
-            _ => "String"
+            _ => "String",
         };
     }
 
@@ -2358,30 +3382,58 @@ public class DataGenerator : IIncrementalGenerator
                 var pkProp = pk?.PropertyName ?? "Id";
 
                 // 1. EntityMap
-                sb.AppendLine($"public sealed class {entity.Name}Map : global::LinKit.Data.EntityMap<{entity.FullName}, {pkType}>");
+                sb.AppendLine(
+                    $"public sealed class {entity.Name}Map : global::LinKit.Data.EntityMap<{entity.FullName}, {pkType}>"
+                );
                 sb.AppendLine("{");
                 sb.AppendLine($"    public static {entity.Name}Map Instance {{ get; }} = new();");
-                sb.AppendLine($"    public static readonly global::LinKit.Data.TableModel TableModel = new(");
+                sb.AppendLine(
+                    $"    public static readonly global::LinKit.Data.TableModel TableModel = new("
+                );
                 sb.AppendLine($"        \"{entity.TableName}\",");
-                sb.AppendLine($"        {(entity.Schema != null ? $"\"{entity.Schema}\"" : "null")},");
-                sb.AppendLine("        global::System.Array.AsReadOnly(new global::LinKit.Data.ColumnModel[]");
+                sb.AppendLine(
+                    $"        {(entity.Schema != null ? $"\"{entity.Schema}\"" : "null")},"
+                );
+                sb.AppendLine(
+                    "        global::System.Array.AsReadOnly(new global::LinKit.Data.ColumnModel[]"
+                );
                 sb.AppendLine("        {");
                 for (int i = 0; i < entity.Properties.Count; i++)
                 {
                     var p = entity.Properties[i];
                     var dbType = GetDbTypeString(p);
-                    bool isPk = p.IsPrimaryKey || (entity.HasFallbackPrimaryKey && ReferenceEquals(entity.PrimaryKey, p));
+                    bool isPk =
+                        p.IsPrimaryKey
+                        || (entity.HasFallbackPrimaryKey && ReferenceEquals(entity.PrimaryKey, p));
                     bool isGen = p.IsAutoIncrement;
                     bool isCon = p.IsConcurrencyCheck;
-                    bool isTenant = !string.IsNullOrEmpty(entity.TenantColumn) && (p.PropertyName == entity.TenantColumn || p.ColumnName == entity.TenantColumn);
-                    bool isSoft = !string.IsNullOrEmpty(entity.SoftDeleteColumn) && (p.PropertyName == entity.SoftDeleteColumn || p.ColumnName == entity.SoftDeleteColumn);
-                    sb.AppendLine($"            new(\"{p.ColumnName}\", global::System.Data.DbType.{dbType}, {(p.IsNullable ? "true" : "false")}, {(isPk ? "true" : "false")}, {(isGen ? "true" : "false")}, {(isCon ? "true" : "false")}, {(isTenant ? "true" : "false")}, {(isSoft ? "true" : "false")}, {p.MaxLength ?? 0}, {(p.Precision ?? 0)}, {(p.Scale ?? 0)}),");
+                    bool isTenant =
+                        !string.IsNullOrEmpty(entity.TenantColumn)
+                        && (
+                            p.PropertyName == entity.TenantColumn
+                            || p.ColumnName == entity.TenantColumn
+                        );
+                    bool isSoft =
+                        !string.IsNullOrEmpty(entity.SoftDeleteColumn)
+                        && (
+                            p.PropertyName == entity.SoftDeleteColumn
+                            || p.ColumnName == entity.SoftDeleteColumn
+                        );
+                    sb.AppendLine(
+                        $"            new(\"{p.ColumnName}\", global::System.Data.DbType.{dbType}, {(p.IsNullable ? "true" : "false")}, {(isPk ? "true" : "false")}, {(isGen ? "true" : "false")}, {(isCon ? "true" : "false")}, {(isTenant ? "true" : "false")}, {(isSoft ? "true" : "false")}, {p.MaxLength ?? 0}, {(p.Precision ?? 0)}, {(p.Scale ?? 0)}),"
+                    );
                 }
                 sb.AppendLine("        }));");
                 sb.AppendLine();
-                sb.AppendLine("    public override global::LinKit.Data.TableModel Model => TableModel;");
-                sb.AppendLine($"    public override {entity.FullName} Read(global::System.Data.Common.DbDataReader reader) => global::{generatedNamespace}.DataReaderGeneratedExtensions.Read{entity.Name}(reader);");
-                sb.AppendLine($"    public override object?[] Values({entity.FullName} entity) => new object?[]");
+                sb.AppendLine(
+                    "    public override global::LinKit.Data.TableModel Model => TableModel;"
+                );
+                sb.AppendLine(
+                    $"    public override {entity.FullName} Read(global::System.Data.Common.DbDataReader reader) => global::{generatedNamespace}.DataReaderGeneratedExtensions.Read{entity.Name}(reader);"
+                );
+                sb.AppendLine(
+                    $"    public override object?[] Values({entity.FullName} entity) => new object?[]"
+                );
                 sb.AppendLine("    {");
                 foreach (var p in entity.Properties)
                 {
@@ -2390,7 +3442,9 @@ public class DataGenerator : IIncrementalGenerator
                         var context = string.IsNullOrWhiteSpace(p.JsonContextTypeFullName)
                             ? "global::LinKit.Data.LinKitDataJsonSerializerAccessor.Context"
                             : $"{p.JsonContextTypeFullName}.Default";
-                        sb.AppendLine($"        global::LinKit.Data.DbValues.SerializeJson(entity.{p.PropertyName}, {context}),");
+                        sb.AppendLine(
+                            $"        global::LinKit.Data.DbValues.SerializeJson(entity.{p.PropertyName}, {context}),"
+                        );
                     }
                     else
                     {
@@ -2398,39 +3452,61 @@ public class DataGenerator : IIncrementalGenerator
                     }
                 }
                 sb.AppendLine("    };");
-                sb.AppendLine($"    public override {pkType} Key({entity.FullName} entity) => entity.{pkProp};");
-                sb.AppendLine($"    public override void SetKey({entity.FullName} entity, object value) => entity.{pkProp} = global::LinKit.Data.DbValues.ConvertTo<{pkType}>(value);");
+                sb.AppendLine(
+                    $"    public override {pkType} Key({entity.FullName} entity) => entity.{pkProp};"
+                );
+                sb.AppendLine(
+                    $"    public override void SetKey({entity.FullName} entity, object value) => entity.{pkProp} = global::LinKit.Data.DbValues.ConvertTo<{pkType}>(value);"
+                );
                 if (!string.IsNullOrEmpty(entity.TenantColumn))
                 {
-                    sb.AppendLine($"    public override void SetTenant({entity.FullName} entity, string value) => entity.{entity.TenantColumn} = value;");
+                    sb.AppendLine(
+                        $"    public override void SetTenant({entity.FullName} entity, string value) => entity.{entity.TenantColumn} = value;"
+                    );
                 }
                 var versionProp = entity.Properties.FirstOrDefault(p => p.IsConcurrencyCheck);
                 if (versionProp != null)
                 {
-                    sb.AppendLine($"    public override void SetVersion({entity.FullName} entity, long value) => entity.{versionProp.PropertyName} = value;");
+                    sb.AppendLine(
+                        $"    public override void SetVersion({entity.FullName} entity, long value) => entity.{versionProp.PropertyName} = value;"
+                    );
                 }
-                sb.AppendLine($"    public override global::LinKit.Data.Table<{entity.FullName}> Table(string alias) => new {entity.Name}Table(alias);");
+                sb.AppendLine(
+                    $"    public override global::LinKit.Data.Table<{entity.FullName}> Table(string alias) => new {entity.Name}Table(alias);"
+                );
                 sb.AppendLine("}");
                 sb.AppendLine();
 
                 // 2. EntityTable
-                sb.AppendLine($"public sealed class {entity.Name}Table : global::LinKit.Data.Table<{entity.FullName}>");
+                sb.AppendLine(
+                    $"public sealed class {entity.Name}Table : global::LinKit.Data.Table<{entity.FullName}>"
+                );
                 sb.AppendLine("{");
                 foreach (var p in entity.Properties)
                 {
-                    sb.AppendLine($"    public global::LinKit.Data.Column<{p.TypeFullName}> {p.PropertyName} {{ get; }}");
+                    sb.AppendLine(
+                        $"    public global::LinKit.Data.Column<{p.TypeFullName}> {p.PropertyName} {{ get; }}"
+                    );
                 }
-                sb.AppendLine($"    public override global::LinKit.Data.Projection<{entity.FullName}> Projection {{ get; }}");
+                sb.AppendLine(
+                    $"    public override global::LinKit.Data.Projection<{entity.FullName}> Projection {{ get; }}"
+                );
                 sb.AppendLine();
-                sb.AppendLine($"    public {entity.Name}Table(string alias = \"entity\") : base({entity.Name}Map.Instance.Model, alias)");
+                sb.AppendLine(
+                    $"    public {entity.Name}Table(string alias = \"entity\") : base({entity.Name}Map.Instance.Model, alias)"
+                );
                 sb.AppendLine("    {");
                 for (int i = 0; i < entity.Properties.Count; i++)
                 {
                     var p = entity.Properties[i];
-                    sb.AppendLine($"        {p.PropertyName} = new(alias, Model.Columns[{i}], static (reader, ordinal) => global::LinKit.Data.DbValues.Read<{p.TypeFullName}>(reader, ordinal));");
+                    sb.AppendLine(
+                        $"        {p.PropertyName} = new(alias, Model.Columns[{i}], static (reader, ordinal) => global::LinKit.Data.DbValues.Read<{p.TypeFullName}>(reader, ordinal));"
+                    );
                 }
                 var colsList = string.Join(", ", entity.Properties.Select(p => p.PropertyName));
-                sb.AppendLine($"        Projection = new(new global::LinKit.Data.SqlExpression[] {{ {colsList} }}, static reader => global::{generatedNamespace}.DataReaderGeneratedExtensions.Read{entity.Name}(reader));");
+                sb.AppendLine(
+                    $"        Projection = new(new global::LinKit.Data.SqlExpression[] {{ {colsList} }}, static reader => global::{generatedNamespace}.DataReaderGeneratedExtensions.Read{entity.Name}(reader));"
+                );
                 sb.AppendLine("    }");
                 sb.AppendLine("}");
                 sb.AppendLine();
@@ -2440,8 +3516,12 @@ public class DataGenerator : IIncrementalGenerator
                 sb.AppendLine("{");
                 foreach (var p in entity.Properties)
                 {
-                    var optType = p.TypeFullName.EndsWith("?", StringComparison.Ordinal) ? p.TypeFullName : p.TypeFullName + "?";
-                    sb.AppendLine($"    public global::LinKit.Data.SqlExpression<{optType}> {p.PropertyName} {{ get; }}");
+                    var optType = p.TypeFullName.EndsWith("?", StringComparison.Ordinal)
+                        ? p.TypeFullName
+                        : p.TypeFullName + "?";
+                    sb.AppendLine(
+                        $"    public global::LinKit.Data.SqlExpression<{optType}> {p.PropertyName} {{ get; }}"
+                    );
                 }
                 sb.AppendLine();
                 sb.AppendLine($"    public {entity.Name}OptionalTable(string alias)");
@@ -2449,31 +3529,63 @@ public class DataGenerator : IIncrementalGenerator
                 for (int i = 0; i < entity.Properties.Count; i++)
                 {
                     var p = entity.Properties[i];
-                    var optType = p.TypeFullName.EndsWith("?", StringComparison.Ordinal) ? p.TypeFullName : p.TypeFullName + "?";
-                    sb.AppendLine($"        {p.PropertyName} = new global::LinKit.Data.Column<{optType}>(alias, {entity.Name}Map.Instance.Model.Columns[{i}] with {{ Nullable = true }}, static (reader, ordinal) => reader.IsDBNull(ordinal) ? default : global::LinKit.Data.DbValues.Read<{optType}>(reader, ordinal));");
+                    var optType = p.TypeFullName.EndsWith("?", StringComparison.Ordinal)
+                        ? p.TypeFullName
+                        : p.TypeFullName + "?";
+                    sb.AppendLine(
+                        $"        {p.PropertyName} = new global::LinKit.Data.Column<{optType}>(alias, {entity.Name}Map.Instance.Model.Columns[{i}] with {{ Nullable = true }}, static (reader, ordinal) => reader.IsDBNull(ordinal) ? default : global::LinKit.Data.DbValues.Read<{optType}>(reader, ordinal));"
+                    );
                 }
                 sb.AppendLine("    }");
                 sb.AppendLine("}");
                 sb.AppendLine();
 
                 // 4. EntityPatch
-                var writable = entity.Properties.Where(p => !p.IsPrimaryKey && !p.IsAutoIncrement && !p.IsConcurrencyCheck &&
-                    (string.IsNullOrEmpty(entity.TenantColumn) || (p.PropertyName != entity.TenantColumn && p.ColumnName != entity.TenantColumn)) &&
-                    (string.IsNullOrEmpty(entity.SoftDeleteColumn) || (p.PropertyName != entity.SoftDeleteColumn && p.ColumnName != entity.SoftDeleteColumn))).ToList();
+                var writable = entity
+                    .Properties.Where(p =>
+                        !p.IsPrimaryKey
+                        && !p.IsAutoIncrement
+                        && !p.IsConcurrencyCheck
+                        && (
+                            string.IsNullOrEmpty(entity.TenantColumn)
+                            || (
+                                p.PropertyName != entity.TenantColumn
+                                && p.ColumnName != entity.TenantColumn
+                            )
+                        )
+                        && (
+                            string.IsNullOrEmpty(entity.SoftDeleteColumn)
+                            || (
+                                p.PropertyName != entity.SoftDeleteColumn
+                                && p.ColumnName != entity.SoftDeleteColumn
+                            )
+                        )
+                    )
+                    .ToList();
 
-                sb.AppendLine($"public sealed class {entity.Name}Patch : global::LinKit.Data.IUpdate<{entity.Name}Table>");
+                sb.AppendLine(
+                    $"public sealed class {entity.Name}Patch : global::LinKit.Data.IUpdate<{entity.Name}Table>"
+                );
                 sb.AppendLine("{");
                 foreach (var p in writable)
                 {
-                    sb.AppendLine($"    public global::LinKit.Data.PatchValue<{p.TypeFullName}> {p.PropertyName} {{ get; init; }}");
+                    sb.AppendLine(
+                        $"    public global::LinKit.Data.PatchValue<{p.TypeFullName}> {p.PropertyName} {{ get; init; }}"
+                    );
                 }
                 sb.AppendLine();
-                sb.AppendLine($"    public global::LinKit.Data.Assignment[] Build({entity.Name}Table columns)");
+                sb.AppendLine(
+                    $"    public global::LinKit.Data.Assignment[] Build({entity.Name}Table columns)"
+                );
                 sb.AppendLine("    {");
-                sb.AppendLine("        var assignments = new global::System.Collections.Generic.List<global::LinKit.Data.Assignment>();");
+                sb.AppendLine(
+                    "        var assignments = new global::System.Collections.Generic.List<global::LinKit.Data.Assignment>();"
+                );
                 foreach (var p in writable)
                 {
-                    sb.AppendLine($"        if ({p.PropertyName}.IsSet) assignments.Add(columns.{p.PropertyName}.Set({p.PropertyName}.Value));");
+                    sb.AppendLine(
+                        $"        if ({p.PropertyName}.IsSet) assignments.Add(columns.{p.PropertyName}.Set({p.PropertyName}.Value));"
+                    );
                 }
                 sb.AppendLine("        return assignments.ToArray();");
                 sb.AppendLine("    }");
@@ -2481,13 +3593,25 @@ public class DataGenerator : IIncrementalGenerator
                 sb.AppendLine();
 
                 // 5. EntityTypedRepository
-                sb.AppendLine($"public sealed class {entity.Name}TypedRepository : global::LinKit.Data.Repository<{entity.FullName}, {pkType}>, global::LinKit.Data.IQuerySource<{entity.FullName}, {entity.Name}Table, {entity.Name}OptionalTable>");
+                sb.AppendLine(
+                    $"public sealed class {entity.Name}TypedRepository : global::LinKit.Data.Repository<{entity.FullName}, {pkType}>, global::LinKit.Data.IQuerySource<{entity.FullName}, {entity.Name}Table, {entity.Name}OptionalTable>"
+                );
                 sb.AppendLine("{");
-                sb.AppendLine($"    public {entity.Name}TypedRepository(global::LinKit.Data.DataSession session) : base(session, {entity.Name}Map.Instance) {{ }}");
-                sb.AppendLine($"    public new global::LinKit.Data.FluentQuery<{entity.FullName}, {entity.Name}Table> Query() => new(base.Query(), new {entity.Name}Table(\"entity\"));");
-                sb.AppendLine($"    public {entity.Name}Table CreateTable(string alias) => new(alias);");
-                sb.AppendLine($"    public {entity.Name}OptionalTable CreateOptionalTable(string alias) => new(alias);");
-                sb.AppendLine($"    public global::System.Threading.Tasks.Task<int> DeleteWhereAsync(global::System.Func<{entity.Name}Table, global::LinKit.Data.Predicate> predicate, global::System.Threading.CancellationToken ct = default)");
+                sb.AppendLine(
+                    $"    public {entity.Name}TypedRepository(global::LinKit.Data.DataSession session) : base(session, {entity.Name}Map.Instance) {{ }}"
+                );
+                sb.AppendLine(
+                    $"    public new global::LinKit.Data.FluentQuery<{entity.FullName}, {entity.Name}Table> Query() => new(base.Query(), new {entity.Name}Table(\"entity\"));"
+                );
+                sb.AppendLine(
+                    $"    public {entity.Name}Table CreateTable(string alias) => new(alias);"
+                );
+                sb.AppendLine(
+                    $"    public {entity.Name}OptionalTable CreateOptionalTable(string alias) => new(alias);"
+                );
+                sb.AppendLine(
+                    $"    public global::System.Threading.Tasks.Task<int> DeleteWhereAsync(global::System.Func<{entity.Name}Table, global::LinKit.Data.Predicate> predicate, global::System.Threading.CancellationToken ct = default)"
+                );
                 sb.AppendLine($"        => Query().Where(predicate).ExecuteDeleteAsync(ct: ct);");
                 sb.AppendLine("}");
                 sb.AppendLine();
@@ -2495,11 +3619,17 @@ public class DataGenerator : IIncrementalGenerator
                 // 6. DataExtensions
                 sb.AppendLine($"public static class {entity.Name}DataExtensions");
                 sb.AppendLine("{");
-                sb.AppendLine($"    public static global::LinKit.Data.FluentQuery<{entity.FullName}, {entity.Name}Table> Query(this {entity.Name}Table table, global::LinKit.Data.DataSession session)");
+                sb.AppendLine(
+                    $"    public static global::LinKit.Data.FluentQuery<{entity.FullName}, {entity.Name}Table> Query(this {entity.Name}Table table, global::LinKit.Data.DataSession session)"
+                );
                 sb.AppendLine($"        => new {entity.Name}TypedRepository(session).Query();");
-                sb.AppendLine($"    public static global::LinKit.Data.FluentQuery<{entity.FullName}, {entity.Name}Table> Query{entity.Name}(this global::LinKit.Data.DataSession session)");
+                sb.AppendLine(
+                    $"    public static global::LinKit.Data.FluentQuery<{entity.FullName}, {entity.Name}Table> Query{entity.Name}(this global::LinKit.Data.DataSession session)"
+                );
                 sb.AppendLine($"        => new {entity.Name}TypedRepository(session).Query();");
-                sb.AppendLine($"    public static global::LinKit.Data.FluentQuery<{entity.FullName}, {entity.Name}Table> From(this global::LinKit.Data.DataSession session, {entity.Name}Table table)");
+                sb.AppendLine(
+                    $"    public static global::LinKit.Data.FluentQuery<{entity.FullName}, {entity.Name}Table> From(this global::LinKit.Data.DataSession session, {entity.Name}Table table)"
+                );
                 sb.AppendLine($"        => new(session.From(table), table);");
                 sb.AppendLine("}");
                 sb.AppendLine();
@@ -2515,7 +3645,10 @@ public class DataGenerator : IIncrementalGenerator
         return sb.ToString();
     }
 
-    private static string GenerateContexts(List<DataContextModel> contexts, List<EntityModel> entities)
+    private static string GenerateContexts(
+        List<DataContextModel> contexts,
+        List<EntityModel> entities
+    )
     {
         var sb = new StringBuilder();
         sb.AppendLine("// <auto-generated/>");
@@ -2526,9 +3659,14 @@ public class DataGenerator : IIncrementalGenerator
 
         foreach (var ctx in contexts)
         {
-            var contextEntities = ctx.EntityTypeNames.Count == 0
-                ? entities
-                : entities.Where(entity => ctx.EntityTypeNames.Contains(entity.FullName, StringComparer.Ordinal)).ToList();
+            var contextEntities =
+                ctx.EntityTypeNames.Count == 0
+                    ? entities
+                    : entities
+                        .Where(entity =>
+                            ctx.EntityTypeNames.Contains(entity.FullName, StringComparer.Ordinal)
+                        )
+                        .ToList();
 
             bool hasNamespace = !string.IsNullOrWhiteSpace(ctx.Namespace);
             if (hasNamespace)
@@ -2542,15 +3680,21 @@ public class DataGenerator : IIncrementalGenerator
             sb.AppendLine("    public global::LinKit.Data.DataSession Session { get; }");
             foreach (var entity in contextEntities)
             {
-                var repoType = string.IsNullOrWhiteSpace(entity.Namespace) ? $"{entity.Name}TypedRepository" : $"{entity.Namespace}.{entity.Name}TypedRepository";
+                var repoType = string.IsNullOrWhiteSpace(entity.Namespace)
+                    ? $"{entity.Name}TypedRepository"
+                    : $"{entity.Namespace}.{entity.Name}TypedRepository";
                 sb.AppendLine($"    public {repoType} {entity.Name} {{ get; }}");
             }
             sb.AppendLine();
-            sb.AppendLine("    public static global::LinKit.Data.SchemaSnapshot Schema { get; } = new(global::System.Array.AsReadOnly(new global::LinKit.Data.TableModel[]");
+            sb.AppendLine(
+                "    public static global::LinKit.Data.SchemaSnapshot Schema { get; } = new(global::System.Array.AsReadOnly(new global::LinKit.Data.TableModel[]"
+            );
             sb.AppendLine("    {");
             foreach (var entity in contextEntities)
             {
-                var mapType = string.IsNullOrWhiteSpace(entity.Namespace) ? $"{entity.Name}Map" : $"{entity.Namespace}.{entity.Name}Map";
+                var mapType = string.IsNullOrWhiteSpace(entity.Namespace)
+                    ? $"{entity.Name}Map"
+                    : $"{entity.Namespace}.{entity.Name}Map";
                 sb.AppendLine($"        {mapType}.Instance.Model,");
             }
             sb.AppendLine("    }));");
@@ -2561,7 +3705,9 @@ public class DataGenerator : IIncrementalGenerator
             sb.AppendLine("        Session = session;");
             foreach (var entity in contextEntities)
             {
-                var repoType = string.IsNullOrWhiteSpace(entity.Namespace) ? $"{entity.Name}TypedRepository" : $"{entity.Namespace}.{entity.Name}TypedRepository";
+                var repoType = string.IsNullOrWhiteSpace(entity.Namespace)
+                    ? $"{entity.Name}TypedRepository"
+                    : $"{entity.Namespace}.{entity.Name}TypedRepository";
                 sb.AppendLine($"        {entity.Name} = new {repoType}(session);");
             }
             sb.AppendLine("    }");
@@ -2576,7 +3722,10 @@ public class DataGenerator : IIncrementalGenerator
         return sb.ToString();
     }
 
-    private static string GenerateProjections(List<DataRecordModel> records, List<EntityModel> entities)
+    private static string GenerateProjections(
+        List<DataRecordModel> records,
+        List<EntityModel> entities
+    )
     {
         var sb = new StringBuilder();
         sb.AppendLine("// <auto-generated/>");
@@ -2594,24 +3743,41 @@ public class DataGenerator : IIncrementalGenerator
                 sb.AppendLine("{");
             }
 
-            sb.AppendLine($"public sealed class {record.ClassName}Projection : global::LinKit.Data.IProjection<{record.FullName}>");
+            sb.AppendLine(
+                $"public sealed class {record.ClassName}Projection : global::LinKit.Data.IProjection<{record.FullName}>"
+            );
             sb.AppendLine("{");
             foreach (var p in record.Properties)
             {
-                sb.AppendLine($"    public required global::LinKit.Data.SqlExpression<{p.TypeFullName}> {p.PropertyName} {{ get; init; }}");
+                sb.AppendLine(
+                    $"    public required global::LinKit.Data.SqlExpression<{p.TypeFullName}> {p.PropertyName} {{ get; init; }}"
+                );
             }
             var fields = string.Join(", ", record.Properties.Select(p => p.PropertyName));
-            sb.AppendLine($"    public global::LinKit.Data.Projection<{record.FullName}> Build() => Create({fields});");
+            sb.AppendLine(
+                $"    public global::LinKit.Data.Projection<{record.FullName}> Build() => Create({fields});"
+            );
             sb.AppendLine();
-            var fieldParams = string.Join(", ", record.Properties.Select((p, i) => $"global::LinKit.Data.SqlExpression<{p.TypeFullName}> field{i}"));
+            var fieldParams = string.Join(
+                ", ",
+                record.Properties.Select(
+                    (p, i) => $"global::LinKit.Data.SqlExpression<{p.TypeFullName}> field{i}"
+                )
+            );
             var fieldArgs = string.Join(", ", record.Properties.Select((_, i) => $"field{i}"));
-            sb.AppendLine($"    public static global::LinKit.Data.Projection<{record.FullName}> Create({fieldParams}) =>");
-            sb.AppendLine($"        new(new global::LinKit.Data.SqlExpression[] {{ {fieldArgs} }}, static reader => new {record.FullName}");
+            sb.AppendLine(
+                $"    public static global::LinKit.Data.Projection<{record.FullName}> Create({fieldParams}) =>"
+            );
+            sb.AppendLine(
+                $"        new(new global::LinKit.Data.SqlExpression[] {{ {fieldArgs} }}, static reader => new {record.FullName}"
+            );
             sb.AppendLine("        {");
             for (int i = 0; i < record.Properties.Count; i++)
             {
                 var p = record.Properties[i];
-                sb.AppendLine($"            {p.PropertyName} = global::LinKit.Data.DbValues.Read<{p.TypeFullName}>(reader, {i}),");
+                sb.AppendLine(
+                    $"            {p.PropertyName} = global::LinKit.Data.DbValues.Read<{p.TypeFullName}>(reader, {i}),"
+                );
             }
             sb.AppendLine("        });");
 
@@ -2621,7 +3787,13 @@ public class DataGenerator : IIncrementalGenerator
                 bool matchAll = true;
                 foreach (var rp in record.Properties)
                 {
-                    var ep = entity.Properties.FirstOrDefault(p => string.Equals(p.PropertyName, rp.PropertyName, StringComparison.OrdinalIgnoreCase));
+                    var ep = entity.Properties.FirstOrDefault(p =>
+                        string.Equals(
+                            p.PropertyName,
+                            rp.PropertyName,
+                            StringComparison.OrdinalIgnoreCase
+                        )
+                    );
                     if (ep != null)
                     {
                         matches.Add($"columns.{ep.PropertyName}");
@@ -2634,8 +3806,12 @@ public class DataGenerator : IIncrementalGenerator
                 }
                 if (matchAll && matches.Count == record.Properties.Count)
                 {
-                    var tblType = string.IsNullOrWhiteSpace(entity.Namespace) ? $"{entity.Name}Table" : $"{entity.Namespace}.{entity.Name}Table";
-                    sb.AppendLine($"    public static global::LinKit.Data.Projection<{record.FullName}> From({tblType} columns) => Create({string.Join(", ", matches)});");
+                    var tblType = string.IsNullOrWhiteSpace(entity.Namespace)
+                        ? $"{entity.Name}Table"
+                        : $"{entity.Namespace}.{entity.Name}Table";
+                    sb.AppendLine(
+                        $"    public static global::LinKit.Data.Projection<{record.FullName}> From({tblType} columns) => Create({string.Join(", ", matches)});"
+                    );
                 }
             }
 
@@ -2652,51 +3828,104 @@ public class DataGenerator : IIncrementalGenerator
 
     private static DataRecordModel? GetDataRecordSemanticModel(GeneratorSyntaxContext ctx)
     {
-        if (ctx.Node is not TypeDeclarationSyntax typeDecl) return null;
+        if (ctx.Node is not TypeDeclarationSyntax typeDecl)
+            return null;
         var symbol = ctx.SemanticModel.GetDeclaredSymbol(typeDecl);
-        if (symbol is not INamedTypeSymbol classSymbol) return null;
+        if (symbol is not INamedTypeSymbol classSymbol)
+            return null;
 
-        var attr = classSymbol.GetAttributes().FirstOrDefault(a =>
-            a.AttributeClass?.Name is "DataRecordAttribute" or "DataRecord" ||
-            a.AttributeClass?.ToDisplayString() is "LinKit.Data.DataRecordAttribute" or "LinKit.Data.DataRecord");
-        if (attr == null) return null;
+        var attr = classSymbol
+            .GetAttributes()
+            .FirstOrDefault(a =>
+                a.AttributeClass?.Name is "DataRecordAttribute" or "DataRecord"
+                || a.AttributeClass?.ToDisplayString()
+                    is "LinKit.Data.DataRecordAttribute"
+                        or "LinKit.Data.DataRecord"
+            );
+        if (attr == null)
+            return null;
 
         var properties = new List<PropertyModel>();
-        foreach (var member in classSymbol.GetMembers().OfType<IPropertySymbol>())
+        var metadataBaseTypeNames = new List<string>();
+        // Walk the whole base chain so a [DataRecord] DTO projects inherited columns too; without this the
+        // generated projection silently drops every member declared above the annotated type.
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+        var currentSymbol = classSymbol;
+        while (currentSymbol is not null && currentSymbol.SpecialType == SpecialType.None)
         {
-            if (member.IsStatic || member.DeclaredAccessibility != Accessibility.Public) continue;
-            if (member.GetMethod == null) continue;
-            properties.Add(new PropertyModel
+            var levelStart = properties.Count;
+            var isBaseLevel = !SymbolEqualityComparer.Default.Equals(currentSymbol, classSymbol);
+            foreach (var member in currentSymbol.GetMembers().OfType<IPropertySymbol>())
             {
-                PropertyName = member.Name,
-                ColumnName = member.Name,
-                TypeFullName = member.Type.ToDisplayString(FullyQualifiedNullableFormat),
-                CleanTypeName = member.Type.ToDisplayString()
-            });
+                if (member.IsStatic || member.DeclaredAccessibility != Accessibility.Public)
+                    continue;
+                if (member.GetMethod == null)
+                    continue;
+                if (!seen.Add(member.Name))
+                    continue; // derived declarations win over shadowed base members
+                properties.Add(
+                    new PropertyModel
+                    {
+                        PropertyName = member.Name,
+                        ColumnName = member.Name,
+                        TypeFullName = member.Type.ToDisplayString(FullyQualifiedNullableFormat),
+                        CleanTypeName = member.Type.ToDisplayString(),
+                    }
+                );
+            }
+            // Base-class members go before derived ones, matching the entity mapper ordering.
+            if (levelStart > 0 && properties.Count > levelStart)
+            {
+                if (isBaseLevel && !BaseTypeIsDeclaredInCompilation(currentSymbol))
+                    metadataBaseTypeNames.Add(currentSymbol.ToDisplayString());
+                var block = properties.GetRange(levelStart, properties.Count - levelStart);
+                properties.RemoveRange(levelStart, block.Count);
+                properties.InsertRange(0, block);
+            }
+            currentSymbol = currentSymbol.BaseType;
         }
 
         return new DataRecordModel
         {
             ClassName = classSymbol.Name,
             FullName = classSymbol.ToDisplayString(),
-            Namespace = classSymbol.ContainingNamespace.IsGlobalNamespace ? "" : classSymbol.ContainingNamespace.ToDisplayString(),
-            Properties = properties
+            Namespace = classSymbol.ContainingNamespace.IsGlobalNamespace
+                ? ""
+                : classSymbol.ContainingNamespace.ToDisplayString(),
+            Properties = properties,
+            MetadataBaseTypeNames = metadataBaseTypeNames,
+            Location = classSymbol.Locations.FirstOrDefault(),
         };
     }
 
+    /// <summary>
+    /// True when the type is declared in source. Base types loaded from a referenced assembly expose metadata only
+    /// (no declaring syntax references), which is what <c>LNKDT006</c> warns about.
+    /// </summary>
+    private static bool BaseTypeIsDeclaredInCompilation(INamedTypeSymbol type) =>
+        type.DeclaringSyntaxReferences.Length > 0;
+
     private static DataContextModel? GetDataContextSemanticModel(GeneratorSyntaxContext ctx)
     {
-        if (ctx.Node is not ClassDeclarationSyntax classDecl) return null;
+        if (ctx.Node is not ClassDeclarationSyntax classDecl)
+            return null;
         var symbol = ctx.SemanticModel.GetDeclaredSymbol(classDecl);
-        if (symbol is not INamedTypeSymbol classSymbol) return null;
+        if (symbol is not INamedTypeSymbol classSymbol)
+            return null;
 
-        var attr = classSymbol.GetAttributes().FirstOrDefault(a =>
-            a.AttributeClass?.Name is "DataContextAttribute" or "DataContext" ||
-            a.AttributeClass?.ToDisplayString() is "LinKit.Data.DataContextAttribute" or "LinKit.Data.DataContext");
-        if (attr == null) return null;
+        var attr = classSymbol
+            .GetAttributes()
+            .FirstOrDefault(a =>
+                a.AttributeClass?.Name is "DataContextAttribute" or "DataContext"
+                || a.AttributeClass?.ToDisplayString()
+                    is "LinKit.Data.DataContextAttribute"
+                        or "LinKit.Data.DataContext"
+            );
+        if (attr == null)
+            return null;
 
-        var entityTypeNames = attr.ConstructorArguments
-            .Where(argument => argument.Kind == TypedConstantKind.Array)
+        var entityTypeNames = attr
+            .ConstructorArguments.Where(argument => argument.Kind == TypedConstantKind.Array)
             .SelectMany(argument => argument.Values)
             .Select(argument => argument.Value as ITypeSymbol)
             .Where(type => type is not null)
@@ -2708,15 +3937,19 @@ public class DataGenerator : IIncrementalGenerator
         {
             ClassName = classSymbol.Name,
             FullName = classSymbol.ToDisplayString(),
-            Namespace = classSymbol.ContainingNamespace.IsGlobalNamespace ? "" : classSymbol.ContainingNamespace.ToDisplayString(),
+            Namespace = classSymbol.ContainingNamespace.IsGlobalNamespace
+                ? ""
+                : classSymbol.ContainingNamespace.ToDisplayString(),
             EntityTypeNames = entityTypeNames,
-            Location = classSymbol.Locations.FirstOrDefault()
+            Location = classSymbol.Locations.FirstOrDefault(),
         };
     }
 
     private static string GenerateRepositoryInterfaces(List<EntityModel> entities)
     {
-        var repositories = entities.Where(entity => entity.RepositoryInterfaceFullName is not null).ToList();
+        var repositories = entities
+            .Where(entity => entity.RepositoryInterfaceFullName is not null)
+            .ToList();
         var sb = new StringBuilder();
         sb.AppendLine("// <auto-generated/>");
         sb.AppendLine("#nullable enable");
@@ -2730,9 +3963,13 @@ public class DataGenerator : IIncrementalGenerator
                 sb.AppendLine("{");
             }
 
-            var indent = string.IsNullOrWhiteSpace(entity.RepositoryInterfaceNamespace) ? "" : "    ";
+            var indent = string.IsNullOrWhiteSpace(entity.RepositoryInterfaceNamespace)
+                ? ""
+                : "    ";
             var pkType = entity.PrimaryKey?.TypeFullName ?? "global::System.Guid";
-            sb.AppendLine($"{indent}public partial interface {entity.RepositoryInterfaceName} : global::LinKit.Data.IRepository<{entity.FullName}, {pkType}>");
+            sb.AppendLine(
+                $"{indent}public partial interface {entity.RepositoryInterfaceName} : global::LinKit.Data.IRepository<{entity.FullName}, {pkType}>"
+            );
             sb.AppendLine($"{indent}{{");
             sb.AppendLine($"{indent}}}");
 
@@ -2754,16 +3991,17 @@ public class DataGenerator : IIncrementalGenerator
         public string? RepositoryInterfaceName { get; set; }
         public string? RepositoryInterfaceNamespace { get; set; }
         public string? RepositoryInterfaceFullName =>
-            RepositoryInterfaceName is null
-                ? null
-                : string.IsNullOrWhiteSpace(RepositoryInterfaceNamespace)
-                    ? $"global::{RepositoryInterfaceName}"
-                    : $"global::{RepositoryInterfaceNamespace}.{RepositoryInterfaceName}";
+            RepositoryInterfaceName is null ? null
+            : string.IsNullOrWhiteSpace(RepositoryInterfaceNamespace)
+                ? $"global::{RepositoryInterfaceName}"
+            : $"global::{RepositoryInterfaceNamespace}.{RepositoryInterfaceName}";
         public string TableName { get; set; } = string.Empty;
         public string? Schema { get; set; }
         public string? TableComment { get; set; }
-        public List<CheckConstraintModel> CheckConstraints { get; set; } = new List<CheckConstraintModel>();
-        public List<CompositeIndexModel> CompositeIndexes { get; set; } = new List<CompositeIndexModel>();
+        public List<CheckConstraintModel> CheckConstraints { get; set; } =
+            new List<CheckConstraintModel>();
+        public List<CompositeIndexModel> CompositeIndexes { get; set; } =
+            new List<CompositeIndexModel>();
         public string? SoftDeleteColumn { get; set; }
         public string? TenantColumn { get; set; }
         public Location? Location { get; set; }
@@ -2856,6 +4094,8 @@ public class DataGenerator : IIncrementalGenerator
         public string FullName { get; set; } = string.Empty;
         public string Namespace { get; set; } = string.Empty;
         public List<PropertyModel> Properties { get; set; } = new List<PropertyModel>();
+        public List<string> MetadataBaseTypeNames { get; set; } = new List<string>();
+        public Location? Location { get; set; }
     }
 
     private class DataContextModel

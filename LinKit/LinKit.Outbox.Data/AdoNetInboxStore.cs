@@ -75,6 +75,93 @@ public sealed class AdoNetInboxStore : IInboxStore, IAdoNetSchemaStore
         }, cancellationToken).ConfigureAwait(false);
     }
 
+    public async Task<bool> TryMarkProcessedAsync(string messageId, string consumerName, TimeSpan? expiry = null, CancellationToken cancellationToken = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(messageId);
+        ArgumentException.ThrowIfNullOrWhiteSpace(consumerName);
+        if (expiry < TimeSpan.Zero)
+            throw new ArgumentOutOfRangeException(nameof(expiry));
+
+        var now = _time.GetUtcNow().UtcDateTime;
+        if (expiry.HasValue && expiry.Value > DateTime.MaxValue - now)
+            throw new ArgumentOutOfRangeException(nameof(expiry), "Inbox expiry exceeds the supported date range.");
+        DateTime? expiresAt = expiry.HasValue ? now + expiry.Value : null;
+        var claimed = false;
+        await AdoNetStoreSupport.WithTransactionAsync(_factory, _unitOfWork, async (connection, transaction) =>
+        {
+            var table = AdoNetStoreSupport.Quote(_dialect, AdoNetStoreSupport.InboxTable);
+            if (_dialect == DatabaseDialect.MySql)
+            {
+                // MySQL affected-row counts for ON DUPLICATE KEY UPDATE depend on connection flags,
+                // so purge an expired claim first and detect the live duplicate via error 1062.
+                await using var purge = connection.CreateCommand();
+                purge.Transaction = transaction;
+                purge.CommandText = $"DELETE FROM {table} WHERE {Q("MessageId")} = {P("messageId")} AND {Q("ConsumerName")} = {P("consumerName")} AND {Q("ExpiresAtUtc")} IS NOT NULL AND {Q("ExpiresAtUtc")} <= {P("now")}";
+                Add(purge, "messageId", messageId);
+                Add(purge, "consumerName", consumerName);
+                Add(purge, "now", now, DbType.DateTime);
+                await purge.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+            }
+
+            await using var command = connection.CreateCommand();
+            command.Transaction = transaction;
+            command.CommandText = BuildClaimSql();
+            Add(command, "messageId", messageId);
+            Add(command, "consumerName", consumerName);
+            Add(command, "processedAtUtc", now, DbType.DateTime);
+            Add(command, "expiresAtUtc", expiresAt, DbType.DateTime);
+            if (_dialect != DatabaseDialect.MySql)
+                Add(command, "now", now, DbType.DateTime);
+            try
+            {
+                claimed = await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false) > 0;
+            }
+            catch (DbException ex) when (IsUniqueViolation(ex))
+            {
+                claimed = false;
+            }
+        }, cancellationToken).ConfigureAwait(false);
+        return claimed;
+    }
+
+    private string BuildClaimSql()
+    {
+        var table = AdoNetStoreSupport.Quote(_dialect, AdoNetStoreSupport.InboxTable);
+        var columns = $"{Q("MessageId")}, {Q("ConsumerName")}, {Q("ProcessedAtUtc")}, {Q("ExpiresAtUtc")}";
+        var values = $"{P("messageId")}, {P("consumerName")}, {P("processedAtUtc")}, {P("expiresAtUtc")}";
+        // Insert-only claim: an existing row is overwritten only when its claim expired,
+        // matching HasBeenProcessedAsync semantics. Affected rows == 0 means "already claimed".
+        return _dialect switch
+        {
+            DatabaseDialect.SqlServer =>
+                $"MERGE {table} WITH (HOLDLOCK) AS target USING (SELECT {P("messageId")} AS {Q("MessageId")}, {P("consumerName")} AS {Q("ConsumerName")}, {P("processedAtUtc")} AS {Q("ProcessedAtUtc")}, {P("expiresAtUtc")} AS {Q("ExpiresAtUtc")}) AS source " +
+                $"ON target.{Q("MessageId")} = source.{Q("MessageId")} AND target.{Q("ConsumerName")} = source.{Q("ConsumerName")} " +
+                $"WHEN MATCHED AND target.{Q("ExpiresAtUtc")} IS NOT NULL AND target.{Q("ExpiresAtUtc")} <= {P("now")} THEN UPDATE SET {Q("ProcessedAtUtc")} = source.{Q("ProcessedAtUtc")}, {Q("ExpiresAtUtc")} = source.{Q("ExpiresAtUtc")} " +
+                $"WHEN NOT MATCHED THEN INSERT ({columns}) VALUES (source.{Q("MessageId")}, source.{Q("ConsumerName")}, source.{Q("ProcessedAtUtc")}, source.{Q("ExpiresAtUtc")});",
+            DatabaseDialect.Oracle =>
+                $"MERGE INTO {table} target USING (SELECT {P("messageId")} AS {Q("MessageId")}, {P("consumerName")} AS {Q("ConsumerName")}, {P("processedAtUtc")} AS {Q("ProcessedAtUtc")}, {P("expiresAtUtc")} AS {Q("ExpiresAtUtc")} FROM dual) source " +
+                $"ON (target.{Q("MessageId")} = source.{Q("MessageId")} AND target.{Q("ConsumerName")} = source.{Q("ConsumerName")}) " +
+                $"WHEN MATCHED THEN UPDATE SET target.{Q("ProcessedAtUtc")} = source.{Q("ProcessedAtUtc")}, target.{Q("ExpiresAtUtc")} = source.{Q("ExpiresAtUtc")} WHERE target.{Q("ExpiresAtUtc")} IS NOT NULL AND target.{Q("ExpiresAtUtc")} <= {P("now")} " +
+                $"WHEN NOT MATCHED THEN INSERT ({columns}) VALUES (source.{Q("MessageId")}, source.{Q("ConsumerName")}, source.{Q("ProcessedAtUtc")}, source.{Q("ExpiresAtUtc")})",
+            DatabaseDialect.MySql =>
+                $"INSERT INTO {table} ({columns}) VALUES ({values})",
+            _ =>
+                $"INSERT INTO {table} ({columns}) VALUES ({values}) ON CONFLICT ({Q("MessageId")}, {Q("ConsumerName")}) DO UPDATE SET {Q("ProcessedAtUtc")} = excluded.{Q("ProcessedAtUtc")}, {Q("ExpiresAtUtc")} = excluded.{Q("ExpiresAtUtc")} WHERE {table}.{Q("ExpiresAtUtc")} IS NOT NULL AND {table}.{Q("ExpiresAtUtc")} <= {P("now")}"
+        };
+    }
+
+    private bool IsUniqueViolation(DbException exception) => _dialect switch
+    {
+        // SQLite reports the generic SQLITE_CONSTRAINT (19) / extended CONSTRAINT_UNIQUE (2067);
+        // all inserted values are validated non-null, so a constraint failure here is the primary key.
+        DatabaseDialect.Sqlite => exception.ErrorCode is 19 or 2067,
+        DatabaseDialect.PostgreSql => exception.SqlState == "23505",
+        DatabaseDialect.SqlServer => exception.ErrorCode is 2601 or 2627,
+        DatabaseDialect.MySql => exception.ErrorCode == 1062,
+        DatabaseDialect.Oracle => exception.ErrorCode == 1, // ORA-00001
+        _ => false
+    };
+
     private string BuildUpsertSql()
     {
         var table = AdoNetStoreSupport.Quote(_dialect, AdoNetStoreSupport.InboxTable);

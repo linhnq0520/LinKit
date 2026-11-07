@@ -14,6 +14,6 @@ public interface IGrpcClientFactory
     CallInvoker GetCallInvokerFor<TClient>()
         where TClient : ClientBase;
 
-    TClient GetClient<[System.Diagnostics.CodeAnalysis.DynamicallyAccessedMembers(System.Diagnostics.CodeAnalysis.DynamicallyAccessedMemberTypes.PublicConstructors)] TClient>()
+    TClient GetClient<TClient>()
         where TClient : ClientBase;
 }

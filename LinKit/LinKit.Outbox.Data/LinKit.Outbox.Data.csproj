@@ -1,23 +1,15 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
     <TargetFrameworks>net8.0;net9.0;net10.0</TargetFrameworks>
-    <ImplicitUsings>enable</ImplicitUsings>
-    <Nullable>enable</Nullable>
     <PackageId>LinKit.Outbox.Data</PackageId>
-    <Version>1.2.1</Version>
-    <Authors>Linh Nguyen</Authors>
-    <Description>Provider-neutral ADO.NET durable stores for LinKit Outbox and Inbox.</Description>
+    <Version>2.0.0</Version>
+    <Description>Provider-neutral ADO.NET durable stores for LinKit Outbox and Inbox with dialect-aware atomic claiming.</Description>
     <PackageTags>linkit;outbox;inbox;ado.net;durable;aot</PackageTags>
-    <PackageReadmeFile>README.md</PackageReadmeFile>
-    <PackageLicenseExpression>MIT</PackageLicenseExpression>
-    <RepositoryUrl>https://github.com/linhnq0520/LinKit</RepositoryUrl>
-    <RepositoryType>git</RepositoryType>
-    <IncludeSymbols>true</IncludeSymbols>
-    <SymbolPackageFormat>snupkg</SymbolPackageFormat>
+    <PackageReleaseNotes>v2.0.0: Dialect-aware atomic claim (FOR UPDATE SKIP LOCKED / READPAST / OUTPUT) so multiple publisher instances no longer double-publish, and dead-lettered messages are excluded from polling. Full documentation &amp; release notes: https://quoclinh.id.vn/docs/linkit</PackageReleaseNotes>
   </PropertyGroup>
+
   <ItemGroup>
     <ProjectReference Include="..\LinKit.Outbox\LinKit.Outbox.csproj" />
     <ProjectReference Include="..\LinKit.Data\LinKit.Data.csproj" />
-    <None Include="README.md" Pack="true" PackagePath="\" />
   </ItemGroup>
 </Project>

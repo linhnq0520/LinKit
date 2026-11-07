@@ -23,7 +23,8 @@ public class OutboxPublisherService : BackgroundService
         IServiceProvider serviceProvider,
         ILogger<OutboxPublisherService> logger,
         OutboxOptions? options = null,
-        TimeProvider? timeProvider = null)
+        TimeProvider? timeProvider = null
+    )
     {
         _serviceProvider = serviceProvider;
         _logger = logger;
@@ -35,14 +36,26 @@ public class OutboxPublisherService : BackgroundService
     private static string SanitizeTopic(string messageType)
     {
         var start = messageType.LastIndexOf('.') + 1;
-        return string.Create(messageType.Length - start, (messageType, start), static (span, state) =>
-        {
-            for (var i = 0; i < span.Length; i++)
+        return string.Create(
+            messageType.Length - start,
+            (messageType, start),
+            static (span, state) =>
             {
-                var c = state.messageType[state.start + i];
-                span[i] = c is (>= 'a' and <= 'z') or (>= 'A' and <= 'Z') or (>= '0' and <= '9') or '_' or '-' or '.' ? c : '_';
+                for (var i = 0; i < span.Length; i++)
+                {
+                    var c = state.messageType[state.start + i];
+                    span[i] = c
+                        is (>= 'a' and <= 'z')
+                            or (>= 'A' and <= 'Z')
+                            or (>= '0' and <= '9')
+                            or '_'
+                            or '-'
+                            or '.'
+                        ? c
+                        : '_';
+                }
             }
-        });
+        );
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -60,7 +73,11 @@ public class OutboxPublisherService : BackgroundService
 
                 if (outboxStore != null && producer != null)
                 {
-                    var pendingMessages = await outboxStore.ClaimPendingAsync(_options.BatchSize, _options.LeaseDuration, stoppingToken);
+                    var pendingMessages = await outboxStore.ClaimPendingAsync(
+                        _options.BatchSize,
+                        _options.LeaseDuration,
+                        stoppingToken
+                    );
                     drainedFullBatch = pendingMessages.Count >= _options.BatchSize;
 
                     foreach (var msg in pendingMessages)
@@ -80,22 +97,61 @@ public class OutboxPublisherService : BackgroundService
                             {
                                 topic = SanitizeTopic(msg.MessageType);
                             }
+
+                            // A [Message] attribute (or an explicit header) can pin the routing key independently of the topic.
+                            var routingKey = headers.RoutingKey
+                                is { Length: > 0 } explicitRoutingKey
+                                ? explicitRoutingKey
+                                : topic;
+
+                            // Restore the ambient state captured at save time (tenant id, and any other registered
+                            // interceptor) so nothing published for one tenant runs as another.
+                            using var messageScope = MessageConsumeInterceptors.Enter(
+                                scope.ServiceProvider,
+                                headers
+                            );
                             using var payload = JsonDocument.Parse(msg.Payload);
-                            await producer.ProduceAsync(topic, topic, payload.RootElement, headers, stoppingToken);
+                            await producer.ProduceAsync(
+                                topic,
+                                routingKey,
+                                payload.RootElement,
+                                headers,
+                                stoppingToken
+                            );
                             await outboxStore.MarkProcessedAsync(msg.Id, stoppingToken);
 
-                            _logger.LogInformation("Dispatched outbox message {MessageId} ({MessageType})", msg.Id, msg.MessageType);
+                            _logger.LogInformation(
+                                "Dispatched outbox message {MessageId} ({MessageType})",
+                                msg.Id,
+                                msg.MessageType
+                            );
                         }
                         catch (Exception ex) when (!stoppingToken.IsCancellationRequested)
                         {
                             var attempt = msg.RetryCount + 1;
                             if (attempt >= _options.MaxRetries)
-                                _logger.LogCritical(ex, "Outbox message {MessageId} dead-lettered after {Attempts} attempts", msg.Id, attempt);
+                                _logger.LogCritical(
+                                    ex,
+                                    "Outbox message {MessageId} dead-lettered after {Attempts} attempts",
+                                    msg.Id,
+                                    attempt
+                                );
                             else
-                                _logger.LogError(ex, "Failed to dispatch outbox message {MessageId} (attempt {Attempt})", msg.Id, attempt);
+                                _logger.LogError(
+                                    ex,
+                                    "Failed to dispatch outbox message {MessageId} (attempt {Attempt})",
+                                    msg.Id,
+                                    attempt
+                                );
 
-                            var next = _time.GetUtcNow().UtcDateTime + _options.GetRetryDelay(attempt);
-                            await outboxStore.MarkFailedAsync(msg.Id, ex.Message, next, stoppingToken);
+                            var next =
+                                _time.GetUtcNow().UtcDateTime + _options.GetRetryDelay(attempt);
+                            await outboxStore.MarkFailedAsync(
+                                msg.Id,
+                                ex.Message,
+                                next,
+                                stoppingToken
+                            );
                         }
                     }
                 }
@@ -106,7 +162,8 @@ public class OutboxPublisherService : BackgroundService
             }
 
             // A full batch means more work is likely pending; skip the idle delay to keep throughput high.
-            if (drainedFullBatch) continue;
+            if (drainedFullBatch)
+                continue;
 
             try
             {
@@ -129,19 +186,34 @@ public static class OutboxServiceCollectionExtensions
         var options = new OutboxOptions();
         configure?.Invoke(options);
         options.Validate();
-        Microsoft.Extensions.DependencyInjection.Extensions.ServiceCollectionDescriptorExtensions.TryAddSingleton(services, options);
-        Microsoft.Extensions.DependencyInjection.Extensions.ServiceCollectionDescriptorExtensions.TryAddSingleton(services, TimeProvider.System);
+        Microsoft.Extensions.DependencyInjection.Extensions.ServiceCollectionDescriptorExtensions.TryAddSingleton(
+            services,
+            options
+        );
+        Microsoft.Extensions.DependencyInjection.Extensions.ServiceCollectionDescriptorExtensions.TryAddSingleton(
+            services,
+            TimeProvider.System
+        );
     }
 
     /// <summary>
     /// Registers in-memory transactional outbox and idempotent inbox stores.
     /// NOTE: In-memory store is intended for development and testing. Production deployments should register a durable store.
     /// </summary>
-    public static IServiceCollection AddLinKitOutbox(this IServiceCollection services, Action<OutboxOptions>? configure = null)
+    public static IServiceCollection AddLinKitOutbox(
+        this IServiceCollection services,
+        Action<OutboxOptions>? configure = null
+    )
     {
         AddCommon(services, configure);
-        Microsoft.Extensions.DependencyInjection.Extensions.ServiceCollectionDescriptorExtensions.TryAddSingleton<IOutboxStore, InMemoryOutboxStore>(services);
-        Microsoft.Extensions.DependencyInjection.Extensions.ServiceCollectionDescriptorExtensions.TryAddSingleton<IInboxStore, InMemoryInboxStore>(services);
+        Microsoft.Extensions.DependencyInjection.Extensions.ServiceCollectionDescriptorExtensions.TryAddSingleton<
+            IOutboxStore,
+            InMemoryOutboxStore
+        >(services);
+        Microsoft.Extensions.DependencyInjection.Extensions.ServiceCollectionDescriptorExtensions.TryAddSingleton<
+            IInboxStore,
+            InMemoryInboxStore
+        >(services);
         services.AddHostedService<OutboxPublisherService>();
         return services;
     }
@@ -150,10 +222,10 @@ public static class OutboxServiceCollectionExtensions
     /// Registers custom durable outbox and inbox stores.
     /// </summary>
     public static IServiceCollection AddLinKitOutbox<
-        [DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicConstructors)] TOutboxStore,
-        [DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicConstructors)] TInboxStore>(
-        this IServiceCollection services,
-        Action<OutboxOptions>? configure = null)
+        [DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicConstructors)]
+            TOutboxStore,
+        [DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicConstructors)] TInboxStore
+    >(this IServiceCollection services, Action<OutboxOptions>? configure = null)
         where TOutboxStore : class, IOutboxStore
         where TInboxStore : class, IInboxStore
     {

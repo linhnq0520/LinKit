@@ -10,14 +10,35 @@ namespace LinKit.Caching;
 public interface ICacheProvider
 {
     ValueTask<T?> GetAsync<T>(string key, CancellationToken cancellationToken = default);
-    ValueTask SetAsync<T>(string key, T value, TimeSpan? ttl = null, TimeSpan? sliding = null, CancellationToken cancellationToken = default);
+    ValueTask SetAsync<T>(
+        string key,
+        T value,
+        TimeSpan? ttl = null,
+        TimeSpan? sliding = null,
+        CancellationToken cancellationToken = default
+    );
     ValueTask RemoveAsync(string key, CancellationToken cancellationToken = default);
 
+    /// <summary>
+    /// Removes every entry whose key starts with <paramref name="keyPrefix"/> and returns how many were removed.
+    /// This is how a cache namespace (for example <c>orders:</c>) is invalidated as a unit.
+    /// </summary>
+    ValueTask<int> RemoveByPrefixAsync(
+        string keyPrefix,
+        CancellationToken cancellationToken = default
+    );
+
     /// <summary>Returns the cached value or creates it. Providers should make concurrent misses single-flight.</summary>
-    async ValueTask<T> GetOrCreateAsync<T>(string key, Func<CancellationToken, Task<T>> factory, TimeSpan? ttl = null, CancellationToken cancellationToken = default)
+    async ValueTask<T> GetOrCreateAsync<T>(
+        string key,
+        Func<CancellationToken, Task<T>> factory,
+        TimeSpan? ttl = null,
+        CancellationToken cancellationToken = default
+    )
     {
         var cached = await GetAsync<T>(key, cancellationToken).ConfigureAwait(false);
-        if (cached is not null && !EqualityComparer<T>.Default.Equals(cached, default!)) return cached;
+        if (cached is not null && !EqualityComparer<T>.Default.Equals(cached, default!))
+            return cached;
         var value = await factory(cancellationToken).ConfigureAwait(false);
         await SetAsync(key, value, ttl, null, cancellationToken).ConfigureAwait(false);
         return value;
@@ -52,30 +73,19 @@ public class InMemoryCacheProvider : ICacheProvider
     }
 
     private const int DefaultMaxCapacity = 10_000;
+
+    /// <summary>A factory that never completes must not pin its key in the flight table forever.</summary>
+    private static readonly TimeSpan DefaultFlightMaxLifetime = TimeSpan.FromSeconds(30);
+
     private readonly int _maxCapacity;
     private readonly TimeProvider _time;
     private readonly ConcurrentDictionary<string, CacheEntry> _cache = new();
-    private readonly ConcurrentDictionary<string, Flight> _inflight = new();
+    private readonly SingleFlight<string> _flight = new(DefaultFlightMaxLifetime);
 
-    private sealed class Flight
-    {
-        public TaskCompletionSource<object?> Completion { get; } =
-            new(TaskCreationOptions.RunContinuationsAsynchronously);
+    private void InvalidateFlight(string key) => _flight.Invalidate(key);
 
-        // Set by Set/Remove on the same key while this flight is running: the factory result is then stale
-        // and must not overwrite the newer state (it is still returned to the callers that awaited it).
-        public bool Invalidated { get; set; }
-    }
-
-    private void InvalidateFlight(string key)
-    {
-        if (_inflight.TryGetValue(key, out var flight))
-        {
-            lock (flight) flight.Invalidated = true;
-        }
-    }
-
-    public InMemoryCacheProvider() : this(DefaultMaxCapacity, null) { }
+    public InMemoryCacheProvider()
+        : this(DefaultMaxCapacity, null) { }
 
     public InMemoryCacheProvider(int maxCapacity, TimeProvider? timeProvider = null)
     {
@@ -106,8 +116,12 @@ public class InMemoryCacheProvider : ICacheProvider
         if (entry.IsExpired(now))
         {
             // Atomic compare-and-remove: only remove if the dictionary value is STILL this exact expired entry
-            ((System.Collections.Generic.ICollection<System.Collections.Generic.KeyValuePair<string, CacheEntry>>)_cache)
-                .Remove(new System.Collections.Generic.KeyValuePair<string, CacheEntry>(key, entry));
+            (
+                (System.Collections.Generic.ICollection<System.Collections.Generic.KeyValuePair<
+                    string,
+                    CacheEntry
+                >>)_cache
+            ).Remove(new System.Collections.Generic.KeyValuePair<string, CacheEntry>(key, entry));
             return false;
         }
 
@@ -126,11 +140,22 @@ public class InMemoryCacheProvider : ICacheProvider
         return false;
     }
 
-    public ValueTask SetAsync<T>(string key, T value, TimeSpan? ttl = null, TimeSpan? sliding = null, CancellationToken cancellationToken = default)
+    public ValueTask SetAsync<T>(
+        string key,
+        T value,
+        TimeSpan? ttl = null,
+        TimeSpan? sliding = null,
+        CancellationToken cancellationToken = default
+    )
     {
         cancellationToken.ThrowIfCancellationRequested();
-        if (ttl.HasValue && ttl.Value <= TimeSpan.Zero) throw new ArgumentOutOfRangeException(nameof(ttl), "TTL must be positive.");
-        if (sliding.HasValue && sliding.Value <= TimeSpan.Zero) throw new ArgumentOutOfRangeException(nameof(sliding), "Sliding expiration must be positive.");
+        if (ttl.HasValue && ttl.Value <= TimeSpan.Zero)
+            throw new ArgumentOutOfRangeException(nameof(ttl), "TTL must be positive.");
+        if (sliding.HasValue && sliding.Value <= TimeSpan.Zero)
+            throw new ArgumentOutOfRangeException(
+                nameof(sliding),
+                "Sliding expiration must be positive."
+            );
         InvalidateFlight(key);
         SetCore(key, value, ttl, sliding);
         return ValueTask.CompletedTask;
@@ -148,75 +173,57 @@ public class InMemoryCacheProvider : ICacheProvider
             Value = value,
             AbsoluteExpirationUtc = ttl.HasValue ? now.Add(ttl.Value) : null,
             SlidingExpiration = sliding,
-            LastAccessedUtc = now
+            LastAccessedUtc = now,
         };
     }
 
     // Hard cap: drop expired entries first, then least-recently-used until below the limit.
     private void EvictToMakeRoom(DateTime now)
     {
-        var collection = (System.Collections.Generic.ICollection<System.Collections.Generic.KeyValuePair<string, CacheEntry>>)_cache;
+        var collection =
+            (System.Collections.Generic.ICollection<System.Collections.Generic.KeyValuePair<
+                string,
+                CacheEntry
+            >>)_cache;
         foreach (var kvp in _cache)
         {
             if (kvp.Value.IsExpired(now))
                 collection.Remove(kvp);
         }
 
-        if (_cache.Count < _maxCapacity) return;
+        if (_cache.Count < _maxCapacity)
+            return;
 
         int toRemove = Math.Max(1, _maxCapacity / 10);
         foreach (var kvp in _cache.OrderBy(k => k.Value.LastAccessedUtc).Take(toRemove))
             collection.Remove(kvp);
     }
 
-    public async ValueTask<T> GetOrCreateAsync<T>(string key, Func<CancellationToken, Task<T>> factory, TimeSpan? ttl = null, CancellationToken cancellationToken = default)
+    public ValueTask<T> GetOrCreateAsync<T>(
+        string key,
+        Func<CancellationToken, Task<T>> factory,
+        TimeSpan? ttl = null,
+        CancellationToken cancellationToken = default
+    )
     {
         cancellationToken.ThrowIfCancellationRequested();
-        if (TryGetValue<T>(key, out var cached)) return cached;
+        if (TryGetValue<T>(key, out var cached))
+            return ValueTask.FromResult(cached);
 
-        // Single-flight: concurrent misses share one factory call. The factory runs without the first caller's token
-        // so one cancelled caller cannot fail the others.
-        var candidate = new Flight();
-        var flight = _inflight.GetOrAdd(key, candidate);
-        if (ReferenceEquals(flight, candidate))
-            _ = RunFlightAsync(key, factory, ttl, flight);
+        // Single-flight: concurrent misses share one factory call. The factory receives the flight token, which is
+        // only cancelled once every waiter has given up, so a cancelled caller cannot fail the others.
+        return _flight.RunAsync(key, factory, Publish, cancellationToken);
 
-        return (T)(await flight.Completion.Task.WaitAsync(cancellationToken).ConfigureAwait(false))!;
-    }
-
-    // Only the caller that won GetOrAdd runs this. The entry is removed before the result is published, so a
-    // completed (including faulted) flight is never observable in _inflight, even if every waiter cancelled.
-    private async Task RunFlightAsync<T>(string key, Func<CancellationToken, Task<T>> factory, TimeSpan? ttl, Flight flight)
-    {
-        object? value = null;
-        Exception? error = null;
-        try
+        ValueTask Publish(SingleFlight<string>.Flight current, T created)
         {
-            var created = await factory(CancellationToken.None).ConfigureAwait(false);
-            if (ttl.HasValue && ttl.Value <= TimeSpan.Zero) throw new ArgumentOutOfRangeException(nameof(ttl), "TTL must be positive.");
-            // Atomic with respect to Set/Remove: a concurrent invalidation drops this (stale) result from the cache.
-            lock (flight)
+            if (ttl.HasValue && ttl.Value <= TimeSpan.Zero)
             {
-                if (!flight.Invalidated) SetCore(key, created, ttl, null);
+                throw new ArgumentOutOfRangeException(nameof(ttl), "TTL must be positive.");
             }
-            value = created;
-        }
-        catch (Exception ex)
-        {
-            error = ex;
-        }
-
-        ((System.Collections.Generic.ICollection<System.Collections.Generic.KeyValuePair<string, Flight>>)_inflight)
-            .Remove(new System.Collections.Generic.KeyValuePair<string, Flight>(key, flight));
-
-        if (error is null)
-        {
-            flight.Completion.TrySetResult(value);
-        }
-        else
-        {
-            flight.Completion.TrySetException(error);
-            _ = flight.Completion.Task.Exception; // mark observed so unwatched flights don't raise UnobservedTaskException
+            // Atomic with respect to Set/Remove: a concurrent invalidation drops this (stale) result from the cache.
+            if (!current.Invalidated)
+                SetCore(key, created, ttl, null);
+            return ValueTask.CompletedTask;
         }
     }
 
@@ -225,5 +232,32 @@ public class InMemoryCacheProvider : ICacheProvider
         InvalidateFlight(key);
         _cache.TryRemove(key, out _);
         return ValueTask.CompletedTask;
+    }
+
+    public ValueTask<int> RemoveByPrefixAsync(
+        string keyPrefix,
+        CancellationToken cancellationToken = default
+    )
+    {
+        ArgumentNullException.ThrowIfNull(keyPrefix);
+        cancellationToken.ThrowIfCancellationRequested();
+        if (keyPrefix.Length == 0)
+        {
+            var all = _cache.Count;
+            foreach (var key in _cache.Keys)
+                RemoveAsync(key, cancellationToken);
+            return ValueTask.FromResult(all);
+        }
+
+        var removed = 0;
+        foreach (var key in _cache.Keys)
+        {
+            if (!key.StartsWith(keyPrefix, StringComparison.Ordinal))
+                continue;
+            InvalidateFlight(key);
+            if (_cache.TryRemove(key, out _))
+                removed++;
+        }
+        return ValueTask.FromResult(removed);
     }
 }

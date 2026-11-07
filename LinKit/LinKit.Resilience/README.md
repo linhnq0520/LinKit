@@ -35,7 +35,18 @@ var response = await ResiliencePipeline.ExecuteAsync(
     cancellationToken);
 ```
 
-The order is retry loop, circuit-breaker check, per-attempt timeout, then the action. A successful attempt resets the breaker. `MaxRetries = 2` permits up to three attempts. A zero breaker threshold disables the breaker.
+The order is retry loop, circuit-breaker check, per-attempt timeout, then the action. A successful attempt resets the breaker (see [Circuit breaker generations](#circuit-breaker-generations)). `MaxRetries = 2` permits up to three attempts. A zero breaker threshold disables the breaker.
+
+## Circuit breaker generations
+
+The circuit breaker exposes generation-aware overloads:
+
+```csharp
+bool CanExecute(int durationSeconds, out long generation);
+void OnSuccess(long generation);
+```
+
+A slow success admitted before the breaker opened can no longer close it: stale generations are ignored, and only the matching half-open probe closes the breaker. `ResiliencePipeline` uses the new overloads internally; the old parameterless members are kept for compatibility. Half-open probes that never report back are re-admitted after the open duration instead of wedging the breaker.
 
 ## Cancellation and timeout
 

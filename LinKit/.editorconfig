@@ -1,0 +1,52 @@
+root = true
+
+[*]
+# Existing sources mix UTF-8 with and without BOM; encoding normalisation is a separate, review-sized change.
+charset = unset
+end_of_line = crlf
+insert_final_newline = true
+trim_trailing_whitespace = true
+indent_style = space
+indent_size = 4
+
+[*.{json,yml,yaml,md,xml,props,targets,csproj}]
+indent_size = 2
+
+[*.cs]
+# Namespaces
+csharp_style_namespace_declarations = file_scoped:suggestion
+dotnet_style_namespace_match_folder = false
+
+# var usage
+csharp_style_var_for_built_in_types = false:suggestion
+csharp_style_var_when_type_is_apparent = true:suggestion
+csharp_style_var_elsewhere = false:suggestion
+
+# Expression-level preferences
+csharp_prefer_braces = true:suggestion
+csharp_style_expression_bodied_methods = when_on_single_line:suggestion
+csharp_style_expression_bodied_properties = true:suggestion
+csharp_style_prefer_switch_expression = true:suggestion
+csharp_prefer_simple_using_statement = true:suggestion
+csharp_style_throw_expression = true:suggestion
+
+# Modern C# guidance we do follow
+csharp_style_prefer_pattern_matching = true:suggestion
+csharp_style_prefer_not_pattern = true:suggestion
+csharp_style_prefer_extended_property_pattern = true:suggestion
+dotnet_style_prefer_is_null_check_over_reference_equality_method = true:suggestion
+
+# Unused / dead code is reported but never fails the build
+dotnet_diagnostic.IDE0005.severity = silent
+dotnet_diagnostic.IDE0051.severity = suggestion
+dotnet_diagnostic.IDE0052.severity = suggestion
+
+# Public API documentation is tracked separately from compilation
+dotnet_diagnostic.CS1591.severity = none
+
+# Roslyn analyzer-authoring rules: keep the release notes honest
+dotnet_diagnostic.RS2008.severity = warning
+dotnet_diagnostic.RS1030.severity = none
+
+[*.{props,targets}]
+insert_final_newline = true

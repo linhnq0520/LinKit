@@ -14,14 +14,15 @@ dotnet add package LinKit.Tenancy
 builder.Services.AddLinKitTenancy();
 ```
 
-Inject `ITenantContext` into scoped application services:
+Inject `ITenantAccessor` (or `ITenantContext`) into scoped application services:
 
 ```csharp
-public sealed class TenantOrderService(ITenantContext tenant, IOrderRepository orders)
+public sealed class TenantOrderService(ITenantAccessor tenants, IOrderRepository orders)
 {
     public Task<IReadOnlyList<Order>> GetOrdersAsync(CancellationToken cancellationToken)
     {
-        var tenantId = tenant.TenantId
+        // Require throws when no scope is active; TryGet is the opt-out form when a tenant is optional.
+        var tenantId = tenants.Require().TenantId
             ?? throw new InvalidOperationException("A tenant must be resolved before querying orders.");
         return orders.GetForTenantAsync(tenantId, cancellationToken);
     }
@@ -32,39 +33,40 @@ The application must validate the tenant ID and enforce isolation in authorizati
 
 ## Resolve and clear tenant context
 
-The package does not install HTTP middleware or extract tenant headers for you. Resolve the tenant in application middleware, set the current context, and clear/restore it at the request or message-processing boundary:
+Nothing is created implicitly: outside a scope `ITenantAccessor.Current` is `null`, `TryGet` returns `false`, and `Require()` throws. Resolve the tenant at the request or message-processing boundary and wrap the work in a scope — disposing it restores whatever tenant was ambient before (usually `null`):
 
 ```csharp
-var previous = tenantAccessor.Context;
-try
+using (tenantAccessor.BeginScope(validatedTenantId))
 {
-    tenantAccessor.Context = new TenantContext { TenantId = validatedTenantId };
     await next();
 }
-finally
-{
-    tenantAccessor.Context = previous;
-}
+
+Assert.Null(tenantAccessor.Current); // guaranteed reset, even when `next()` throws
 ```
 
-`TenantAccessor` uses `AsyncLocal` so context follows the asynchronous execution flow. Avoid passing tenant-bound work into detached/background tasks without explicitly copying the intended tenant context.
+Scopes nest: an inner scope restores the outer tenant when it is disposed. `TenantAccessor` uses `AsyncLocal` so the tenant follows the asynchronous execution flow. Avoid passing tenant-bound work into detached/background tasks without explicitly starting a scope there.
+
+For outbound calls, `TenantPropagationHandler` is a `DelegatingHandler` that adds the `x-tenant-id` header and re-establishes the ambient tenant for the duration of the request:
+
+```csharp
+services.AddHttpClient<InventoryClient>(client => client.BaseAddress = inventoryUri)
+        .AddHttpMessageHandler<TenantPropagationHandler>();
+```
 
 ## Propagate through message headers
 
 ```csharp
 var headers = new MessageHeaders();
-TenantPropagation.Inject(headers, tenantContext.TenantId);
+TenantPropagation.Inject(headers, tenantAccessor.Current?.TenantId);
 
 var incomingTenantId = TenantPropagation.Extract(headers);
-if (incomingTenantId is not null)
-{
-    tenantAccessor.Context.TenantId = ValidateTenantId(incomingTenantId);
-}
 ```
 
 Generated consumers call every registered `IMessageConsumeInterceptor` per message. `AddLinKitTenancy()` registers `TenantConsumeInterceptor`, which sets the tenant from `linkit-tenant-id` for that message and restores the previous context afterwards. The header is trusted broker metadata, so only allow trusted publishers on the queue. Tenant data filtering still must be enforced by your data layer.
 
-The message header key is `linkit-tenant-id`. `TenantHeaderName` (`x-tenant-id`) is a separate HTTP naming constant; the message helper does not automatically read/write HTTP headers or broker metadata.
+`OutboxMessage.Create(...)` captures the ambient tenant into the same header, and `OutboxPublisherService` restores it before handing the message to the broker, so the tenant survives the transaction boundary without any wiring.
+
+The message header key is `linkit-tenant-id` (`MessageHeaderNames.TenantId`). `TenantHeaderName` (`x-tenant-id`) is the separate HTTP naming constant.
 
 ## License
 

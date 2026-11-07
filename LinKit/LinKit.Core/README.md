@@ -3,6 +3,8 @@
 [![NuGet Version](https://img.shields.io/nuget/v/LinKit.Core.svg)](https://www.nuget.org/packages/LinKit.Core/)
 [![NuGet Downloads](https://img.shields.io/nuget/dt/LinKit.Core.svg)](https://www.nuget.org/packages/LinKit.Core/)
 
+> 📖 **Official Documentation & Release Notes:** [https://quoclinh.id.vn/docs/linkit](https://quoclinh.id.vn/docs/linkit)
+
 **LinKit.Core** is the runtime and source-generator package for CQRS, dependency injection, Minimal API endpoints, background jobs, mapping, and messaging contracts. It generates static application wiring for supported patterns. Native AOT and trimming support depend on the exact API path and application dependencies; see [AOT & Trimming](#aot--trimming).
 
 ---
@@ -206,6 +208,9 @@ public class MyApi(IMediator mediator)
 }
 ```
 
+> **Zero-Overhead Direct Dispatch:**
+> LinKit automatically generates direct extension methods (`SendAsync`, `QueryAsync`, and `PublishAsync`) for every concrete Command, Query, and Notification type in `<RootNamespace>.Generated.MediatorGeneratedExtensions`. When calling with a concrete request type known at compile time, the C# compiler binds directly to the strongly-typed handler pipeline ($O(1)$ dispatch, bypassing pattern-matching `switch` statements, `(object)` casts, and struct boxing). For polymorphic calls (variables typed as `ICommand<T>`, `IQuery<T>`) or unit tests using mocked/decorated `IMediator` instances, calls gracefully fall back to `MediatorFallbackExtensions` and the underlying `Dispatch*` methods on `IMediator`.
+
 ---
 
 #### Notifications (`INotification`)
@@ -337,6 +342,8 @@ The Endpoints Kit generates Minimal API mappings for supported, endpoint-decorat
 -   **Keyed Mediator Support:** Ability to inject specific Mediator instances using .NET 8+ Keyed Services.
 -   **Metadata & OpenAPI:** Built-in support for Summary, Description, Tags, and Versions.
 -   **Security:** Native support for Policies, Roles, and CORS.
+-   **Compile-Time Validation (`LNKEP001`):** A class decorated with an endpoint attribute (`[ApiEndpoint]`, `[HttpGet]`, etc.) that does not implement `ICommand`/`IQuery` is now reported as warning **LNKEP001** instead of being silently skipped.
+-   **Safe Generated Metadata:** Generated endpoint code safely escapes all attribute-supplied strings (routes, names, tags, roles, policies, summaries).
 
 #### Step 1: Define Endpoints
 

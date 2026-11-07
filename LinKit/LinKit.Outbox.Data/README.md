@@ -133,7 +133,28 @@ await inbox.MarkProcessedAsync(
     cancellationToken);
 ```
 
-For durable deduplication, perform the side effect and `MarkProcessedAsync` in the same transaction. The API is a check-then-mark contract, not an atomic reservation protocol: parallel consumers can both pass `HasBeenProcessedAsync` before either records completion. If concurrent duplicate execution must be excluded, use transactional locking/unique constraints around the full business operation or implement an atomic inbox claim protocol.
+For durable deduplication, perform the side effect and `MarkProcessedAsync` in the same transaction. The API is a check-then-mark contract, not an atomic reservation protocol: parallel consumers can both pass `HasBeenProcessedAsync` before either records completion. If concurrent duplicate execution must be excluded, use `TryMarkProcessedAsync` (below) or transactional locking/unique constraints around the full business operation.
+
+### Atomic claim with `TryMarkProcessedAsync`
+
+`AdoNetInboxStore` implements the atomic claim-before-processing method from `IInboxStore`:
+
+```csharp
+Task<bool> TryMarkProcessedAsync(string messageId, string consumerName, TimeSpan? expiry = null, CancellationToken ct = default);
+```
+
+It returns `true` if this caller claimed the message (process it) and `false` if it was already claimed (skip):
+
+```csharp
+if (await inbox.TryMarkProcessedAsync(id, consumer, TimeSpan.FromMinutes(10), ct))
+{
+    // handle the message
+}
+```
+
+The claim is a single atomic database operation per provider: SQLite/PostgreSQL use an upsert with an expired-row filter, SQL Server/Oracle use `MERGE`, and MySQL deletes expired rows then inserts; unique-key violations map to `false` (already claimed).
+
+**Tradeoff:** a crash *after* claiming but *before* processing leaves the message marked until the expiry elapses (at-most-once for that window). Pass an `expiry` to allow reclaim. The existing `HasBeenProcessedAsync`/`MarkProcessedAsync` are unchanged.
 
 ## Publisher behavior and operations
 

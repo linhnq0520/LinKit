@@ -136,24 +136,17 @@ public class SchemaSynchronizer : ISchemaSynchronizer
         await using var cmd = conn.CreateCommand();
         cmd.CommandText = sql;
 
-        try
+        await using var reader = await cmd.ExecuteReaderAsync(ct);
+        while (await reader.ReadAsync(ct))
         {
-            await using var reader = await cmd.ExecuteReaderAsync(ct);
-            while (await reader.ReadAsync(ct))
+            // SQLite PRAGMA table_info returns column name at index 1 ('name')
+            // Standard information_schema returns at index 0 ('column_name')
+            int idx = dialect.DialectType == DatabaseDialect.Sqlite ? 1 : 0;
+            var val = reader.GetValue(idx);
+            if (val != null && val != DBNull.Value)
             {
-                // SQLite PRAGMA table_info returns column name at index 1 ('name')
-                // Standard information_schema returns at index 0 ('column_name')
-                int idx = dialect.DialectType == DatabaseDialect.Sqlite ? 1 : 0;
-                var val = reader.GetValue(idx);
-                if (val != null && val != DBNull.Value)
-                {
-                    set.Add(val.ToString()!);
-                }
+                set.Add(val.ToString()!);
             }
-        }
-        catch
-        {
-            // If table was just created or querying info schema fails, ignore
         }
 
         return set;
@@ -171,21 +164,14 @@ public class SchemaSynchronizer : ISchemaSynchronizer
         await using var cmd = conn.CreateCommand();
         cmd.CommandText = sql;
 
-        try
+        await using var reader = await cmd.ExecuteReaderAsync(ct);
+        while (await reader.ReadAsync(ct))
         {
-            await using var reader = await cmd.ExecuteReaderAsync(ct);
-            while (await reader.ReadAsync(ct))
+            var val = reader.GetValue(0);
+            if (val != null && val != DBNull.Value)
             {
-                var val = reader.GetValue(0);
-                if (val != null && val != DBNull.Value)
-                {
-                    set.Add(val.ToString()!);
-                }
+                set.Add(val.ToString()!);
             }
-        }
-        catch
-        {
-            // If querying index catalog fails, ignore
         }
 
         return set;

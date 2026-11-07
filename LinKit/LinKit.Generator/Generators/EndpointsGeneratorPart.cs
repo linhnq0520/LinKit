@@ -136,6 +136,15 @@ internal static class EndpointsGeneratorPart
     private const string ICommandInterfaceName = "LinKit.Core.Cqrs.ICommand";
     private const string IQueryInterfaceName = "LinKit.Core.Cqrs.IQuery";
 
+    private static readonly DiagnosticDescriptor EndpointMissingCqrsContract = new(
+        id: "LNKEP001",
+        title: "Endpoint request does not implement ICommand or IQuery",
+        messageFormat: "Type '{0}' has an endpoint attribute but does not implement ICommand or IQuery; no endpoint will be generated for it",
+        category: "LinKit.Endpoints",
+        defaultSeverity: DiagnosticSeverity.Warning,
+        isEnabledByDefault: true,
+        description: "Endpoint request types must implement LinKit.Core.Cqrs.ICommand or IQuery to be mapped.");
+
     #region Pipeline Setup
 
     public static void Initialize(
@@ -187,6 +196,48 @@ internal static class EndpointsGeneratorPart
 
         IncrementalValuesProvider<EndpointInfo?> endpointDeclarations =
             GetEndpointDeclarations(context);
+
+        var invalidEndpoints = context.SyntaxProvider.CreateSyntaxProvider(
+            static (node, _) =>
+                node is TypeDeclarationSyntax { AttributeLists.Count: > 0 } and
+                    (ClassDeclarationSyntax or RecordDeclarationSyntax),
+            static (ctx, _) =>
+            {
+                if (ctx.SemanticModel.GetDeclaredSymbol(ctx.Node) is not INamedTypeSymbol symbol)
+                    return ((string Name, Location Location)?)null;
+
+                bool hasEndpointAttribute = symbol.GetAttributes().Any(a =>
+                {
+                    var name = a.AttributeClass?.ToDisplayString();
+                    return name is EndpointAttributeName or HttpGetAttributeName or HttpPostAttributeName
+                        or HttpPutAttributeName or HttpDeleteAttributeName or HttpPatchAttributeName;
+                });
+                if (!hasEndpointAttribute) return null;
+
+                bool hasCqrsContract = symbol.AllInterfaces.Any(i =>
+                {
+                    var name = i.OriginalDefinition.ToDisplayString();
+                    return name.StartsWith(IQueryInterfaceName, StringComparison.Ordinal)
+                        || name.StartsWith(ICommandInterfaceName, StringComparison.Ordinal);
+                });
+                if (hasCqrsContract) return null;
+
+                var location = (ctx.Node as TypeDeclarationSyntax)?.Identifier.GetLocation() ?? ctx.Node.GetLocation();
+                return (symbol.ToDisplayString(), location);
+            }
+        ).Where(static item => item is not null);
+
+        context.RegisterSourceOutput(invalidEndpoints.Collect(), static (spc, items) =>
+        {
+            var seen = new HashSet<string>(StringComparer.Ordinal);
+            foreach (var item in items)
+            {
+                if (item is { } valid && seen.Add(valid.Name))
+                {
+                    spc.ReportDiagnostic(Diagnostic.Create(EndpointMissingCqrsContract, valid.Location, valid.Name));
+                }
+            }
+        });
 
         IncrementalValuesProvider<ExceptionMappingInfo?> exceptionMappings = context
             .SyntaxProvider.ForAttributeWithMetadataName(
@@ -853,11 +904,11 @@ internal static class EndpointsGeneratorPart
             {
                 sb.AppendLine($"            // Group: {groupKey}");
                 sb.AppendLine(
-                    $"            var group_{SanitizeIdentifier(groupKey)} = app.MapGroup(\"{NormalizeRoute(groupInfo.Prefix)}\")"
+                    $"            var group_{SanitizeIdentifier(groupKey)} = app.MapGroup(\"{EscapeString(NormalizeRoute(groupInfo.Prefix))}\")"
                 );
                 if (!string.IsNullOrEmpty(groupInfo.Tag))
                 {
-                    sb.AppendLine($"                .WithTags(\"{groupInfo.Tag}\")");
+                    sb.AppendLine($"                .WithTags(\"{EscapeString(groupInfo.Tag!)}\")");
                 }
 
                 if (groupInfo.RequireAuthorization)
@@ -867,7 +918,7 @@ internal static class EndpointsGeneratorPart
 
                 if (!string.IsNullOrEmpty(groupInfo.Policies))
                 {
-                    var policies = groupInfo.Policies!.Split(',').Select(p => $"\"{p.Trim()}\"");
+                    var policies = groupInfo.Policies!.Split(',').Select(p => $"\"{EscapeString(p.Trim())}\"");
                     sb.AppendLine(
                         $"                .RequireAuthorization({string.Join(", ", policies)})"
                     );
@@ -924,7 +975,7 @@ internal static class EndpointsGeneratorPart
         // Mediator Injection (Check for Keyed Services)
         string mediatorAttr = string.IsNullOrEmpty(endpoint.MediatorKey)
             ? "[Microsoft.AspNetCore.Mvc.FromServices]"
-            : $"[Microsoft.Extensions.DependencyInjection.FromKeyedServices(\"{endpoint.MediatorKey}\")]";
+            : $"[Microsoft.Extensions.DependencyInjection.FromKeyedServices(\"{EscapeString(endpoint.MediatorKey!)}\")]";
 
         handlerParams.Add($"{mediatorAttr} IMediator mediator");
         handlerParams.Add("CancellationToken cancellationToken");
@@ -948,7 +999,7 @@ internal static class EndpointsGeneratorPart
         }
 
         sb.AppendLine(
-            $"            {builder}.{mapMethod}(\"{finalRoute}\", ({string.Join(", ", handlerParams)}) =>"
+            $"            {builder}.{mapMethod}(\"{EscapeString(finalRoute)}\", ({string.Join(", ", handlerParams)}) =>"
         );
         sb.AppendLine("                new DeferredEndpointResult(async httpContext =>");
         sb.AppendLine("                {");
@@ -989,12 +1040,12 @@ internal static class EndpointsGeneratorPart
         // Metadata preservation
         string endpointName = endpoint.OperationId ?? endpoint.CustomName ?? GenerateEndpointName(endpoint);
         sb.AppendLine(
-            $"            .WithName(\"{endpointName}\")"
+            $"            .WithName(\"{EscapeString(endpointName)}\")"
         );
         string finalTag = !string.IsNullOrEmpty(endpoint.Tag)
             ? endpoint.Tag!
             : endpoint.FeatureName;
-        sb.AppendLine($"            .WithTags(\"{finalTag}\")");
+        sb.AppendLine($"            .WithTags(\"{EscapeString(finalTag)}\")");
 
         if (!string.IsNullOrEmpty(endpoint.Summary))
         {
@@ -1021,13 +1072,13 @@ internal static class EndpointsGeneratorPart
             if (!string.IsNullOrEmpty(endpoint.Roles))
             {
                 sb.AppendLine(
-                    $"            .RequireAuthorization(new Microsoft.AspNetCore.Authorization.AuthorizeAttribute {{ Roles = \"{endpoint.Roles}\" }})"
+                    $"            .RequireAuthorization(new Microsoft.AspNetCore.Authorization.AuthorizeAttribute {{ Roles = \"{EscapeString(endpoint.Roles!)}\" }})"
                 );
             }
             else if (!string.IsNullOrEmpty(endpoint.Policies))
             {
                 sb.AppendLine(
-                    $"            .RequireAuthorization({string.Join(", ", endpoint.Policies!.Split(',').Select(p => $"\"{p.Trim()}\""))})"
+                    $"            .RequireAuthorization({string.Join(", ", endpoint.Policies!.Split(',').Select(p => $"\"{EscapeString(p.Trim())}\""))})"
                 );
             }
             else
@@ -1038,12 +1089,12 @@ internal static class EndpointsGeneratorPart
 
         if (!string.IsNullOrEmpty(endpoint.RateLimitPolicy))
         {
-            sb.AppendLine($"            .RequireRateLimiting(\"{endpoint.RateLimitPolicy}\")");
+            sb.AppendLine($"            .RequireRateLimiting(\"{EscapeString(endpoint.RateLimitPolicy!)}\")");
         }
 
         if (!string.IsNullOrEmpty(endpoint.CorsPolicy))
         {
-            sb.AppendLine($"            .RequireCors(\"{endpoint.CorsPolicy}\")");
+            sb.AppendLine($"            .RequireCors(\"{EscapeString(endpoint.CorsPolicy!)}\")");
         }
 
         if (endpoint.Deprecated)
@@ -1202,7 +1253,7 @@ internal static class EndpointsGeneratorPart
                 ? "isDevelopment ? ex.Message : \"An error occurred.\""
                 : "\"An error occurred.\"";
             sb.AppendLine(
-                $"                            await WriteProblemJsonAsync(context, \"https://tools.ietf.org/html/rfc7231\", \"{mapping.Title ?? "Error"}\", {mapping.StatusCode}, {detailExpr}, null); break;"
+                $"                            await WriteProblemJsonAsync(context, \"https://tools.ietf.org/html/rfc7231\", \"{EscapeString(mapping.Title ?? "Error")}\", {mapping.StatusCode}, {detailExpr}, null); break;"
             );
         }
 
@@ -1265,7 +1316,7 @@ internal static class EndpointsGeneratorPart
         Regex.Replace(input, @"[^a-zA-Z0-9_]", "_");
 
     private static string EscapeString(string input) =>
-        input.Replace("\"", "\\\"").Replace("\n", "\\n").Replace("\r", "\\r");
+        Microsoft.CodeAnalysis.CSharp.SymbolDisplay.FormatLiteral(input, quote: false);
 
     #endregion
 }

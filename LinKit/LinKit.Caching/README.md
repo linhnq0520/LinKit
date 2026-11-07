@@ -29,6 +29,7 @@ builder.Services.AddLinKitCaching(options =>
     options.Host = "localhost";
     options.Port = 6379;
     options.DefaultTtl = TimeSpan.FromMinutes(10);
+    options.ReadTimeout = TimeSpan.FromSeconds(5); // default; prevents hung-Redis stalls
 });
 ```
 
@@ -39,7 +40,8 @@ builder.Services.AddLinKitRedisCaching(new LinKitRedisOptions
 {
     Host = "localhost",
     Port = 6379,
-    DefaultTtl = TimeSpan.FromMinutes(10)
+    DefaultTtl = TimeSpan.FromMinutes(10),
+    ReadTimeout = TimeSpan.FromSeconds(5)
 });
 ```
 
@@ -58,6 +60,20 @@ public sealed class ProductService(ICacheProvider cache, IProductRepository prod
 ```
 
 `GetOrCreateAsync` shares an in-flight factory for the same key in `InMemoryCacheProvider`. A caller's cancellation cancels that caller's wait, not the shared factory; the factory is invoked with `CancellationToken.None`. Ensure factories have their own bounded I/O timeouts.
+
+### Hybrid cache semantics
+
+- Cached default values (`0`, `false`, `Guid.Empty`, and `null`) are cache **hits** in both L1 and L2 — lookups use found-based semantics, not default-value checks.
+- L1 backfill never outlives the L2 TTL: values carry an absolute-expiry envelope.
+- `SetAsync`/`RemoveAsync` invalidate in-flight factory results, so stale values cannot overwrite fresh ones.
+- The provider accepts optional `TimeProvider` and `ILoggerFactory` constructor parameters.
+
+## Redis client behavior
+
+- The client validates `AUTH`/`SELECT` replies — bad credentials now throw `RedisServerException` at connection time instead of silently returning null forever. Protocol `-ERR` replies throw.
+- Transient network errors and timeouts are logged (Warning) and treated as cache misses.
+- `ReadTimeout` (default 5s) prevents hung-Redis stalls; an optional `ILogger` can be injected.
+- Buffered RESP reading (`ArrayPool`) replaces byte-at-a-time reads.
 
 ## Direct operations
 

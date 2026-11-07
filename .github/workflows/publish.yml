@@ -1,0 +1,106 @@
+name: publish
+
+# Tag pattern: v<version>  (for example v3.4.0). Versions live in the csproj files,
+# which are the single source of truth; the tag is only a trigger.
+on:
+  push:
+    tags:
+      - "v*.*.*"
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Build and validate packages without pushing to nuget.org"
+        type: boolean
+        default: true
+
+env:
+  DOTNET_NOLOGO: true
+  DOTNET_CLI_TELEMETRY_OPTOUT: true
+  DOTNET_SKIP_FIRST_TIME_EXPERIENCE: true
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write # required for NuGet trusted publishing / OIDC
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: |
+            8.0.x
+            9.0.x
+            10.0.x
+
+      - name: Restore
+        run: dotnet restore LinKit/LinKit.sln
+
+      - name: Build
+        run: >
+          dotnet build LinKit/LinKit.sln --no-restore -c Release
+          -warnaserror:RS2002,IL2026,IL2060,IL2067,IL2072,IL2075,IL2091,IL3050
+
+      - name: Test
+        run: dotnet test LinKit/LinKit.sln --no-build -c Release
+
+      - name: Pack
+        run: dotnet pack LinKit/LinKit.sln -c Release -o artifacts/packages
+
+      # Fails the release if the tag does not match every package version that was built.
+      - name: Verify tag matches package versions
+        shell: bash
+        run: |
+          set -euo pipefail
+          tag="${GITHUB_REF_NAME#v}"
+          built=$(ls artifacts/packages/*.nupkg | grep -v '\.snupkg$' | sed -E 's#.*/([^/]+)\.([0-9]+\.[0-9]+\.[0-9]+(-[^/]+)?)\.nupkg#\2#' | sort -u)
+          echo "Tag version: $tag"
+          echo "Package versions: $built"
+          # Every package must share the release tag version, so a partial bump cannot slip out.
+          if [ "$(wc -l <<< "$built")" -ne 1 ] || [ "$built" != "$tag" ]; then
+            echo "::error::Packages were built with versions [$built] but the tag is v$tag."
+            exit 1
+          fi
+
+      - name: Upload packages
+        uses: actions/upload-artifact@v4
+        with:
+          name: packages-${{ github.ref_name }}
+          path: artifacts/packages
+
+      - name: Publish to nuget.org
+        if: github.event_name == 'push' || inputs.dry_run == false
+        shell: bash
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          for pkg in artifacts/packages/*.nupkg; do
+            case "$pkg" in *.snupkg) continue ;; esac
+            dotnet nuget push "$pkg" \
+              --api-key "${{ secrets.NUGET_API_KEY }}" \
+              --source https://api.nuget.org/v3/index.json \
+              --skip-duplicate
+          done
+
+      - name: Publish symbol packages
+        if: github.event_name == 'push' || inputs.dry_run == false
+        shell: bash
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          for pkg in artifacts/packages/*.snupkg; do
+            dotnet nuget push "$pkg" \
+              --api-key "${{ secrets.NUGET_API_KEY }}" \
+              --source https://api.nuget.org/v3/index.json \
+              --skip-duplicate
+          done
+
+      - name: Create GitHub release
+        if: github.event_name == 'push'
+        uses: softprops/action-gh-release@v2
+        with:
+          files: artifacts/packages/*.nupkg
+          generate_release_notes: true

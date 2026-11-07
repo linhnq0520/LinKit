@@ -66,8 +66,11 @@ public sealed class LinKitQueryProvider<TEntity> : ILinKitAsyncQueryProvider whe
 
         if (terminalMethod == "Any" || typeof(TResult) == typeof(bool))
         {
-            bool any = translated.Take != 0 &&
-                ApplyPaging(await fq.CountAsync(ct), translated.Skip, translated.Take) > 0;
+            if (translated.Take == 0) return (TResult)(object)false;
+            // AnyAsync issues SELECT 1 ... LIMIT 1 but ignores Skip; fall back to a 1-row fetch when offset is present.
+            bool any = translated.Skip is > 0
+                ? (await fq.Take(1).ToListAsync(ct).ConfigureAwait(false)).Count > 0
+                : await fq.AnyAsync(ct).ConfigureAwait(false);
             return (TResult)(object)any;
         }
 

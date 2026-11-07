@@ -30,18 +30,23 @@ public class TenantStoreEntity
 public record CreateTenantStoreCommand(string StoreName) : ICommand<int>;
 
 [CqrsHandler]
-public class CreateTenantStoreCommandHandler(CatalogDataContext data, ITenantAccessor tenantAccessor) 
-    : ICommandHandler<CreateTenantStoreCommand, int>
+public class CreateTenantStoreCommandHandler(
+    CatalogDataContext data,
+    ITenantAccessor tenantAccessor
+) : ICommandHandler<CreateTenantStoreCommand, int>
 {
-    public async Task<int> HandleAsync(CreateTenantStoreCommand request, CancellationToken ct = default)
+    public async Task<int> HandleAsync(
+        CreateTenantStoreCommand request,
+        CancellationToken ct = default
+    )
     {
-        var currentTenantId = tenantAccessor.Context?.TenantId ?? "tenant_default";
-        
+        var currentTenantId = tenantAccessor.Current?.TenantId ?? "tenant_default";
+
         var store = new TenantStoreEntity
         {
             StoreName = request.StoreName,
             TenantId = currentTenantId,
-            IsActive = true
+            IsActive = true,
         };
 
         return await data.TenantStoreEntity.InsertAsync(store, ct);
@@ -53,15 +58,19 @@ public class CreateTenantStoreCommandHandler(CatalogDataContext data, ITenantAcc
 public record GetMyTenantStoresQuery : IQuery<IReadOnlyList<TenantStoreEntity>>;
 
 [CqrsHandler]
-public class GetMyTenantStoresQueryHandler(CatalogDataContext data, ITenantAccessor tenantAccessor) 
+public class GetMyTenantStoresQueryHandler(CatalogDataContext data, ITenantAccessor tenantAccessor)
     : IQueryHandler<GetMyTenantStoresQuery, IReadOnlyList<TenantStoreEntity>>
 {
-    public async Task<IReadOnlyList<TenantStoreEntity>> HandleAsync(GetMyTenantStoresQuery request, CancellationToken ct = default)
+    public async Task<IReadOnlyList<TenantStoreEntity>> HandleAsync(
+        GetMyTenantStoresQuery request,
+        CancellationToken ct = default
+    )
     {
-        var currentTenantId = tenantAccessor.Context?.TenantId ?? "tenant_default";
+        var currentTenantId = tenantAccessor.Current?.TenantId ?? "tenant_default";
 
         // Lọc theo Tenant ID hiện tại
-        return await data.TenantStoreEntity.Query()
+        return await data
+            .TenantStoreEntity.Query()
             .Where(s => s.TenantId.Equal(currentTenantId) & s.IsActive.Equal(true))
             .ToListAsync(ct);
     }

@@ -13,8 +13,10 @@ public class FileJobHistoryLogger : IJobHistoryLogger
     private static readonly JsonSerializerOptions SerializerOptions = new()
     {
         Encoder = JavaScriptEncoder.Create(UnicodeRanges.All),
-        TypeInfoResolver = JobHistoryJsonContext.Default,
     };
+
+    // Serialize through the source-generated JsonTypeInfo so the method stays trimming- and AOT-safe.
+    private static readonly JobHistoryJsonContext SerializerContext = new(SerializerOptions);
 
     public FileJobHistoryLogger(string filePath)
     {
@@ -29,7 +31,7 @@ public class FileJobHistoryLogger : IJobHistoryLogger
         await _lock.WaitAsync(cancellationToken);
         try
         {
-            var json = JsonSerializer.Serialize(history, SerializerOptions);
+            var json = JsonSerializer.Serialize(history, SerializerContext.JobExecutionHistory);
             await File.AppendAllTextAsync(_filePath, json + Environment.NewLine, cancellationToken);
         }
         finally

@@ -1,20 +1,26 @@
 # LinKit Ecosystem — Comprehensive Review v2.0
 
+> **SUPERSEDED — archived for historical context only. Do not treat claims in this document as accurate.**
+> This document states that batch insert already used multi-row `VALUES`; the source (`Repository.RangeAsync`)
+> still looped one statement per entity at the time of the audit. It also reports "0 warning, 0 error,
+> Native AOT-ready" for the libraries, but no library project enabled `IsAotCompatible`, `IsTrimmable` or the
+> trim/AOT analyzers, so the claim was unverified. See `docs/LINKIT_ARCHITECTURE_AND_DEEP_DIVE.md`.
+
 > **Mục tiêu:** Code-gen driven, zero-reflection hot path, AOT-ready, developer-first ecosystem.
 
 ---
 
 ## 📊 Tổng quan: Bugs v1 đã được fix
 
-| Bug (v1) | Trạng thái |
-|----------|------------|
-| #1 DataReader mapping theo ordinal | ✅ **ĐÃ FIX** — dùng `GetOrdinal` + cache ordinals per result set |
-| #2 Reflection fallback `AttachParameters` | ✅ **ĐÃ FIX** — throw `NotSupportedException` rõ ràng, AOT-safe |
-| #3 `Expression.Lambda.Compile().DynamicInvoke()` | ✅ **ĐÃ FIX** — guard `RuntimeFeature.IsDynamicCodeSupported` |
-| #4 InsertRange/DeleteRange N+1 | ✅ **ĐÃ FIX** — Batch INSERT + WHERE IN chunks |
-| #5 UnitOfWork thread-safety | ✅ **ĐÃ FIX** — `SemaphoreSlim(1,1)` + proper async lock |
-| #6 InMemorySagaRepository warning | ✅ **ĐÃ FIX** — XML doc `<remarks>WARNING: volatile...</remarks>` |
-| #9 `CompilationProvider` trong MapperGeneratorPart | ✅ **ĐÃ FIX** — `ForAttributeWithMetadataName` + `SemanticModel` |
+| Bug (v1)                                           | Trạng thái                                                        |
+| -------------------------------------------------- | ----------------------------------------------------------------- |
+| #1 DataReader mapping theo ordinal                 | ✅ **ĐÃ FIX** — dùng `GetOrdinal` + cache ordinals per result set |
+| #2 Reflection fallback `AttachParameters`          | ✅ **ĐÃ FIX** — throw `NotSupportedException` rõ ràng, AOT-safe   |
+| #3 `Expression.Lambda.Compile().DynamicInvoke()`   | ✅ **ĐÃ FIX** — guard `RuntimeFeature.IsDynamicCodeSupported`     |
+| #4 InsertRange/DeleteRange N+1                     | ✅ **ĐÃ FIX** — Batch INSERT + WHERE IN chunks                    |
+| #5 UnitOfWork thread-safety                        | ✅ **ĐÃ FIX** — `SemaphoreSlim(1,1)` + proper async lock          |
+| #6 InMemorySagaRepository warning                  | ✅ **ĐÃ FIX** — XML doc `<remarks>WARNING: volatile...</remarks>` |
+| #9 `CompilationProvider` trong MapperGeneratorPart | ✅ **ĐÃ FIX** — `ForAttributeWithMetadataName` + `SemanticModel`  |
 
 **Đánh giá chung hiện tại:** Ecosystem đã ở mức **production-ready** cho phần lớn use case. Còn edge cases, performance improvements, và missing features quan trọng.
 
@@ -37,6 +43,7 @@ var endpointDeclarations = context.SyntaxProvider.CreateSyntaxProvider(
 **Vấn đề:** Predicate kích hoạt trên **mọi class/record có attribute** — với project lớn (hàng trăm classes), semantic model lookup xảy ra không cần thiết. `CreateSyntaxProvider` cũng invalidate pipeline kém hơn `ForAttributeWithMetadataName`.
 
 **Fix:**
+
 ```csharp
 // Tạo pipeline riêng cho mỗi attribute shorthand
 var fromGet  = context.SyntaxProvider.ForAttributeWithMetadataName("LinKit.Core.Endpoints.HttpGetAttribute", ...);
@@ -68,6 +75,7 @@ ICommandX c => (Task<TResponse>)(object)HandleResultRequest(c, cancellationToken
 ```
 
 **Simulation Bug:**
+
 ```csharp
 // Handler trả: Task<Result<OrderDto>>
 // Dev gọi nhầm:
@@ -91,6 +99,7 @@ _logger?.LogInformation("Executing Saga step {Step}...", step.GetType().Name, ..
 **Vấn đề:** `GetType().Name` là reflection call. Trong AOT, dù thường không bị trim với concrete types, vẫn là AOT anti-pattern. Nếu `step` là interface, có thể fail.
 
 **Fix:**
+
 ```csharp
 public interface ISagaStep<TData, in TEvent> where TData : ISagaData
 {
@@ -118,6 +127,7 @@ foreach (var m in _messages.Values.OrderBy(x => x.CreatedAtUtc))  // snapshot
 **Race condition:** Thread A và Thread B cùng lấy snapshot → cùng thấy `m` chưa locked → cả hai add vào `claimed` → **duplicate delivery**.
 
 **Fix:**
+
 ```csharp
 private readonly object _claimLock = new();
 
@@ -151,6 +161,7 @@ foreach (var member in classSymbol.GetMembers().OfType<IPropertySymbol>())
 ```
 
 **Simulation Bug:**
+
 ```csharp
 public class AuditableEntity
 {
@@ -170,6 +181,7 @@ public class ProductEntity : AuditableEntity
 ```
 
 **Fix:**
+
 ```csharp
 private static IEnumerable<IPropertySymbol> GetAllProperties(INamedTypeSymbol symbol)
 {
@@ -198,6 +210,7 @@ return (TScalar)Convert.ChangeType(res, typeof(TScalar));
 **Vấn đề:** `Convert.ChangeType` dùng reflection để tìm `IConvertible` implementation. Với custom value types trong Native AOT, có thể bị trim.
 
 **Fix — generate type switch:**
+
 ```csharp
 if (typeof(TScalar) == typeof(int))     return (TScalar)(object)Convert.ToInt32(res);
 if (typeof(TScalar) == typeof(long))    return (TScalar)(object)Convert.ToInt64(res);
@@ -226,6 +239,7 @@ public interface IValidator<in T>
 **Vấn đề:** Validation nghiệp vụ phổ biến cần async (kiểm tra duplicate, kiểm tra FK từ DB). Dev bị buộc dùng `.GetAwaiter().GetResult()` → potential deadlock.
 
 **Fix:**
+
 ```csharp
 // Thêm async variant song song:
 public interface IAsyncValidator<in T>
@@ -249,6 +263,7 @@ sb.AppendLine("        var (conn, tx, shouldDispose) = await GetConnectionAsync(
 **Vấn đề:** Nếu dev khai báo custom method với `CancellationToken ct`, nó bị hoàn toàn ignore trong generated implementation. DB query không thể cancel.
 
 **Fix trong generator:**
+
 ```csharp
 var ctParam = method.Parameters.FirstOrDefault(p => p.TypeFullName.Contains("CancellationToken"));
 string ctArg = ctParam != null ? ctParam.Name : "CancellationToken.None";
@@ -274,6 +289,7 @@ public IFluentQuery<TEntity> Where(string sqlCondition, object? parameters = nul
 ```
 
 **Simulation Bug:**
+
 ```csharp
 var results = await repo.Query()
     .Where("CategoryId = @id", new Dictionary<string,object?>{{"id", catId}})
@@ -283,6 +299,7 @@ var results = await repo.Query()
 ```
 
 **Fix:** Prefix params với where-clause index khi building SQL:
+
 ```csharp
 // Internal: rename @id → @w0_id, @w1_id khi flattening
 ```
@@ -298,6 +315,7 @@ public static implicit operator Result<T>(T value) => Success(value);
 ```
 
 **Vấn đề:**
+
 ```csharp
 // Handler trả Result<Result<OrderDto>> vô tình:
 public async Task<Result<OrderDto>> HandleAsync(...)
@@ -319,6 +337,7 @@ Nên thêm `where T : notnull` hoặc detect `T : Result<>` và throw compile er
 **Vấn đề:** `AsyncLocal<T>` propagates context vào child tasks nhưng `OutboxPublisherService` chạy trong background thread pool riêng — TenantId từ HTTP request không có mặt khi publish.
 
 **Fix:** Lưu TenantId vào outbox message headers khi enqueue:
+
 ```csharp
 // Khi lưu outbox message:
 var headers = new MessageHeaders();
@@ -357,27 +376,28 @@ var pk = properties.FirstOrDefault(p => p.IsPrimaryKey) ?? properties.FirstOrDef
 
 ## ✅ Điểm mạnh — So sánh v1 vs v2
 
-| Feature | v1 | v2 |
-|---------|-----|-----|
-| DataReader mapping | ⚠️ ordinal risk | ✅ `GetOrdinal` + cache per result set |
-| AttachParameters | ❌ reflection | ✅ typed, clear AOT error |
-| InsertRange/DeleteRange | ❌ N+1 | ✅ multi-row batch + WHERE IN |
-| UpdateRange | ❌ N+1 | ✅ single conn + local tx |
-| MapperGeneratorPart | ⚠️ CompilationProvider | ✅ `ForAttributeWithMetadataName` |
-| ExpressionSqlTranslator | ❌ DynamicInvoke | ✅ AOT guard + meaningful error |
-| UnitOfWork | ⚠️ race | ✅ `SemaphoreSlim(1,1)` |
-| Result pattern | ❌ | ✅ `Result<T>` + `ResultStatus` enum |
-| Validation | ❌ | ✅ `IValidator<T>` interface |
-| SoftDelete | ❌ | ✅ `[SoftDelete]` + auto SQL (all dialects) |
-| CompositeIndex | ❌ | ✅ `[CompositeIndex]` attribute |
-| Resilience | ❌ chỉ attributes | ✅ `ResiliencePipeline` retry+CB+timeout |
-| Outbox | ⚠️ basic | ✅ lease + dead-letter + retry backoff |
+| Feature                 | v1                     | v2                                          |
+| ----------------------- | ---------------------- | ------------------------------------------- |
+| DataReader mapping      | ⚠️ ordinal risk        | ✅ `GetOrdinal` + cache per result set      |
+| AttachParameters        | ❌ reflection          | ✅ typed, clear AOT error                   |
+| InsertRange/DeleteRange | ❌ N+1                 | ✅ multi-row batch + WHERE IN               |
+| UpdateRange             | ❌ N+1                 | ✅ single conn + local tx                   |
+| MapperGeneratorPart     | ⚠️ CompilationProvider | ✅ `ForAttributeWithMetadataName`           |
+| ExpressionSqlTranslator | ❌ DynamicInvoke       | ✅ AOT guard + meaningful error             |
+| UnitOfWork              | ⚠️ race                | ✅ `SemaphoreSlim(1,1)`                     |
+| Result pattern          | ❌                     | ✅ `Result<T>` + `ResultStatus` enum        |
+| Validation              | ❌                     | ✅ `IValidator<T>` interface                |
+| SoftDelete              | ❌                     | ✅ `[SoftDelete]` + auto SQL (all dialects) |
+| CompositeIndex          | ❌                     | ✅ `[CompositeIndex]` attribute             |
+| Resilience              | ❌ chỉ attributes      | ✅ `ResiliencePipeline` retry+CB+timeout    |
+| Outbox                  | ⚠️ basic               | ✅ lease + dead-letter + retry backoff      |
 
 ---
 
 ## 🔬 Simulation Test Cases
 
 ### ✅ Case 1: Multi-handler, cùng response type
+
 ```csharp
 // Hai handlers, cùng trả Result<OrderDto>
 public class CreateOrderHandler : ICommandHandler<CreateOrderCommand, Result<OrderDto>> { }
@@ -393,6 +413,7 @@ public class UpdateOrderHandler : ICommandHandler<UpdateOrderCommand, Result<Ord
 ```
 
 ### ❌ Case 2: Entity kế thừa (Bug #6)
+
 ```csharp
 public class AuditableBase { public Guid Id { get; set; } public DateTime CreatedAt { get; set; } }
 [Table("Products")] public class Product : AuditableBase { public string Name { get; set; } }
@@ -403,6 +424,7 @@ public class AuditableBase { public Guid Id { get; set; } public DateTime Create
 ```
 
 ### ✅ Case 3: Batch INSERT parameter limit
+
 ```csharp
 // Entity 10 cột, cần insert 1000 items
 // maxInsertBatch = Math.Min(500, 2000/10) = 200 items/batch
@@ -411,6 +433,7 @@ public class AuditableBase { public Guid Id { get; set; } public DateTime Create
 ```
 
 ### ✅ Case 4: Soft Delete + DeleteRangeAsync
+
 ```csharp
 [SoftDelete("DeletedAt")] [Table("Orders")] public class Order { }
 // DeleteBatchAsync → UPDATE SET DeletedAt = NOW() WHERE Id IN (...)
@@ -419,6 +442,7 @@ public class AuditableBase { public Guid Id { get; set; } public DateTime Create
 ```
 
 ### ⚠️ Case 5: AOT + LINQ complex closure
+
 ```csharp
 string name = "test";
 // ✅ SAFE: local variable → MemberExpression → FieldInfo.GetValue (not reflection on type)
@@ -431,6 +455,7 @@ var r2 = await repo.AsQueryable().Where(p => p.Name == getFilter()).ToListAsync(
 ```
 
 ### ⚠️ Case 6: Behavior ordering — counter-intuitive
+
 ```csharp
 [CqrsBehavior(typeof(ICommand), order: -10)] class ValidationBehavior<TReq, TRes> { }
 [CqrsBehavior(typeof(ICommand), order: 0)]   class LoggingBehavior<TReq, TRes> { }
@@ -443,6 +468,7 @@ var r2 = await repo.AsQueryable().Where(p => p.Name == getFilter()).ToListAsync(
 ```
 
 ### ❌ Case 7: Multi-tenant Outbox
+
 ```csharp
 // Request handler (tenant-1):
 tenantAccessor.Context.TenantId = "tenant-1";
@@ -456,6 +482,7 @@ await outboxStore.SaveMessageAsync(new OutboxMessage { MessageType = "OrderCreat
 ```
 
 ### ⚠️ Case 8: Saga double failure
+
 ```csharp
 await coordinator.ExecuteStepAsync(correlationId, orderEvent, step, "Processing");
 // ExecuteAsync throws → CompensateAsync called
@@ -472,11 +499,12 @@ await coordinator.ExecuteStepAsync(correlationId, orderEvent, step, "Processing"
 ### Tier 1 — Critical for Production
 
 #### A. `IAsyncValidator<T>` — Async validation
+
 ```csharp
 public class CreateOrderValidator : IAsyncValidator<CreateOrderCommand>
 {
     private readonly IProductRepository _repo;
-    
+
     public async Task<IEnumerable<ValidationError>> ValidateAsync(
         CreateOrderCommand cmd, CancellationToken ct)
     {
@@ -490,9 +518,11 @@ public class CreateOrderValidator : IAsyncValidator<CreateOrderCommand>
 ```
 
 #### B. Entity inheritance scan (Fix Bug #6)
+
 Generator traverse `BaseType` chain để collect tất cả properties.
 
 #### C. `Result<T>` → HTTP auto-mapping trong Endpoints
+
 ```csharp
 // Generator detect nếu ResponseType là Result<T>:
 var result = await mediator.QueryAsync<Result<ProductDto>>(query, ct);
@@ -509,6 +539,7 @@ return result.Status switch
 ```
 
 #### D. Durable Saga Repository via DataGenerator
+
 ```csharp
 [SagaEntity(typeof(OrderSagaData))]
 public interface IOrderSagaRepository : ISagaRepository<OrderSagaData> { }
@@ -520,6 +551,7 @@ public interface IOrderSagaRepository : ISagaRepository<OrderSagaData> { }
 ### Tier 2 — High Value
 
 #### E. `[MultiTenant("TenantId")]` auto-filter
+
 ```csharp
 [Table("Products")]
 [MultiTenant("TenantId")]
@@ -532,6 +564,7 @@ public class ProductEntity
 ```
 
 #### F. `[Cache]` behavior attribute
+
 ```csharp
 [Cache(ttlSeconds: 300, varyBy: ["CategoryId"])]
 public record GetProductsQuery(Guid CategoryId) : IQuery<List<ProductDto>>;
@@ -540,6 +573,7 @@ public record GetProductsQuery(Guid CategoryId) : IQuery<List<ProductDto>>;
 ```
 
 #### G. `[Audit]` entity auto-tracking
+
 ```csharp
 [Table("Orders")] [Audit]
 public class OrderEntity
@@ -553,6 +587,7 @@ public class OrderEntity
 ```
 
 #### H. Durable Outbox via DataGenerator
+
 ```csharp
 [DataRepository]
 public interface IMyOutboxRepository : IOutboxStore { }
@@ -564,11 +599,13 @@ public interface IMyOutboxRepository : IOutboxStore { }
 ### Tier 3 — Nice to Have
 
 #### I. Health Check generator
+
 ```csharp
 services.AddLinKitHealthChecks(); // auto-gen kiểm tra DB, messaging, saga
 ```
 
 #### J. OpenAPI từ XML comments
+
 ```csharp
 /// <summary>Get all products in a category</summary>
 [HttpGet("products/{categoryId}")]
@@ -577,51 +614,55 @@ public record GetProductsQuery(Guid CategoryId) : IQuery<List<ProductDto>>;
 ```
 
 #### K. `[SoftDeleteFilter]` cho custom SQL methods
+
 Custom methods hiện tại không auto-filter soft-deleted records.
 
 ---
 
 ## 📋 Best Practices Checklist
 
-| Item | Status | Priority |
-|------|--------|----------|
-| No reflection hot path | ✅ | — |
-| AOT-compatible (attributes) | ✅ | — |
-| AOT-guarded dynamic paths | ✅ | — |
-| Incremental gen perf (CQRS/Mapper) | ✅ | — |
-| **Incremental gen perf (Endpoints)** | ⚠️ | HIGH |
-| Batch operations (Insert/Delete) | ✅ | — |
-| Thread safety (UoW) | ✅ | — |
-| **InMemory outbox race condition** | ❌ | HIGH |
-| **Entity inheritance support** | ❌ | HIGH |
-| **Async validation** | ❌ | HIGH |
-| **Result<T> HTTP auto-mapping** | ❌ | HIGH |
-| **CancellationToken in custom methods** | ❌ | HIGH |
-| `ExecuteScalarSqlAsync` AOT safety | ⚠️ | MEDIUM |
-| Multi-tenant + Outbox propagation | ❌ | MEDIUM |
-| Durable Saga persistence | ❌ | MEDIUM |
-| MultiTenant auto-filter | ❌ | MEDIUM |
-| Unit tests coverage | ❌ | HIGH |
-| XML doc coverage | ⚠️ | LOW |
-| Filename spaces | ⚠️ | LOW |
-| Behavior ordering documentation | ⚠️ | LOW |
+| Item                                    | Status | Priority |
+| --------------------------------------- | ------ | -------- |
+| No reflection hot path                  | ✅     | —        |
+| AOT-compatible (attributes)             | ✅     | —        |
+| AOT-guarded dynamic paths               | ✅     | —        |
+| Incremental gen perf (CQRS/Mapper)      | ✅     | —        |
+| **Incremental gen perf (Endpoints)**    | ⚠️     | HIGH     |
+| Batch operations (Insert/Delete)        | ✅     | —        |
+| Thread safety (UoW)                     | ✅     | —        |
+| **InMemory outbox race condition**      | ❌     | HIGH     |
+| **Entity inheritance support**          | ❌     | HIGH     |
+| **Async validation**                    | ❌     | HIGH     |
+| **Result<T> HTTP auto-mapping**         | ❌     | HIGH     |
+| **CancellationToken in custom methods** | ❌     | HIGH     |
+| `ExecuteScalarSqlAsync` AOT safety      | ⚠️     | MEDIUM   |
+| Multi-tenant + Outbox propagation       | ❌     | MEDIUM   |
+| Durable Saga persistence                | ❌     | MEDIUM   |
+| MultiTenant auto-filter                 | ❌     | MEDIUM   |
+| Unit tests coverage                     | ❌     | HIGH     |
+| XML doc coverage                        | ⚠️     | LOW      |
+| Filename spaces                         | ⚠️     | LOW      |
+| Behavior ordering documentation         | ⚠️     | LOW      |
 
 ---
 
 ## 🎯 Thứ tự ưu tiên fix
 
 ### 🔴 Ngay (blocking/correctness):
+
 1. **Bug #6** — Entity inherited properties — bất kỳ app nào dùng base class sẽ bị broken
 2. **Bug #9** — CancellationToken ignored trong custom repo methods
 3. **Bug #5** — InMemoryOutboxStore race condition → duplicate delivery trong tests
 
 ### 🟡 Sớm (performance/production):
+
 4. **Bug #1/#2** — EndpointsGeneratorPart `CreateSyntaxProvider` + `CompilationProvider` rebuild perf
 5. **Bug #7** — `ExecuteScalarSqlAsync` `Convert.ChangeType` AOT risk
 6. **Feature C** — Result<T> HTTP auto-mapping → massive DX improvement
 7. **Feature A** — Async validation → production necessity
 
 ### 🟢 Kế hoạch:
+
 8. **Feature E** — MultiTenant auto-filter
 9. **Feature D** — Durable Saga via DataGenerator
 10. **Feature H** — Durable Outbox via DataGenerator

@@ -1,12 +1,13 @@
 ﻿<Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
     <TargetFramework>netstandard2.0</TargetFramework>
-    <LangVersion>latest</LangVersion>
-    <Nullable>enable</Nullable>
     <IsRoslynComponent>true</IsRoslynComponent>
     <EnforceExtendedAnalyzerRules>true</EnforceExtendedAnalyzerRules>
+    <IsPackable>false</IsPackable>
   </PropertyGroup>
+
   <ItemGroup>
+    <!-- Attributes are linked into the generator so semantic analysis does not depend on LinKit.Core. -->
     <Compile Include="..\LinKit.Core\Abstractions\Lifetime.cs" Link="Linked\Lifetime.cs" />
     <Compile
       Include="..\LinKit.Core\Abstractions\RegisterServiceAttribute.cs"
@@ -18,11 +19,10 @@
       Link="Linked\EndpointAttribute.cs"
     />
     <Compile Include="..\LinKit.Core\Endpoints\FromAttribute.cs" Link="Linked\FromAttribute.cs" />
-    <PackageReference Include="Microsoft.CodeAnalysis.CSharp" Version="4.8.0" PrivateAssets="all" />
-    <PackageReference
-      Include="Microsoft.CodeAnalysis.Analyzers"
-      Version="3.3.4"
-      PrivateAssets="all"
-    />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.CodeAnalysis.CSharp" PrivateAssets="all" />
+    <PackageReference Include="Microsoft.CodeAnalysis.Analyzers" PrivateAssets="all" />
   </ItemGroup>
 </Project>

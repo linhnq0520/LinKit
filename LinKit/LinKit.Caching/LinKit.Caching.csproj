@@ -1,31 +1,19 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
     <TargetFrameworks>net8.0;net9.0;net10.0</TargetFrameworks>
-    <ImplicitUsings>enable</ImplicitUsings>
-    <Nullable>enable</Nullable>
     <PackageId>LinKit.Caching</PackageId>
-    <Version>1.3.1</Version>
-    <Authors>Linh Nguyen</Authors>
-    <Description>In-memory caching abstractions for LinKit with expiration, capacity management, and single-flight creation.</Description>
-    <PackageTags>linkit;caching;hybrid-cache;aot</PackageTags>
-    <PackageLicenseExpression>MIT</PackageLicenseExpression>
-    <PackageReadmeFile>README.md</PackageReadmeFile>
-    <RepositoryUrl>https://github.com/linhnq0520/LinKit</RepositoryUrl>
-    <RepositoryType>git</RepositoryType>
-    <IncludeSymbols>true</IncludeSymbols>
-    <SymbolPackageFormat>snupkg</SymbolPackageFormat>
+    <Version>1.4.0</Version>
+    <Description>Two-level (memory + RESP2 Redis) caching for LinKit with expiration, bounded LRU capacity, and single-flight creation.</Description>
+    <PackageTags>linkit;caching;hybrid-cache;redis;resp2;aot</PackageTags>
+    <PackageReleaseNotes>v1.4.0: Redis TLS, ACL username authentication and key prefixes, plus EXISTS/TTL/EXPIRE/INCR/MGET/MSET and prefix invalidation. Single-flight no longer blocks a pool thread while holding a lock. Full documentation &amp; release notes: https://quoclinh.id.vn/docs/linkit</PackageReleaseNotes>
   </PropertyGroup>
-
-  <ItemGroup>
-    <None Include="README.md" Pack="true" PackagePath="\" />
-  </ItemGroup>
 
   <ItemGroup>
     <ProjectReference Include="..\LinKit.Core\LinKit.Core.csproj" />
   </ItemGroup>
 
   <ItemGroup>
-    <PackageReference Include="Microsoft.Extensions.DependencyInjection.Abstractions" Version="8.0.0" />
-    <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="8.0.0" />
+    <PackageReference Include="Microsoft.Extensions.DependencyInjection.Abstractions" />
+    <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" />
   </ItemGroup>
 </Project>

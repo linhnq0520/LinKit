@@ -25,7 +25,7 @@ public sealed class RegisterServiceAttribute : Attribute
     public string? Key { get; set; }
 
     /// <summary>
-    /// Indicates if the service is a generic type (e.g., IRepository<>).
+    /// Indicates if the service is a generic type (for example <c>IRepository&lt;&gt;</c>).
     /// </summary>
     public bool IsGeneric { get; set; }
 

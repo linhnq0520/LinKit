@@ -63,13 +63,14 @@ public static class ResiliencePipeline
         {
             cancellationToken.ThrowIfCancellationRequested();
 
-            if (breaker != null && !breaker.CanExecute(options.BreakerDurationSeconds))
+            long generation = 0;
+            if (breaker != null && !breaker.CanExecute(options.BreakerDurationSeconds, out generation))
                 throw new CircuitBreakerOpenException($"Circuit '{key}' is open.");
 
             try
             {
                 var result = await RunWithTimeoutAsync(action, options.Timeout, time, cancellationToken).ConfigureAwait(false);
-                breaker?.OnSuccess();
+                breaker?.OnSuccess(generation);
                 return result;
             }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)

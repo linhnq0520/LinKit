@@ -5,34 +5,177 @@ on:
     branches: [main, master]
   pull_request:
 
+env:
+  DOTNET_NOLOGO: true
+  DOTNET_CLI_TELEMETRY_OPTOUT: true
+  DOTNET_SKIP_FIRST_TIME_EXPERIENCE: true
+
 jobs:
+  # ---------------------------------------------------------------------------
+  # Builds and tests everything. Warnings are errors for the analyzers that back
+  # the library's AOT/trim promise, so a regression fails the PR instead of
+  # silently shipping.
+  # ---------------------------------------------------------------------------
   build-test:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+
       - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: |
             8.0.x
             9.0.x
             10.0.x
+
+      - name: Cache NuGet
+        uses: actions/cache@v4
+        with:
+          path: ~/.nuget/packages
+          key: ${{ runner.os }}-nuget-${{ hashFiles('LinKit/Directory.Packages.props', 'LinKit/**/*.csproj', 'LinKit/global.json') }}
+          restore-keys: ${{ runner.os }}-nuget-
+
       - name: Restore
         run: dotnet restore LinKit/LinKit.sln
+
       - name: Build
-        run: dotnet build LinKit/LinKit.sln --no-restore -c Release -warnaserror:RS2002
+        run: >
+          dotnet build LinKit/LinKit.sln --no-restore -c Release
+          -warnaserror:RS2002,IL2026,IL2060,IL2067,IL2072,IL2075,IL2091,IL3050
+
       - name: Test
-        run: dotnet test LinKit/LinKit.sln --no-build -c Release
+        run: >
+          dotnet test LinKit/LinKit.sln --no-build -c Release
+          --collect:"XPlat Code Coverage"
+          --results-directory artifacts/test-results
+
+      - name: Upload coverage
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage
+          path: artifacts/test-results
+          if-no-files-found: warn
+
       - name: Vulnerable packages
         run: dotnet list LinKit/LinKit.sln package --vulnerable --include-transitive
 
-  native-aot:
+  # ---------------------------------------------------------------------------
+  # Style gate. The repository has a large pre-existing formatting backlog relative to
+  # LinKit/.editorconfig, so this job is advisory until that backlog is cleared (Phase 5).
+  # Flip continue-on-error to false once `dotnet format` reports no changes locally.
+  # ---------------------------------------------------------------------------
+  format:
     runs-on: ubuntu-latest
+    continue-on-error: true
     steps:
       - uses: actions/checkout@v4
+
       - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: 10.0.x
+
+      - name: Restore
+        run: dotnet restore LinKit/LinKit.sln
+
+      - name: Verify formatting
+        run: dotnet format LinKit/LinKit.sln --verify-no-changes --no-restore --severity warn
+
+  # ---------------------------------------------------------------------------
+  # Proves every shipped package is well formed: README, XML docs, the source
+  # generator under analyzers/dotnet/cs where applicable, and a symbol package.
+  # ---------------------------------------------------------------------------
+  pack:
+    runs-on: ubuntu-latest
+    needs: build-test
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Pack
+        run: dotnet pack LinKit/LinKit.sln -c Release -o artifacts/packages
+
+      - name: Verify package contents
+        shell: bash
+        run: |
+          set -euo pipefail
+          fail=0
+          for pkg in artifacts/packages/*.nupkg; do
+            case "$pkg" in *.snupkg) continue ;; esac
+            name=$(basename "$pkg")
+            entries=$(unzip -Z1 "$pkg")
+            require() {
+              if ! grep -qx "$1" <<< "$entries"; then
+                echo "::error file=$pkg::$name is missing $1"
+                fail=1
+              fi
+            }
+            require "README.md"
+            grep -q '^lib/.*\.xml$' <<< "$entries" || { echo "::error file=$pkg::$name is missing XML docs"; fail=1; }
+            echo "$name ok"
+          done
+          for pkg in LinKit.Core LinKit.Data LinKit.Grpc; do
+            found=$(ls artifacts/packages/${pkg}.*.nupkg | head -n 1)
+            unzip -Z1 "$found" | grep -q '^analyzers/dotnet/cs/' \
+              || { echo "::error file=$found::$pkg is missing its generator under analyzers/dotnet/cs"; fail=1; }
+            unzip -Z1 "$found" | grep -q '^buildTransitive/' \
+              || { echo "::error file=$found::$pkg is missing buildTransitive targets"; fail=1; }
+          done
+          exit $fail
+
+      - name: Upload packages
+        uses: actions/upload-artifact@v4
+        with:
+          name: packages
+          path: artifacts/packages
+
+  # ---------------------------------------------------------------------------
+  # The AOT job builds the smoke app, which pulls in every library, and refuses
+  # to accept new trim/AOT warnings anywhere in the graph.
+  # ---------------------------------------------------------------------------
+  native-aot:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        rid: [linux-x64]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Install AOT prerequisites
+        run: sudo apt-get update && sudo apt-get install -y clang zlib1g-dev
+
       - name: Publish Native AOT smoke app
-        run: dotnet publish LinKit/Test/LinKit.AotSmoke -c Release -r linux-x64 -o aot-out -warnaserror:IL2026,IL2060,IL2091,IL3050
+        run: >
+          dotnet publish LinKit/Test/LinKit.AotSmoke -c Release -r ${{ matrix.rid }} -o aot-out
+          -warnaserror:IL2026,IL2060,IL2067,IL2072,IL2075,IL2091,IL3050
+
       - name: Run Native AOT smoke app
         run: ./aot-out/LinKit.AotSmoke
+
+  # ---------------------------------------------------------------------------
+  # Samples are built out of band so a broken sample cannot mask a library break,
+  # and a library break cannot be blamed on a sample.
+  # ---------------------------------------------------------------------------
+  samples:
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Build MonolithSample
+        run: dotnet build LinKit/Samples/MonolithSample -c Release
+
+      - name: Build MicroserviceSample
+        run: dotnet build LinKit/Samples/MicroserviceSample/OrderService -c Release

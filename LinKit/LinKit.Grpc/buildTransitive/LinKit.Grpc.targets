@@ -1,0 +1,9 @@
+<Project>
+  <!-- Same rationale as LinKit.Core: analyzers do not flow transitively through PackageReference. -->
+  <ItemGroup Condition="'$(LinKitDisableSourceGenerators)' != 'true'">
+    <Analyzer
+      Include="$(MSBuildThisFileDirectory)..\analyzers\dotnet\cs\LinKit.Grpc.Generator.dll"
+      Condition="Exists('$(MSBuildThisFileDirectory)..\analyzers\dotnet\cs\LinKit.Grpc.Generator.dll')"
+    />
+  </ItemGroup>
+</Project>

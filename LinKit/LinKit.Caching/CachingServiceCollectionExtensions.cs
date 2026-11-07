@@ -1,5 +1,6 @@
 using System;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 
 namespace LinKit.Caching;
 
@@ -14,7 +15,10 @@ public static class CachingServiceCollectionExtensions
         {
             LinKitRedisOptions opts = new();
             configureRedis(opts);
-            services.AddSingleton<ICacheProvider>(_ => new HybridRedisCacheProvider(opts));
+            services.AddSingleton<ICacheProvider>(sp => new HybridRedisCacheProvider(
+                opts,
+                sp.GetService<TimeProvider>(),
+                sp.GetService<ILoggerFactory>()));
             return services;
         }
 
@@ -27,7 +31,10 @@ public static class CachingServiceCollectionExtensions
         LinKitRedisOptions options
     )
     {
-        services.AddSingleton<ICacheProvider>(_ => new HybridRedisCacheProvider(options));
+        services.AddSingleton<ICacheProvider>(sp => new HybridRedisCacheProvider(
+            options,
+            sp.GetService<TimeProvider>(),
+            sp.GetService<ILoggerFactory>()));
         return services;
     }
 }

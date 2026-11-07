@@ -18,18 +18,25 @@ public sealed class ReliabilityTests
     public async Task CacheRemovesFaultedFactoryAfterAllWaitersCancel()
     {
         var cache = new InMemoryCacheProvider();
-        var factoryStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        var failFactory = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var factoryStarted = new TaskCompletionSource(
+            TaskCreationOptions.RunContinuationsAsynchronously
+        );
+        var failFactory = new TaskCompletionSource<string>(
+            TaskCreationOptions.RunContinuationsAsynchronously
+        );
         using var cancellation = new CancellationTokenSource();
 
-        var cancelledCaller = cache.GetOrCreateAsync(
-            "faulted-cache-entry",
-            async _ =>
-            {
-                factoryStarted.TrySetResult();
-                return await failFactory.Task;
-            },
-            cancellationToken: cancellation.Token).AsTask();
+        var cancelledCaller = cache
+            .GetOrCreateAsync(
+                "faulted-cache-entry",
+                async _ =>
+                {
+                    factoryStarted.TrySetResult();
+                    return await failFactory.Task;
+                },
+                cancellationToken: cancellation.Token
+            )
+            .AsTask();
 
         await factoryStarted.Task;
         cancellation.Cancel();
@@ -43,7 +50,8 @@ public sealed class ReliabilityTests
             {
                 var value = await cache.GetOrCreateAsync(
                     "faulted-cache-entry",
-                    _ => Task.FromResult("recovered"));
+                    _ => Task.FromResult("recovered")
+                );
                 Assert.Equal("recovered", value);
                 recovered = true;
             }
@@ -65,15 +73,17 @@ public sealed class ReliabilityTests
             TableName = "Order'Summary",
             Schema = "Tenant'One",
             EntityType = typeof(ReliabilityTests),
-            Columns = Array.Empty<ColumnSchemaMetadata>()
+            Columns = Array.Empty<ColumnSchemaMetadata>(),
         };
 
         Assert.Equal(
-            "SELECT COLUMN_NAME FROM ALL_TAB_COLS WHERE OWNER = 'Tenant''One' AND TABLE_NAME = 'Order''Summary';",
-            dialect.GenerateGetExistingColumnsSql(table));
+            "SELECT COLUMN_NAME FROM ALL_TAB_COLS WHERE OWNER = 'Tenant''One' AND (TABLE_NAME = 'Order''Summary' OR TABLE_NAME = 'ORDER''SUMMARY');",
+            dialect.GenerateGetExistingColumnsSql(table)
+        );
         Assert.Equal(
-            "SELECT INDEX_NAME FROM ALL_INDEXES WHERE OWNER = 'Tenant''One' AND TABLE_NAME = 'Order''Summary';",
-            dialect.GenerateGetExistingIndexesSql(table));
+            "SELECT INDEX_NAME FROM ALL_INDEXES WHERE OWNER = 'Tenant''One' AND (TABLE_NAME = 'Order''Summary' OR TABLE_NAME = 'ORDER''SUMMARY');",
+            dialect.GenerateGetExistingIndexesSql(table)
+        );
     }
 
     [Fact]
@@ -81,7 +91,9 @@ public sealed class ReliabilityTests
     {
         var time = new FakeTimeProvider();
         var store = new InMemoryOutboxStore(new OutboxOptions(), time);
-        await ((IOutboxStore)store).SaveMessageAsync(new OutboxMessage { MessageType = "A", Payload = "{}" });
+        await ((IOutboxStore)store).SaveMessageAsync(
+            new OutboxMessage { MessageType = "A", Payload = "{}" }
+        );
 
         var first = await store.ClaimPendingAsync(10, TimeSpan.FromSeconds(30));
         var second = await store.ClaimPendingAsync(10, TimeSpan.FromSeconds(30));
@@ -97,12 +109,20 @@ public sealed class ReliabilityTests
     public async Task OutboxBackoffAndDeadLetter()
     {
         var time = new FakeTimeProvider();
-        var options = new OutboxOptions { MaxRetries = 2, BaseRetryDelay = TimeSpan.FromSeconds(10) };
+        var options = new OutboxOptions
+        {
+            MaxRetries = 2,
+            BaseRetryDelay = TimeSpan.FromSeconds(10),
+        };
         var store = new InMemoryOutboxStore(options, time);
         var msg = new OutboxMessage { MessageType = "A", Payload = "{}" };
         await ((IOutboxStore)store).SaveMessageAsync(msg);
 
-        await ((IOutboxStore)store).MarkFailedAsync(msg.Id, "boom", time.GetUtcNow().UtcDateTime + options.GetRetryDelay(1));
+        await ((IOutboxStore)store).MarkFailedAsync(
+            msg.Id,
+            "boom",
+            time.GetUtcNow().UtcDateTime + options.GetRetryDelay(1)
+        );
         Assert.Empty(await store.ClaimPendingAsync(10, TimeSpan.FromSeconds(1)));
 
         time.Advance(TimeSpan.FromSeconds(11));
@@ -117,7 +137,11 @@ public sealed class ReliabilityTests
     [Fact]
     public void OutboxRetryDelayIsExponentialAndCapped()
     {
-        var o = new OutboxOptions { BaseRetryDelay = TimeSpan.FromSeconds(2), MaxRetryDelay = TimeSpan.FromSeconds(30) };
+        var o = new OutboxOptions
+        {
+            BaseRetryDelay = TimeSpan.FromSeconds(2),
+            MaxRetryDelay = TimeSpan.FromSeconds(30),
+        };
         Assert.Equal(TimeSpan.FromSeconds(2), o.GetRetryDelay(1));
         Assert.Equal(TimeSpan.FromSeconds(8), o.GetRetryDelay(3));
         Assert.Equal(TimeSpan.FromSeconds(30), o.GetRetryDelay(50));
@@ -126,17 +150,28 @@ public sealed class ReliabilityTests
     [Fact]
     public void OutboxOptionsRejectInvalidValuesAndRetryDelayDoesNotOverflow()
     {
-        Assert.Throws<ArgumentOutOfRangeException>(() => new OutboxOptions { BatchSize = 0 }.Validate());
-        Assert.Throws<ArgumentOutOfRangeException>(() => new OutboxOptions { LeaseDuration = TimeSpan.Zero }.Validate());
+        Assert.Throws<ArgumentOutOfRangeException>(() =>
+            new OutboxOptions { BatchSize = 0 }.Validate()
+        );
+        Assert.Throws<ArgumentOutOfRangeException>(() =>
+            new OutboxOptions { LeaseDuration = TimeSpan.Zero }.Validate()
+        );
 
         var largeDelay = TimeSpan.FromDays(100_000);
-        var options = new OutboxOptions { BaseRetryDelay = largeDelay, MaxRetryDelay = TimeSpan.MaxValue };
-        Assert.Equal(TimeSpan.MaxValue, options.GetRetryDelay(10));
-        Assert.Equal(TimeSpan.Zero, new OutboxOptions
+        var options = new OutboxOptions
         {
-            BaseRetryDelay = TimeSpan.Zero,
-            MaxRetryDelay = TimeSpan.FromTicks(1)
-        }.GetRetryDelay(20));
+            BaseRetryDelay = largeDelay,
+            MaxRetryDelay = TimeSpan.MaxValue,
+        };
+        Assert.Equal(TimeSpan.MaxValue, options.GetRetryDelay(10));
+        Assert.Equal(
+            TimeSpan.Zero,
+            new OutboxOptions
+            {
+                BaseRetryDelay = TimeSpan.Zero,
+                MaxRetryDelay = TimeSpan.FromTicks(1),
+            }.GetRetryDelay(20)
+        );
     }
 
     [Fact]
@@ -150,8 +185,19 @@ public sealed class ReliabilityTests
             () => throw new InvalidOperationException("poison"),
             () => commits++,
             () => seeks++,
-            "t", "k", TimeSpan.Zero, CancellationToken.None, null,
-            attempt: 3, maxAttempts: 3, deadLetter: _ => { dead++; return Task.CompletedTask; });
+            "t",
+            "k",
+            TimeSpan.Zero,
+            CancellationToken.None,
+            null,
+            attempt: 3,
+            maxAttempts: 3,
+            deadLetter: _ =>
+            {
+                dead++;
+                return Task.CompletedTask;
+            }
+        );
 
         Assert.Equal(1, dead);
         Assert.Equal(1, commits);
@@ -168,8 +214,15 @@ public sealed class ReliabilityTests
             () => throw new InvalidOperationException("poison"),
             () => commits++,
             () => seeks++,
-            "t", "k", TimeSpan.Zero, CancellationToken.None, null,
-            attempt: 3, maxAttempts: 3, deadLetter: _ => throw new InvalidOperationException("dlq down"));
+            "t",
+            "k",
+            TimeSpan.Zero,
+            CancellationToken.None,
+            null,
+            attempt: 3,
+            maxAttempts: 3,
+            deadLetter: _ => throw new InvalidOperationException("dlq down")
+        );
 
         Assert.Equal(0, commits);
         Assert.Equal(1, seeks);
@@ -181,11 +234,16 @@ public sealed class ReliabilityTests
         int calls = 0;
         var opts = new ResilienceOptions { MaxRetries = 3, RetryDelay = TimeSpan.Zero };
 
-        var result = await ResiliencePipeline.ExecuteAsync("retry-ok", ct =>
-        {
-            if (++calls < 3) throw new InvalidOperationException();
-            return Task.FromResult(42);
-        }, opts);
+        var result = await ResiliencePipeline.ExecuteAsync(
+            "retry-ok",
+            ct =>
+            {
+                if (++calls < 3)
+                    throw new InvalidOperationException();
+                return Task.FromResult(42);
+            },
+            opts
+        );
 
         Assert.Equal(42, result);
         Assert.Equal(3, calls);
@@ -198,11 +256,16 @@ public sealed class ReliabilityTests
         var options = new ResilienceOptions { Timeout = TimeSpan.FromMilliseconds(-1) };
 
         await Assert.ThrowsAsync<ArgumentOutOfRangeException>(() =>
-            ResiliencePipeline.ExecuteAsync("invalid-options", _ =>
-            {
-                calls++;
-                return Task.FromResult(1);
-            }, options));
+            ResiliencePipeline.ExecuteAsync(
+                "invalid-options",
+                _ =>
+                {
+                    calls++;
+                    return Task.FromResult(1);
+                },
+                options
+            )
+        );
 
         Assert.Equal(0, calls);
     }
@@ -212,11 +275,16 @@ public sealed class ReliabilityTests
     {
         var opts = new ResilienceOptions { Timeout = TimeSpan.FromMilliseconds(50) };
         await Assert.ThrowsAsync<TimeoutException>(() =>
-            ResiliencePipeline.ExecuteAsync<int>("timeout", async ct =>
-            {
-                await Task.Delay(TimeSpan.FromSeconds(5), ct);
-                return 1;
-            }, opts));
+            ResiliencePipeline.ExecuteAsync<int>(
+                "timeout",
+                async ct =>
+                {
+                    await Task.Delay(TimeSpan.FromSeconds(5), ct);
+                    return 1;
+                },
+                opts
+            )
+        );
     }
 
     [Fact]
@@ -227,13 +295,19 @@ public sealed class ReliabilityTests
         var opts = new ResilienceOptions { MaxRetries = 5, RetryDelay = TimeSpan.Zero };
 
         await Assert.ThrowsAnyAsync<OperationCanceledException>(() =>
-            ResiliencePipeline.ExecuteAsync<int>("cancel", ct =>
-            {
-                calls++;
-                cts.Cancel();
-                ct.ThrowIfCancellationRequested();
-                return Task.FromResult(1);
-            }, opts, cts.Token));
+            ResiliencePipeline.ExecuteAsync<int>(
+                "cancel",
+                ct =>
+                {
+                    calls++;
+                    cts.Cancel();
+                    ct.ThrowIfCancellationRequested();
+                    return Task.FromResult(1);
+                },
+                opts,
+                cts.Token
+            )
+        );
 
         Assert.Equal(1, calls);
     }
@@ -242,52 +316,103 @@ public sealed class ReliabilityTests
     public async Task RejectedCallsDoNotExtendOpenCircuit()
     {
         var time = new FakeTimeProvider();
-        var opts = new ResilienceOptions { BreakerFailureThreshold = 1, BreakerDurationSeconds = 10 };
+        var opts = new ResilienceOptions
+        {
+            BreakerFailureThreshold = 1,
+            BreakerDurationSeconds = 10,
+        };
 
         await Assert.ThrowsAsync<InvalidOperationException>(() =>
-            ResiliencePipeline.ExecuteAsync<int>("cb-no-extend", _ => throw new InvalidOperationException(), opts, default, time));
+            ResiliencePipeline.ExecuteAsync<int>(
+                "cb-no-extend",
+                _ => throw new InvalidOperationException(),
+                opts,
+                default,
+                time
+            )
+        );
         for (var i = 0; i < 4; i++)
         {
             time.Advance(TimeSpan.FromSeconds(2));
             await Assert.ThrowsAsync<CircuitBreakerOpenException>(() =>
-                ResiliencePipeline.ExecuteAsync("cb-no-extend", _ => Task.FromResult(1), opts, default, time));
+                ResiliencePipeline.ExecuteAsync(
+                    "cb-no-extend",
+                    _ => Task.FromResult(1),
+                    opts,
+                    default,
+                    time
+                )
+            );
         }
 
         time.Advance(TimeSpan.FromSeconds(3));
-        Assert.Equal(1, await ResiliencePipeline.ExecuteAsync("cb-no-extend", _ => Task.FromResult(1), opts, default, time));
+        Assert.Equal(
+            1,
+            await ResiliencePipeline.ExecuteAsync(
+                "cb-no-extend",
+                _ => Task.FromResult(1),
+                opts,
+                default,
+                time
+            )
+        );
     }
 
     [Fact]
     public void TenantConsumeInterceptorSetsAndRestoresTenant()
     {
         var accessor = new LinKit.Tenancy.TenantAccessor();
-        accessor.Context.TenantId = "outer";
+        using var outer = accessor.BeginScope("outer");
         var interceptor = new LinKit.Tenancy.TenantConsumeInterceptor(accessor);
-        var headers = new Dictionary<string, object> { ["linkit-tenant-id"] = "tenant-a" };
-
-        using (LinKit.Core.Messaging.MessageConsumeInterceptors.Enter(
-                   new ServiceCollection().AddSingleton<LinKit.Core.Messaging.IMessageConsumeInterceptor>(interceptor).BuildServiceProvider(),
-                   headers))
+        var headers = new Dictionary<string, object>
         {
-            Assert.Equal("tenant-a", accessor.Context.TenantId);
+            [LinKit.Core.Messaging.MessageHeaderNames.TenantId] = "tenant-a",
+        };
+
+        using (
+            LinKit.Core.Messaging.MessageConsumeInterceptors.Enter(
+                new ServiceCollection()
+                    .AddSingleton<LinKit.Core.Messaging.IMessageConsumeInterceptor>(interceptor)
+                    .BuildServiceProvider(),
+                headers
+            )
+        )
+        {
+            Assert.Equal("tenant-a", accessor.Require().TenantId);
         }
 
-        Assert.Equal("outer", accessor.Context.TenantId);
+        Assert.Equal("outer", accessor.Require().TenantId);
     }
 
     [Fact]
     public async Task CircuitBreakerOpensThenHalfOpensWithFakeTime()
     {
         var time = new FakeTimeProvider();
-        var opts = new ResilienceOptions { BreakerFailureThreshold = 2, BreakerDurationSeconds = 10 };
+        var opts = new ResilienceOptions
+        {
+            BreakerFailureThreshold = 2,
+            BreakerDurationSeconds = 10,
+        };
         Task<int> Fail(CancellationToken _) => throw new InvalidOperationException();
 
-        await Assert.ThrowsAsync<InvalidOperationException>(() => ResiliencePipeline.ExecuteAsync("cb", Fail, opts, default, time));
-        await Assert.ThrowsAsync<InvalidOperationException>(() => ResiliencePipeline.ExecuteAsync("cb", Fail, opts, default, time));
-        await Assert.ThrowsAsync<CircuitBreakerOpenException>(() => ResiliencePipeline.ExecuteAsync("cb", Fail, opts, default, time));
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            ResiliencePipeline.ExecuteAsync("cb", Fail, opts, default, time)
+        );
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            ResiliencePipeline.ExecuteAsync("cb", Fail, opts, default, time)
+        );
+        await Assert.ThrowsAsync<CircuitBreakerOpenException>(() =>
+            ResiliencePipeline.ExecuteAsync("cb", Fail, opts, default, time)
+        );
 
         time.Advance(TimeSpan.FromSeconds(11));
-        var ok = await ResiliencePipeline.ExecuteAsync("cb", _ => Task.FromResult(7), opts, default, time);
+        var ok = await ResiliencePipeline.ExecuteAsync(
+            "cb",
+            _ => Task.FromResult(7),
+            opts,
+            default,
+            time
+        );
         Assert.Equal(7, ok);
         Assert.Equal(CircuitState.Closed, CircuitBreakerRegistry.GetOrCreate("cb").State);
     }
@@ -306,6 +431,111 @@ public sealed class ReliabilityTests
     }
 
     [Fact]
+    public void SuccessAdmittedBeforeFailureDoesNotCloseOpenBreaker()
+    {
+        var time = new FakeTimeProvider();
+        var cb = new CircuitBreakerState(time);
+
+        // A slow operation is admitted while Closed, then a later failure opens the breaker.
+        Assert.True(cb.CanExecute(10, out var staleGeneration));
+        cb.OnFailure(1);
+        Assert.Equal(CircuitState.Open, cb.State);
+
+        // The slow operation completes successfully afterwards; it must not defeat the open interval.
+        cb.OnSuccess(staleGeneration);
+        Assert.Equal(CircuitState.Open, cb.State);
+        Assert.False(cb.CanExecute(10, out _));
+
+        // After the interval, a fresh HalfOpen probe still closes the breaker normally.
+        time.Advance(TimeSpan.FromSeconds(11));
+        Assert.True(cb.CanExecute(10, out var probeGeneration));
+        cb.OnSuccess(probeGeneration);
+        Assert.Equal(CircuitState.Closed, cb.State);
+    }
+
+    [Fact]
+    public void StaleProbeSuccessDoesNotCloseBreakerOpenedByNewerProbe()
+    {
+        var time = new FakeTimeProvider();
+        var cb = new CircuitBreakerState(time);
+        cb.OnFailure(1);
+        time.Advance(TimeSpan.FromSeconds(11));
+
+        // First probe is admitted but never reports; after the probe timeout a new probe takes over.
+        Assert.True(cb.CanExecute(10, out var abandonedGeneration));
+        time.Advance(TimeSpan.FromSeconds(11));
+        Assert.True(cb.CanExecute(10, out var currentGeneration));
+        Assert.NotEqual(abandonedGeneration, currentGeneration);
+
+        cb.OnFailure(1); // The current probe fails and re-opens the breaker.
+        Assert.Equal(CircuitState.Open, cb.State);
+
+        cb.OnSuccess(abandonedGeneration);
+        cb.OnSuccess(currentGeneration);
+        Assert.Equal(CircuitState.Open, cb.State);
+    }
+
+    [Fact]
+    public async Task PipelineSlowSuccessDoesNotCloseCircuitOpenedByLaterFailure()
+    {
+        var time = new FakeTimeProvider();
+        var opts = new ResilienceOptions
+        {
+            BreakerFailureThreshold = 1,
+            BreakerDurationSeconds = 10,
+        };
+        var slowStarted = new TaskCompletionSource(
+            TaskCreationOptions.RunContinuationsAsynchronously
+        );
+        var releaseSlow = new TaskCompletionSource<int>(
+            TaskCreationOptions.RunContinuationsAsynchronously
+        );
+
+        var slow = ResiliencePipeline.ExecuteAsync(
+            "cb-stale-success",
+            _ =>
+            {
+                slowStarted.TrySetResult();
+                return releaseSlow.Task;
+            },
+            opts,
+            default,
+            time
+        );
+
+        await slowStarted.Task;
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            ResiliencePipeline.ExecuteAsync<int>(
+                "cb-stale-success",
+                _ => throw new InvalidOperationException(),
+                opts,
+                default,
+                time
+            )
+        );
+        Assert.Equal(
+            CircuitState.Open,
+            CircuitBreakerRegistry.GetOrCreate("cb-stale-success").State
+        );
+
+        releaseSlow.SetResult(1);
+        Assert.Equal(1, await slow);
+        Assert.Equal(
+            CircuitState.Open,
+            CircuitBreakerRegistry.GetOrCreate("cb-stale-success").State
+        );
+        await Assert.ThrowsAsync<CircuitBreakerOpenException>(() =>
+            ResiliencePipeline.ExecuteAsync(
+                "cb-stale-success",
+                _ => Task.FromResult(2),
+                opts,
+                default,
+                time
+            )
+        );
+    }
+
+    [Fact]
     public async Task CacheSingleFlightSharesOneFactoryAcrossManyConcurrentCallersAndRecoversAfterFault()
     {
         var cache = new InMemoryCacheProvider();
@@ -319,7 +549,8 @@ public sealed class ReliabilityTests
             throw new InvalidOperationException("boom");
         }
 
-        var callers = Enumerable.Range(0, 50)
+        var callers = Enumerable
+            .Range(0, 50)
             .Select(_ => Task.Run(() => cache.GetOrCreateAsync("shared", Factory).AsTask()))
             .ToArray();
         await Task.Delay(50);
@@ -344,7 +575,9 @@ public sealed class ReliabilityTests
             return 5;
         }
 
-        var results = await Task.WhenAll(Enumerable.Range(0, 20).Select(_ => cache.GetOrCreateAsync("k", Factory).AsTask()));
+        var results = await Task.WhenAll(
+            Enumerable.Range(0, 20).Select(_ => cache.GetOrCreateAsync("k", Factory).AsTask())
+        );
 
         Assert.All(results, r => Assert.Equal(5, r));
         Assert.Equal(1, calls);

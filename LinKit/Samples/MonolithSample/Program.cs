@@ -15,14 +15,43 @@ builder.Services.AddLinKitCqrs();
 // 2. Tự động đăng ký các dịch vụ gắn [RegisterService] (ví dụ: IPricingService)
 builder.Services.AddLinKitDependency();
 
-// 3. Đăng ký Caching (In-Memory + Hybrid Redis ready) và Resilience (Retry/CircuitBreaker)
-builder.Services.AddLinKitCaching();
+// 3. Đăng ký Caching với tùy chọn linh hoạt: In-Memory hoặc Hybrid (L1 Memory + L2 Redis)
+var cacheProvider = builder.Configuration.GetValue<string>("Cache:Provider") ?? "Memory";
+
+if (string.Equals(cacheProvider, "Redis", StringComparison.OrdinalIgnoreCase))
+{
+    var redisConfig = builder.Configuration.GetSection("Redis");
+    var redisOptions = new LinKitRedisOptions
+    {
+        Enabled = redisConfig.GetValue("Enabled", true),
+        Host = redisConfig.GetValue("Host", "localhost")!,
+        Port = redisConfig.GetValue("Port", 6379),
+        Password = redisConfig.GetValue<string?>("Password"),
+        Database = redisConfig.GetValue("Database", 0),
+        DefaultTtl = TimeSpan.FromMinutes(redisConfig.GetValue("DefaultTtlMinutes", 30)),
+    };
+
+    builder.Services.AddLinKitRedisCaching(redisOptions);
+}
+else
+{
+    // Mặc định: In-Memory Provider
+    builder.Services.AddLinKitCaching();
+}
+
+// Đăng ký context JSON cho Serialization (an toàn cho Native AOT & Redis caching)
+LinKit.Core.Messaging.LinKitMessageJson.AddContext(MonolithSample.MonolithDataJsonContext.Default);
+
 builder.Services.AddLinKitResilience();
 
 // 4. Đăng ký Tenancy (Multi-Tenancy với AsyncLocal), Outbox và Sagas
 builder.Services.AddLinKitTenancy();
 builder.Services.AddLinKitOutbox();
-builder.Services.AddLinKitSagas<MonolithSample.Modules.Ordering.Commands.OrderSagaState>();
+builder.Services.AddLinKitSagas<MonolithSample.Modules.Ordering.Commands.OrderSagaState>(
+    // Sample chỉ dùng repository in-memory; production thật phải đăng ký ISagaRepository bền vững
+    // trước AddLinKitSagas, nếu không việc resolve sẽ ném lỗi khi môi trường là Production.
+    options => options.AllowInMemoryInProduction = true
+);
 
 // 4. Đăng ký LinKit.Data - Zero-Reflection ORM với Auto-Schema Synchronization (Zero-Migration)
 builder.Services.AddLinKitData(options =>

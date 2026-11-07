@@ -103,7 +103,7 @@ public class RootGenerator : IIncrementalGenerator
                                     Lifetime.Singleton => "AddKeyedSingleton",
                                     _ => "AddKeyedTransient",
                                 };
-                                return $"services.{lifetime}(typeof({serviceType}), \"{s.Key}\", typeof({implType}));";
+                                return $"services.{lifetime}(typeof({serviceType}), \"{Microsoft.CodeAnalysis.CSharp.SymbolDisplay.FormatLiteral(s.Key!, quote: false)}\", typeof({implType}));";
                             }
                             else if (s.IsGeneric)
                             {
@@ -117,7 +117,7 @@ public class RootGenerator : IIncrementalGenerator
                                     Lifetime.Singleton => "AddKeyedSingleton",
                                     _ => "AddKeyedTransient",
                                 };
-                                return $"services.{lifetime}<{serviceType}, {implType}>(\"{s.Key}\");";
+                                return $"services.{lifetime}<{serviceType}, {implType}>(\"{Microsoft.CodeAnalysis.CSharp.SymbolDisplay.FormatLiteral(s.Key!, quote: false)}\");";
                             }
                             else
                             {

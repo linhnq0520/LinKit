@@ -213,6 +213,11 @@ public sealed class ExpressionSqlTranslator
             return new SqlParameterNode(constant.Value);
         }
 
+        if (expression is MethodCallExpression methodCall)
+        {
+            return ParseMethodCall(methodCall);
+        }
+
         throw UnsupportedExpression(expression);
     }
 
@@ -235,10 +240,65 @@ public sealed class ExpressionSqlTranslator
             return new SqlNullCheckNode(ParseValue(left), isNotEqual);
         }
 
-        return new SqlBinaryNode(
-            ParseValue(left),
-            isNotEqual ? "<>" : "=",
-            ParseValue(right));
+        var leftNode = ParseValue(left);
+        var rightNode = ParseValue(right);
+        var leftNullable = CanBeNull(left);
+        var rightNullable = CanBeNull(right);
+
+        // C# null semantics differ from SQL UNKNOWN: null != value is true in C# but the row
+        // would be dropped by a plain <>; null == null is true in C# but UNKNOWN in SQL.
+        if (isNotEqual)
+        {
+            if (leftNullable && rightNullable)
+            {
+                return new SqlLogicalNode(
+                    new SqlBinaryNode(leftNode, "<>", rightNode),
+                    "OR",
+                    new SqlLogicalNode(
+                        new SqlLogicalNode(new SqlNullCheckNode(leftNode, false), "AND", new SqlNullCheckNode(rightNode, true)),
+                        "OR",
+                        new SqlLogicalNode(new SqlNullCheckNode(leftNode, true), "AND", new SqlNullCheckNode(rightNode, false))));
+            }
+
+            if (leftNullable)
+            {
+                return new SqlLogicalNode(new SqlBinaryNode(leftNode, "<>", rightNode), "OR", new SqlNullCheckNode(leftNode, false));
+            }
+
+            if (rightNullable)
+            {
+                return new SqlLogicalNode(new SqlBinaryNode(leftNode, "<>", rightNode), "OR", new SqlNullCheckNode(rightNode, false));
+            }
+        }
+        else if (leftNullable && rightNullable)
+        {
+            return new SqlLogicalNode(
+                new SqlBinaryNode(leftNode, "=", rightNode),
+                "OR",
+                new SqlLogicalNode(new SqlNullCheckNode(leftNode, false), "AND", new SqlNullCheckNode(rightNode, false)));
+        }
+
+        return new SqlBinaryNode(leftNode, isNotEqual ? "<>" : "=", rightNode);
+    }
+
+    private static bool CanBeNull(Expression expression)
+    {
+        expression = StripConvert(expression);
+        if (expression is MemberExpression member && IsEntityMember(member))
+        {
+            return !member.Type.IsValueType || Nullable.GetUnderlyingType(member.Type) is not null;
+        }
+
+        if (expression is MethodCallExpression call &&
+            call.Method.DeclaringType == typeof(string) &&
+            call.Object is not null &&
+            call.Method.Name is "ToLower" or "ToUpper" or "Trim")
+        {
+            return CanBeNull(call.Object);
+        }
+
+        // Captured values are evaluated during translation; nulls are handled by IsNullValue.
+        return false;
     }
 
     private SqlExpressionNode ParseMethodCall(MethodCallExpression call)
@@ -257,6 +317,24 @@ public sealed class ExpressionSqlTranslator
                 _ => $"%{pattern}"
             };
             return new SqlLikeNode(ParseValue(call.Object), new SqlParameterNode(pattern));
+        }
+
+        if (call.Method.DeclaringType == typeof(string) && call.Object is not null)
+        {
+            if (call.Arguments.Count == 0 && call.Method.Name is "ToLower" or "ToLowerInvariant")
+            {
+                return new SqlFunctionCallNode("LOWER", new[] { ParseValue(call.Object) });
+            }
+
+            if (call.Arguments.Count == 0 && call.Method.Name is "ToUpper" or "ToUpperInvariant")
+            {
+                return new SqlFunctionCallNode("UPPER", new[] { ParseValue(call.Object) });
+            }
+
+            if (call.Arguments.Count == 0 && call.Method.Name is "Trim")
+            {
+                return new SqlFunctionCallNode("TRIM", new[] { ParseValue(call.Object) });
+            }
         }
 
         if (call.Method.Name == "Contains")

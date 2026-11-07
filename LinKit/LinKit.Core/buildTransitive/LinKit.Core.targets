@@ -1,0 +1,14 @@
+<Project>
+  <!--
+    MSBuild does not flow analyzers from a transitive PackageReference. Without this file a project
+    that consumes LinKit.Core indirectly would compile against the attributes but never run the
+    generator, producing confusing "no handler generated" behaviour. The analyzer is added twice at
+    worst; Roslyn de-duplicates analyzers by assembly identity.
+  -->
+  <ItemGroup Condition="'$(LinKitDisableSourceGenerators)' != 'true'">
+    <Analyzer
+      Include="$(MSBuildThisFileDirectory)..\analyzers\dotnet\cs\LinKit.Generator.dll"
+      Condition="Exists('$(MSBuildThisFileDirectory)..\analyzers\dotnet\cs\LinKit.Generator.dll')"
+    />
+  </ItemGroup>
+</Project>

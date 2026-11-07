@@ -1,0 +1,77 @@
+<Project>
+  <!--
+    Repository-wide build defaults, evaluated for every project (libraries, generators, tests, samples).
+  -->
+  <PropertyGroup>
+    <LangVersion>latest</LangVersion>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <AnalysisLevel>latest</AnalysisLevel>
+    <EnforceCodeStyleInBuild>true</EnforceCodeStyleInBuild>
+    <Deterministic>true</Deterministic>
+    <ContinuousIntegrationBuild Condition="'$(CI)' == 'true'">true</ContinuousIntegrationBuild>
+    <SatelliteResourceLanguages>en</SatelliteResourceLanguages>
+  </PropertyGroup>
+
+  <!--
+    LinKit ships a promise: every runtime package is Native AOT compatible and trim clean. That promise is only
+    meaningful when the analyzers that enforce it run on the library projects themselves, not just on a smoke-test
+    app. Detection is name-based so it can be evaluated here in the props pass: the SDK derives DocumentationFile
+    from GenerateDocumentationFile while importing Microsoft.Common.CurrentVersion.targets, which happens before
+    Directory.Build.targets is imported, so setting these properties there would be too late.
+
+    Excluded: netstandard2.0 Roslyn generators (*.Generator), test projects (*.Tests) and the AOT smoke app.
+  -->
+  <PropertyGroup>
+    <LinKitIsGenerator Condition="$(MSBuildProjectName.EndsWith('.Generator'))"
+      >true</LinKitIsGenerator>
+    <LinKitIsLibrary
+      Condition="'$(LinKitIsGenerator)' != 'true'
+                 and $(MSBuildProjectName.StartsWith('LinKit.'))
+                 and !$(MSBuildProjectName.EndsWith('.Tests'))
+                 and !$(MSBuildProjectName.EndsWith('.AotSmoke'))"
+      >true</LinKitIsLibrary>
+  </PropertyGroup>
+
+  <PropertyGroup Condition="'$(LinKitIsLibrary)' == 'true'">
+    <IsAotCompatible>true</IsAotCompatible>
+    <IsTrimmable>true</IsTrimmable>
+    <EnableTrimAnalyzer>true</EnableTrimAnalyzer>
+    <EnableAotAnalyzer>true</EnableAotAnalyzer>
+    <EnableSingleFileAnalyzer>true</EnableSingleFileAnalyzer>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <!-- CS1591: documentation coverage is tracked separately; do not fail the build on it yet. -->
+    <NoWarn>$(NoWarn);CS1591</NoWarn>
+  </PropertyGroup>
+
+  <!--
+    Package identity is defined once; each csproj only adds PackageId/Version/Description/Tags/ReleaseNotes.
+  -->
+  <PropertyGroup Condition="'$(LinKitIsLibrary)' == 'true'">
+    <Authors>Linh Nguyen</Authors>
+    <Company>LinKit</Company>
+    <PackageLicenseExpression>MIT</PackageLicenseExpression>
+    <PackageProjectUrl>https://quoclinh.id.vn/docs/linkit</PackageProjectUrl>
+    <RepositoryUrl>https://github.com/linhnq0520/LinKit</RepositoryUrl>
+    <RepositoryType>git</RepositoryType>
+    <IncludeSymbols>true</IncludeSymbols>
+    <SymbolPackageFormat>snupkg</SymbolPackageFormat>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+    <PackageReleaseNotes>Full documentation &amp; release notes: https://quoclinh.id.vn/docs/linkit</PackageReleaseNotes>
+    <EnablePackageValidation>true</EnablePackageValidation>
+  </PropertyGroup>
+
+  <!--
+    A package that declares PackageReadmeFile must actually contain the file. Projects whose README lives one or
+    two levels up (for example LinKit.Json) add their own None item.
+  -->
+  <ItemGroup Condition="'$(LinKitIsLibrary)' == 'true'">
+    <None
+      Include="$(MSBuildProjectDirectory)\README.md"
+      Pack="true"
+      PackagePath="\"
+      Visible="false"
+      Condition="Exists('$(MSBuildProjectDirectory)\README.md')"
+    />
+  </ItemGroup>
+</Project>

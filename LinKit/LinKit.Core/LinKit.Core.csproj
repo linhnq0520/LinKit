@@ -1,42 +1,28 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
     <TargetFrameworks>net8.0;net9.0;net10.0</TargetFrameworks>
-    <ImplicitUsings>enable</ImplicitUsings>
-    <Nullable>enable</Nullable>
     <PackageId>LinKit.Core</PackageId>
-    <Version>3.2.1</Version>
-    <Authors>Linh Nguyen</Authors>
+    <Version>3.4.0</Version>
     <Description>A modular .NET toolkit with source-generated CQRS, endpoints, messaging, mapping, and dependency-injection helpers.</Description>
     <PackageTags>source-generator;performance;aot;cqrs;mediator;di;background;job</PackageTags>
-    <PackageLicenseExpression>MIT</PackageLicenseExpression>
-    <PackageReadmeFile>README.md</PackageReadmeFile>
-    <RepositoryUrl>https://github.com/linhnq0520/LinKit</RepositoryUrl>
-    <RepositoryType>git</RepositoryType>
-    <IncludeSymbols>true</IncludeSymbols>
-    <SymbolPackageFormat>snupkg</SymbolPackageFormat>
+    <PackageReleaseNotes>v3.4.0: Native AOT and trimming analyzers are now enforced on the package itself. Microsoft.Extensions.* dependencies are published as normal transitive dependencies (previously PrivateAssets=all, which broke consumers). Full documentation &amp; release notes: https://quoclinh.id.vn/docs/linkit</PackageReleaseNotes>
   </PropertyGroup>
+
   <ItemGroup>
-    <None Include="README.md" Pack="true" PackagePath="\" />
-    <ProjectReference Include="..\LinKit.Generator\LinKit.Generator.csproj" ReferenceOutputAssembly="false" />
+    <ProjectReference
+      Include="..\LinKit.Generator\LinKit.Generator.csproj"
+      ReferenceOutputAssembly="false"
+    />
   </ItemGroup>
+
   <ItemGroup>
-    <PackageReference
-      Include="Microsoft.Extensions.DependencyInjection.Abstractions"
-      Version="8.0.0"
-      PrivateAssets="all"
-    />
-    <PackageReference
-      Include="Microsoft.Extensions.Hosting.Abstractions"
-      Version="8.0.0"
-      PrivateAssets="all"
-    />
-    <PackageReference
-      Include="Microsoft.Extensions.Logging.Abstractions"
-      Version="8.0.0"
-      PrivateAssets="all"
-    />
-    <PackageReference Include="Microsoft.Extensions.Options" Version="8.0.0" PrivateAssets="all" />
+    <!-- Public API surface exposes IServiceCollection/IHostedService/ILogger, so these must stay transitive. -->
+    <PackageReference Include="Microsoft.Extensions.DependencyInjection.Abstractions" />
+    <PackageReference Include="Microsoft.Extensions.Hosting.Abstractions" />
+    <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" />
+    <PackageReference Include="Microsoft.Extensions.Options" />
   </ItemGroup>
+
   <ItemGroup>
     <None
       Include="..\LinKit.Generator\bin\$(Configuration)\netstandard2.0\LinKit.Generator.dll"
@@ -44,7 +30,9 @@
       PackagePath="analyzers/dotnet/cs"
       Visible="false"
     />
+    <None Include="buildTransitive\**" Pack="true" PackagePath="buildTransitive\" />
   </ItemGroup>
+
   <ItemGroup>
     <Folder Include="Json\" />
   </ItemGroup>

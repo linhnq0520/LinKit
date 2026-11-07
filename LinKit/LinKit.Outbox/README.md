@@ -86,7 +86,26 @@ await inbox.MarkProcessedAsync(
     cancellationToken);
 ```
 
-For durable correctness, commit the side effect and Inbox mark in the same transaction. `HasBeenProcessedAsync` followed by `MarkProcessedAsync` is not an atomic claim: two concurrent deliveries can both pass the check. Use an atomic reservation/locking strategy if concurrent duplicate execution must be prevented.
+For durable correctness, commit the side effect and Inbox mark in the same transaction. `HasBeenProcessedAsync` followed by `MarkProcessedAsync` is not an atomic claim: two concurrent deliveries can both pass the check. Use `TryMarkProcessedAsync` (below) or another atomic reservation/locking strategy if concurrent duplicate execution must be prevented.
+
+### Atomic claim with `TryMarkProcessedAsync`
+
+`IInboxStore` now offers a race-free, claim-before-processing alternative to check-then-mark:
+
+```csharp
+Task<bool> TryMarkProcessedAsync(string messageId, string consumerName, TimeSpan? expiry = null, CancellationToken ct = default);
+```
+
+It returns `true` if this caller claimed the message (process it) and `false` if it was already claimed (skip):
+
+```csharp
+if (await inbox.TryMarkProcessedAsync(id, consumer, TimeSpan.FromMinutes(10), ct))
+{
+    // handle the message
+}
+```
+
+**Tradeoff:** a crash *after* claiming but *before* processing leaves the message marked until the expiry elapses (at-most-once for that window). Pass an `expiry` to allow reclaim. The method is implemented atomically in `InMemoryInboxStore` and `AdoNetInboxStore`; the existing `HasBeenProcessedAsync`/`MarkProcessedAsync` are unchanged.
 
 ## Delivery semantics and retries
 
@@ -116,7 +135,7 @@ The runtime may have a reflection serializer fallback in non-AOT execution. A ge
 ## Public interfaces
 
 - `IOutboxStore`: save, query, claim, mark processed, and schedule failed records.
-- `IInboxStore`: consumer-scoped processed checks and optional expiry.
+- `IInboxStore`: consumer-scoped processed checks, atomic claim (`TryMarkProcessedAsync`), and optional expiry.
 - `OutboxOptions`: publisher timing, batch/lease sizes, retry count and backoff limits.
 - `OutboxPublisherService`: hosted polling/publish loop registered by `AddLinKitOutbox`.
 

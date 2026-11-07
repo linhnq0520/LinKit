@@ -6,21 +6,29 @@ public enum BackoffType
 {
     Constant,
     Linear,
-    Exponential
+    Exponential,
 }
 
 /// <summary>
 /// Declares retry policy metadata.
-/// This attribute is currently metadata only; use <see cref="ResiliencePipeline"/> for retry behavior.
+/// This attribute is currently metadata only; use <c>LinKit.Resilience.ResiliencePipeline</c> for retry behavior.
 /// </summary>
-[AttributeUsage(AttributeTargets.Class | AttributeTargets.Method | AttributeTargets.Interface, Inherited = true, AllowMultiple = false)]
+[AttributeUsage(
+    AttributeTargets.Class | AttributeTargets.Method | AttributeTargets.Interface,
+    Inherited = true,
+    AllowMultiple = false
+)]
 public sealed class RetryAttribute : Attribute
 {
     public int MaxRetries { get; set; } = 3;
     public int DelayMilliseconds { get; set; } = 200;
     public BackoffType Backoff { get; set; } = BackoffType.Exponential;
 
-    public RetryAttribute(int maxRetries = 3, int delayMilliseconds = 200, BackoffType backoff = BackoffType.Exponential)
+    public RetryAttribute(
+        int maxRetries = 3,
+        int delayMilliseconds = 200,
+        BackoffType backoff = BackoffType.Exponential
+    )
     {
         MaxRetries = maxRetries;
         DelayMilliseconds = delayMilliseconds;
@@ -30,16 +38,24 @@ public sealed class RetryAttribute : Attribute
 
 /// <summary>
 /// Declares circuit-breaker policy metadata.
-/// This attribute is currently metadata only; use <see cref="ResiliencePipeline"/> for circuit-breaker behavior.
+/// This attribute is currently metadata only; use <c>LinKit.Resilience.ResiliencePipeline</c> for circuit-breaker behavior.
 /// </summary>
-[AttributeUsage(AttributeTargets.Class | AttributeTargets.Method | AttributeTargets.Interface, Inherited = true, AllowMultiple = false)]
+[AttributeUsage(
+    AttributeTargets.Class | AttributeTargets.Method | AttributeTargets.Interface,
+    Inherited = true,
+    AllowMultiple = false
+)]
 public sealed class CircuitBreakerAttribute : Attribute
 {
     public int FailureThreshold { get; set; } = 5;
     public int DurationSeconds { get; set; } = 30;
     public int MinimumThroughput { get; set; } = 5;
 
-    public CircuitBreakerAttribute(int failureThreshold = 5, int durationSeconds = 30, int minimumThroughput = 5)
+    public CircuitBreakerAttribute(
+        int failureThreshold = 5,
+        int durationSeconds = 30,
+        int minimumThroughput = 5
+    )
     {
         FailureThreshold = failureThreshold;
         DurationSeconds = durationSeconds;
@@ -49,9 +65,13 @@ public sealed class CircuitBreakerAttribute : Attribute
 
 /// <summary>
 /// Declares timeout policy metadata.
-/// This attribute is currently metadata only; use <see cref="ResiliencePipeline"/> for timeout behavior.
+/// This attribute is currently metadata only; use <c>LinKit.Resilience.ResiliencePipeline</c> for timeout behavior.
 /// </summary>
-[AttributeUsage(AttributeTargets.Class | AttributeTargets.Method | AttributeTargets.Interface, Inherited = true, AllowMultiple = false)]
+[AttributeUsage(
+    AttributeTargets.Class | AttributeTargets.Method | AttributeTargets.Interface,
+    Inherited = true,
+    AllowMultiple = false
+)]
 public sealed class TimeoutAttribute : Attribute
 {
     public int Milliseconds { get; set; } = 5000;
@@ -64,5 +84,6 @@ public sealed class TimeoutAttribute : Attribute
 
 public class CircuitBreakerOpenException : Exception
 {
-    public CircuitBreakerOpenException(string message) : base(message) { }
+    public CircuitBreakerOpenException(string message)
+        : base(message) { }
 }

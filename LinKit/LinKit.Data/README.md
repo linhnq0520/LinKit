@@ -55,8 +55,8 @@ int updated = await session.Product.Query()
 ```
 
 ### 3. Rich Search & Query Expressions
-- **String Search**: `.Contains(text)`, `.StartsWith(text)`, `.EndsWith(text)`, and `.Like(pattern)` with automatic wildcard escaping (`ESCAPE '~'`).
-- **Collections & Ranges**: `.In(params T[] values)`, `.NotIn(...)`, and `.Between(lower, upper)`.
+- **String Search & Functions**: `.Contains(text)`, `.StartsWith(text)`, `.EndsWith(text)`, and `.Like(pattern)` with automatic wildcard escaping (`ESCAPE '!'`). Supports LINQ string functions (`ToLower()`, `ToUpper()`, `Trim()`) translated into native SQL functions (`LOWER`, `UPPER`, `TRIM`).
+- **Collections & Ranges**: `.In(params T[] values)`, `.NotIn(...)`, and `.Between(lower, upper)`. Includes automatic 1000-element chunking with `OR` clauses for Oracle database engine compliance (`ORA-01795`).
 - **Dynamic Conditions**: `.WhereIf(condition, p => ...)` simplifies conditional filtering in search APIs without awkward `if-else` branching:
   ```csharp
   var paged = await session.WorkflowInfo.Query()
@@ -66,9 +66,12 @@ int updated = await session.Product.Query()
       .OrderByDescending(t => t.Id)
       .ToPagedListAsync(req.PageIndex, req.PageSize, ct);
   ```
+- **Explicit Bounded Reads**: `ToListAsync()` without `Take()` returns **all** matching rows — there is no implicit 100-row cap (previous versions silently truncated at 100). Use `Take(n)` or `ToPagedListAsync` for bounded reads.
+- **C# Null Semantics**: LINQ/expression equality follows C# null semantics — `x.Name != value` includes rows where `Name` is `NULL`, and nullable-column comparisons are null-compensated in SQL.
+- **EXISTS-style `Any()`**: LINQ `Any()` translates to `SELECT 1 ... LIMIT 1` instead of `COUNT(*)` (except when the query contains `Skip`).
 
 ### 4. Native Pagination (`ToPagedListAsync`)
-Available directly on `FluentQuery`, `Query`, and `Repository`:
+Available directly on `FluentQuery`, `Query`, and `Repository`. Built-in multi-dialect pagination support across SQLite, PostgreSQL (`LIMIT/OFFSET`), SQL Server (`OFFSET/FETCH`), MySQL (`LIMIT/OFFSET`), and Oracle 12c+ (`OFFSET/FETCH` with automatic `ORDER BY (SELECT NULL)` fallback):
 ```csharp
 PagedResult<ProductEntity> result = await repository.Query()
     .Where(p => p.Price.Between(10m, 100m))
@@ -79,8 +82,11 @@ PagedResult<ProductEntity> result = await repository.Query()
 ```
 
 ### 5. Multi-Database Schema Synchronization & Migrations
-- **Auto-Sync Schema (`AutoSyncSchema = true`)**: Automatically inspects database catalog and adds missing tables, columns, indexes, and composite indexes on startup.
+- **Auto-Sync Schema (`AutoSyncSchema = true`)**: Automatically inspects database catalog and adds missing tables, columns, indexes, and composite indexes on startup (with robust case-insensitivity handling across catalogs such as Oracle and PostgreSQL). Catalog-query failures in `SchemaSynchronizer` now propagate instead of being silently ignored.
 - **Versioned Migrations (`[DataMigration]`)**: Idempotent, ordered data and schema migrations tracked in `__linkit_migrations`.
+- **Cross-Instance Migration Lock**: `MigrationRunner` takes a database-level lock so concurrent application instances do not migrate simultaneously — `sp_getapplock` (SQL Server), `pg_advisory_lock` (PostgreSQL), `GET_LOCK` (MySQL). SQLite and Oracle do not take a cross-instance lock.
+- **Natural Version Ordering & Error Propagation**: Migration versions are ordered naturally (numeric segments compared as numbers, so `"v9"` runs before `"v10"`), and history-read errors are surfaced instead of swallowed.
+- **Escaped Identifiers & Compile-Time Safety**: All schema/DDL dialects escape identifiers and catalog-query literals (quote/backtick/bracket doubling). Table or column names containing quote or bracket characters are rejected at compile time by generator diagnostic **LNKDATA005** (error).
 
 ### 6. Raw SQL & Stored Procedure Fallbacks
 Ergonomic raw SQL helpers on `DataSession` and `Repository`:

@@ -12,12 +12,27 @@ public interface IQuery<out TResponse> : IRequest<TResponse> { }
 
 public interface INotification { }
 
+/// <summary>
+/// Implemented by a CQRS request that carries a caller-side deadline. In-process dispatch ignores it; generated
+/// gRPC clients translate it into <c>CallOptions.Deadline</c> so a slow remote call cannot outlive the request.
+/// </summary>
+public interface IHasDeadline
+{
+    /// <summary>
+    /// How long the call may run, relative to the moment it is issued. A <see langword="null"/> or non-positive value
+    /// means no deadline is applied.
+    /// </summary>
+    TimeSpan? Deadline { get; }
+}
+
 public readonly struct Unit
 {
     public static readonly Unit Value = new();
 }
 
 /// <summary>
+/// Handles a request of type <typeparamref name="TRequest"/> and produces <typeparamref name="TResponse"/>.
+/// </summary>
 public interface IHandler<in TRequest, TResponse>
     where TRequest : IRequest<TResponse>
 {

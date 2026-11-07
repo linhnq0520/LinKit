@@ -1,7 +1,7 @@
 using System;
+using System.Collections.Generic;
 using System.Data;
 using System.Data.Common;
-using System.Collections.Generic;
 using System.Runtime.ExceptionServices;
 using System.Threading;
 using System.Threading.Tasks;
@@ -14,10 +14,14 @@ public class DelegateDbConnectionFactory : IDbConnectionFactory
     private readonly Func<DbConnection> _connectionCreator;
     public DatabaseDialect Dialect { get; }
 
-    public DelegateDbConnectionFactory(DatabaseDialect dialect, Func<DbConnection> connectionCreator)
+    public DelegateDbConnectionFactory(
+        DatabaseDialect dialect,
+        Func<DbConnection> connectionCreator
+    )
     {
         Dialect = dialect;
-        _connectionCreator = connectionCreator ?? throw new ArgumentNullException(nameof(connectionCreator));
+        _connectionCreator =
+            connectionCreator ?? throw new ArgumentNullException(nameof(connectionCreator));
     }
 
     public DbConnection CreateConnection() => _connectionCreator();
@@ -36,14 +40,13 @@ public class UnitOfWork : IUnitOfWork
     private DbTransaction? _transaction;
 
     public UnitOfWork(IDbConnectionFactory factory)
-        : this(factory, null, null)
-    {
-    }
+        : this(factory, null, null) { }
 
     public UnitOfWork(
         IDbConnectionFactory factory,
         IEnumerable<IUnitOfWorkInterceptor>? interceptors = null,
-        ILogger<UnitOfWork>? logger = null)
+        ILogger<UnitOfWork>? logger = null
+    )
     {
         _factory = factory ?? throw new ArgumentNullException(nameof(factory));
         _interceptors = interceptors is null
@@ -71,7 +74,14 @@ public class UnitOfWork : IUnitOfWork
         }
     }
 
-    public async Task<DbTransaction> BeginTransactionAsync(CancellationToken ct = default)
+    public Task<DbTransaction> BeginTransactionAsync(CancellationToken ct = default) =>
+        BeginTransactionAsync(IsolationLevel.Unspecified, ct);
+
+    /// <summary>Starts (or returns the already active) transaction using the requested isolation level.</summary>
+    public async Task<DbTransaction> BeginTransactionAsync(
+        IsolationLevel isolation,
+        CancellationToken ct = default
+    )
     {
         await _syncLock.WaitAsync(ct);
         try
@@ -85,7 +95,7 @@ public class UnitOfWork : IUnitOfWork
                 await _connection.OpenAsync(ct);
             }
 
-            _transaction = await _connection.BeginTransactionAsync(ct);
+            _transaction = await _connection.BeginTransactionAsync(isolation, ct);
             return _transaction;
         }
         finally
@@ -132,7 +142,8 @@ public class UnitOfWork : IUnitOfWork
                     operationFailure = new AggregateException(
                         "Unit of Work commit failed, and the transaction could not be rolled back.",
                         ex,
-                        rollbackException);
+                        rollbackException
+                    );
                 }
             }
             finally
@@ -162,9 +173,14 @@ public class UnitOfWork : IUnitOfWork
                 "AfterCommit",
                 connection!,
                 static (interceptor, currentConnection) =>
-                    interceptor.AfterCommitAsync(currentConnection, CancellationToken.None));
+                    interceptor.AfterCommitAsync(currentConnection, CancellationToken.None)
+            );
             if (operationFailure is not null && hookFailure is not null)
-                throw new AggregateException("The transaction committed, but cleanup and post-commit callbacks failed.", operationFailure, hookFailure);
+                throw new AggregateException(
+                    "The transaction committed, but cleanup and post-commit callbacks failed.",
+                    operationFailure,
+                    hookFailure
+                );
             if (hookFailure is not null)
                 ExceptionDispatchInfo.Capture(hookFailure).Throw();
             if (operationFailure is not null)
@@ -178,9 +194,14 @@ public class UnitOfWork : IUnitOfWork
                 "AfterRollback",
                 connection!,
                 static (interceptor, currentConnection) =>
-                    interceptor.AfterRollbackAsync(currentConnection, CancellationToken.None));
+                    interceptor.AfterRollbackAsync(currentConnection, CancellationToken.None)
+            );
             if (operationFailure is not null && hookFailure is not null)
-                throw new AggregateException("The transaction was rolled back after a commit failure, and rollback callbacks also failed.", operationFailure, hookFailure);
+                throw new AggregateException(
+                    "The transaction was rolled back after a commit failure, and rollback callbacks also failed.",
+                    operationFailure,
+                    hookFailure
+                );
             if (hookFailure is not null)
                 ExceptionDispatchInfo.Capture(hookFailure).Throw();
         }
@@ -238,9 +259,14 @@ public class UnitOfWork : IUnitOfWork
                 "AfterRollback",
                 connection!,
                 static (interceptor, currentConnection) =>
-                    interceptor.AfterRollbackAsync(currentConnection, CancellationToken.None));
+                    interceptor.AfterRollbackAsync(currentConnection, CancellationToken.None)
+            );
             if (operationFailure is not null && hookFailure is not null)
-                throw new AggregateException("The transaction was rolled back, but cleanup and rollback callbacks failed.", operationFailure, hookFailure);
+                throw new AggregateException(
+                    "The transaction was rolled back, but cleanup and rollback callbacks failed.",
+                    operationFailure,
+                    hookFailure
+                );
             if (hookFailure is not null)
                 ExceptionDispatchInfo.Capture(hookFailure).Throw();
         }
@@ -252,7 +278,8 @@ public class UnitOfWork : IUnitOfWork
     private async Task<Exception?> InvokePostTransactionHooksAsync(
         string hookName,
         DbConnection connection,
-        Func<IUnitOfWorkInterceptor, DbConnection, Task> invoke)
+        Func<IUnitOfWorkInterceptor, DbConnection, Task> invoke
+    )
     {
         List<Exception>? failures = null;
         foreach (var interceptor in _interceptors)
@@ -270,7 +297,11 @@ public class UnitOfWork : IUnitOfWork
 
         return failures is null
             ? null
-            : new UnitOfWorkHookException(hookName, hookName == "AfterCommit", new AggregateException(failures));
+            : new UnitOfWorkHookException(
+                hookName,
+                hookName == "AfterCommit",
+                new AggregateException(failures)
+            );
     }
 
     public void Dispose()

@@ -3,34 +3,43 @@
     <TargetFramework>net10.0</TargetFramework>
     <IsPackable>false</IsPackable>
     <IsTestProject>true</IsTestProject>
-    <Nullable>enable</Nullable>
-    <ImplicitUsings>enable</ImplicitUsings>
   </PropertyGroup>
+
   <ItemGroup>
-    <PackageReference Include="Microsoft.Extensions.TimeProvider.Testing" Version="10.1.0" />
-    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.12.0" />
-    <PackageReference Include="xunit" Version="2.9.3" />
-    <PackageReference Include="xunit.runner.visualstudio" Version="3.0.1">
+    <PackageReference Include="Microsoft.Extensions.TimeProvider.Testing" />
+    <PackageReference Include="Microsoft.NET.Test.Sdk" />
+    <PackageReference Include="xunit" />
+    <PackageReference Include="xunit.runner.visualstudio">
       <PrivateAssets>all</PrivateAssets>
       <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
     </PackageReference>
-    <PackageReference Include="Microsoft.Extensions.DependencyInjection" Version="10.0.13" />
-    <PackageReference Include="Microsoft.Data.Sqlite" Version="10.0.13" />
-    <PackageReference Include="Microsoft.Data.SqlClient" Version="7.1.1" />
-    <PackageReference Include="MySqlConnector" Version="2.6.2" />
-    <PackageReference Include="Npgsql" Version="10.0.3" />
-    <PackageReference Include="Oracle.ManagedDataAccess.Core" Version="23.26.400" />
-    <PackageReference Include="System.Security.Cryptography.Pkcs" Version="10.0.13" />
+    <PackageReference Include="Microsoft.Extensions.DependencyInjection" />
+    <PackageReference Include="Microsoft.Data.Sqlite" />
+    <PackageReference Include="Microsoft.Data.SqlClient" />
+    <PackageReference Include="MySqlConnector" />
+    <PackageReference Include="Npgsql" />
+    <PackageReference Include="Oracle.ManagedDataAccess.Core" />
+    <PackageReference Include="System.Security.Cryptography.Pkcs" />
   </ItemGroup>
+
   <ItemGroup>
     <ProjectReference Include="..\..\LinKit.Outbox\LinKit.Outbox.csproj" />
     <ProjectReference Include="..\..\LinKit.Messaging.Kafka\LinKit.Messaging.Kafka.csproj" />
+    <ProjectReference Include="..\..\LinKit.Messaging.RabbitMQ\LinKit.Messaging.RabbitMQ.csproj" />
     <ProjectReference Include="..\..\LinKit.Resilience\LinKit.Resilience.csproj" />
     <ProjectReference Include="..\..\LinKit.Caching\LinKit.Caching.csproj" />
     <ProjectReference Include="..\..\LinKit.Tenancy\LinKit.Tenancy.csproj" />
+    <ProjectReference Include="..\..\LinKit.Sagas\LinKit.Sagas.csproj" />
     <ProjectReference Include="..\..\LinKit.Data\LinKit.Data.csproj" />
     <ProjectReference Include="..\..\LinKit.Outbox.Data\LinKit.Outbox.Data.csproj" />
-    <ProjectReference Include="..\..\LinKit.Data.Generator\LinKit.Data.Generator.csproj" OutputItemType="Analyzer" ReferenceOutputAssembly="false" />
+    <ProjectReference Include="..\..\LinKit.Grpc\LinKit.Grpc.csproj" />
+    <!-- Analyzers do not flow through ProjectReference, so the generator is declared explicitly. -->
+    <ProjectReference
+      Include="..\..\LinKit.Data.Generator\LinKit.Data.Generator.csproj"
+      OutputItemType="Analyzer"
+      ReferenceOutputAssembly="false"
+    />
+    <!-- TODO(Phase 4): extract these fixtures into Test/LinKit.Testing and drop this sample reference. -->
     <ProjectReference Include="..\..\Samples\MonolithSample\MonolithSample.csproj" />
   </ItemGroup>
 </Project>

@@ -67,29 +67,17 @@ public class ExecuteOrderSagaCommandHandler(SagaCoordinator<OrderSagaState> coor
 
         try
         {
-            // Bước 1: Giữ hàng trong kho
-            var state = await coordinator.ExecuteStepAsync(
-                correlationId,
-                new ReserveInventoryEvent(request.Amount),
-                new ReserveInventoryStep(),
-                nextState: "InventoryReserved",
-                cancellationToken: ct
-            );
-
-            // Bước 2: Trừ tiền (Nếu lỗi, coordinator tự động gọi CompensateAsync!)
-            state = await coordinator.ExecuteStepAsync(
-                correlationId,
-                new ProcessPaymentEvent(request.Amount, request.SimulatePaymentFailure),
-                new ProcessPaymentStep(),
-                nextState: "Completed",
-                cancellationToken: ct
-            );
+            // Thực thi chuỗi các bước Saga với cơ chế tự động bù trừ ngược (LIFO compensation) nếu có bước lỗi
+            var state = await coordinator.Begin(correlationId)
+                .Step(new ReserveInventoryStep(), new ReserveInventoryEvent(request.Amount), "InventoryReserved")
+                .Step(new ProcessPaymentStep(), new ProcessPaymentEvent(request.Amount, request.SimulatePaymentFailure), "Completed")
+                .ExecuteAsync(ct);
 
             return $"Saga {correlationId} Completed Successfully! State: {state.CurrentState}";
         }
         catch (Exception ex)
         {
-            return $"Saga {correlationId} Failed at Step 2 and Compensated. Error: {ex.Message}";
+            return $"Saga {correlationId} Failed and Compensated. Error: {ex.Message}";
         }
     }
 }

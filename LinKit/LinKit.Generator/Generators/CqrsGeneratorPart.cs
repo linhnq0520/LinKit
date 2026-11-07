@@ -57,11 +57,24 @@ internal static class CqrsGeneratorPart
         return angleIndex > 0 ? name.Substring(0, angleIndex) : name;
     }
 
+    private static string GetSafeMethodSuffix(string typeName)
+    {
+        var sb = new StringBuilder(typeName.Length);
+        string clean = typeName.StartsWith("global::") ? typeName.Substring(8) : typeName;
+        foreach (char c in clean)
+        {
+            sb.Append(char.IsLetterOrDigit(c) ? c : '_');
+        }
+        return sb.ToString();
+    }
+
     private static bool IsBehaviorApplicable(BehaviorInfo behavior, HandlerInfo handler)
     {
         string cleanTarget = GetCleanName(behavior.TargetInterface);
         bool targetMatch =
-            cleanTarget == "System.Object" || handler.UnboundMarkerInterfaces.Contains(cleanTarget);
+            cleanTarget == "System.Object"
+            || cleanTarget == "object"
+            || handler.UnboundMarkerInterfaces.Contains(cleanTarget);
 
         if (!targetMatch)
             return false;
@@ -69,7 +82,9 @@ internal static class CqrsGeneratorPart
         return behavior.GenericConstraints.All(constraint =>
         {
             string cleanConstraint = GetCleanName(constraint);
-            return handler.UnboundMarkerInterfaces.Contains(cleanConstraint);
+            return cleanConstraint == "System.Object"
+                || cleanConstraint == "object"
+                || handler.UnboundMarkerInterfaces.Contains(cleanConstraint);
         });
     }
 
@@ -161,6 +176,9 @@ internal static class CqrsGeneratorPart
                 );
                 string mediatorSource = GenerateMediatorClass(dispatchHandlers, source.Left.Behaviors, source.Right);
                 spc.AddSource("LinKit.Core.Cqrs.Mediator.g.cs", SourceText.From(mediatorSource, Encoding.UTF8));
+
+                string extensionsSource = GenerateMediatorExtensions(dispatchHandlers, source.Right);
+                spc.AddSource("LinKit.Core.Cqrs.MediatorExtensions.g.cs", SourceText.From(extensionsSource, Encoding.UTF8));
             }
         );
     }
@@ -520,7 +538,7 @@ using System.Threading.Tasks;
         private readonly IServiceProvider _serviceProvider;
         public Mediator(IServiceProvider serviceProvider) => _serviceProvider = serviceProvider;
 
-        public Task SendAsync(ICommand command, CancellationToken cancellationToken = default) => (object)command! switch {"
+        public Task DispatchAsync(ICommand command, CancellationToken cancellationToken = default) => (object)command! switch {"
         );
 
         foreach (
@@ -540,7 +558,7 @@ using System.Threading.Tasks;
             @"            _ => throw new HandlerNotFoundException(command.GetType())
         };
 
-        public Task<TResponse> SendAsync<TResponse>(ICommand<TResponse> command, CancellationToken cancellationToken = default) => (object)command! switch {"
+        public Task<TResponse> DispatchAsync<TResponse>(ICommand<TResponse> command, CancellationToken cancellationToken = default) => (object)command! switch {"
         );
 
         foreach (
@@ -560,7 +578,7 @@ using System.Threading.Tasks;
             @"            _ => throw new HandlerNotFoundException(command.GetType())
         };
 
-        public Task<TResponse> QueryAsync<TResponse>(IQuery<TResponse> query, CancellationToken cancellationToken = default) => (object)query! switch {"
+        public Task<TResponse> DispatchQueryAsync<TResponse>(IQuery<TResponse> query, CancellationToken cancellationToken = default) => (object)query! switch {"
         );
 
         foreach (
@@ -578,7 +596,7 @@ using System.Threading.Tasks;
             @"            _ => throw new HandlerNotFoundException(query.GetType())
         };
 
-        public Task PublishAsync<TNotification>(TNotification notification, PublishStrategy strategy = PublishStrategy.Sequential, CancellationToken ct = default) => (object)notification! switch {"
+        public Task DispatchNotificationAsync<TNotification>(TNotification notification, PublishStrategy strategy = PublishStrategy.Sequential, CancellationToken ct = default) where TNotification : INotification => (object)notification! switch {"
         );
 
         var notificationGroups = handlers
@@ -587,11 +605,7 @@ using System.Threading.Tasks;
             .ToList();
         foreach (var group in notificationGroups)
         {
-            string safeName = group
-                .Key.Replace(".", "_")
-                .Replace("<", "_")
-                .Replace(">", "_")
-                .Replace("global::", "");
+            string safeName = GetSafeMethodSuffix(group.Key);
             sb.AppendLine($"            {group.Key} n => Publish_{safeName}(n, strategy, ct),");
         }
 
@@ -600,7 +614,7 @@ using System.Threading.Tasks;
         };"
         );
 
-        // Gen logic Command/Query Handler Private methods
+        // Gen logic Command/Query Handler internal methods
         foreach (var h in handlers.Where(h => !h.IsNotification))
         {
             var applicableBehaviors = GetApplicableBehaviorTypes(h, behaviors!);
@@ -612,7 +626,7 @@ using System.Threading.Tasks;
                     // Zero-allocation Fast-path: Direct call without delegate/closure or async state machine
                     sb.AppendLine(
                         $@"
-        private Task HandleVoidRequest({h.RequestType} request, CancellationToken cancellationToken)
+        internal Task HandleVoidRequest({h.RequestType} request, CancellationToken cancellationToken)
             => _serviceProvider.GetRequiredService<{h.HandlerInterface}>().HandleAsync(request, cancellationToken);"
                     );
                 }
@@ -620,7 +634,7 @@ using System.Threading.Tasks;
                 {
                     sb.AppendLine(
                         $@"
-        private async Task HandleVoidRequest({h.RequestType} request, CancellationToken cancellationToken)
+        internal async Task HandleVoidRequest({h.RequestType} request, CancellationToken cancellationToken)
         {{
             Func<Task> next = () => _serviceProvider.GetRequiredService<{h.HandlerInterface}>().HandleAsync(request, cancellationToken);"
                     );
@@ -628,7 +642,7 @@ using System.Threading.Tasks;
                     {
                         AppendBehaviorWrap(sb, closedType, false);
                     }
-                    sb.AppendLine("            await next();\n        }");
+                    sb.AppendLine("            await next().ConfigureAwait(false);\n        }");
                 }
             }
             else
@@ -638,7 +652,7 @@ using System.Threading.Tasks;
                     // Zero-allocation Fast-path: Direct call without delegate/closure or async state machine
                     sb.AppendLine(
                         $@"
-        private Task<{h.ResponseType}> HandleResultRequest({h.RequestType} request, CancellationToken cancellationToken)
+        internal Task<{h.ResponseType}> HandleResultRequest({h.RequestType} request, CancellationToken cancellationToken)
             => _serviceProvider.GetRequiredService<{h.HandlerInterface}>().HandleAsync(request, cancellationToken);"
                     );
                 }
@@ -646,7 +660,7 @@ using System.Threading.Tasks;
                 {
                     sb.AppendLine(
                         $@"
-        private Task<{h.ResponseType}> HandleResultRequest({h.RequestType} request, CancellationToken cancellationToken)
+        internal Task<{h.ResponseType}> HandleResultRequest({h.RequestType} request, CancellationToken cancellationToken)
         {{
             RequestHandlerDelegate<{h.ResponseType}> next = () => _serviceProvider.GetRequiredService<{h.HandlerInterface}>().HandleAsync(request, cancellationToken);"
                     );
@@ -659,19 +673,15 @@ using System.Threading.Tasks;
             }
         }
 
-        // Gen logic Notification Publisher Private methods
+        // Gen logic Notification Publisher internal methods
         foreach (var group in notificationGroups)
         {
-            string safeName = group
-                .Key.Replace(".", "_")
-                .Replace("<", "_")
-                .Replace(">", "_")
-                .Replace("global::", "");
+            string safeName = GetSafeMethodSuffix(group.Key);
             string handlerInterface = group.First().HandlerInterface; // INotificationHandler<T>
 
             sb.AppendLine(
                 $@"
-        private async Task Publish_{safeName}({group.Key} notification, PublishStrategy strategy, CancellationToken ct)
+        internal async Task Publish_{safeName}({group.Key} notification, PublishStrategy strategy, CancellationToken ct)
         {{
             var handlers = _serviceProvider.GetServices<{handlerInterface}>();
 
@@ -712,7 +722,9 @@ using System.Threading.Tasks;
         string requestType = handler.RequestType;
         string responseType = handler.ResponseType;
 
-        // Specific behaviors trước, global behaviors sau — cả 2 đều reverse
+        // Wrapping iterates the returned list front-to-back; the last wrap is outermost and runs first.
+        // Documented execution order: global/contract behaviors by Order, then specific behaviors
+        // closest to the handler. Reverse each group so the first-declared runs first within the group.
         var specificClosedTypes = handler.SpecificBehaviors.Select(sbType =>
             $"{GetCleanName(sbType)}<{requestType}, {responseType}>"
         );
@@ -721,7 +733,6 @@ using System.Threading.Tasks;
             $"{b.UnboundBehaviorType}<{requestType}, {responseType}>"
         );
 
-        // Specific wrap trước (reverse), global wrap sau (reverse)
         return specificClosedTypes.Reverse().Concat(globalClosedTypes.Reverse()).ToList();
     }
 
@@ -729,9 +740,10 @@ using System.Threading.Tasks;
     {
         string asyncModifier = hasResult ? "" : "async ";
         string awaitModifier = hasResult ? "" : "await ";
+        string configureAwait = hasResult ? "" : ".ConfigureAwait(false)";
         string nextDelegate = hasResult
             ? "capturedNext"
-            : $"async () => {{ await capturedNext(); return {UnitTypeName}.Value; }}";
+            : $"async () => {{ await capturedNext().ConfigureAwait(false); return {UnitTypeName}.Value; }}";
 
         sb.AppendLine(
             $$"""
@@ -742,10 +754,139 @@ using System.Threading.Tasks;
                                 .HandleAsync(
                                     request,
                                     {{nextDelegate}},
-                                    cancellationToken);
+                                    cancellationToken){{configureAwait}};
                         }
             """
         );
+    }
+
+    private static string GenerateMediatorExtensions(
+        IReadOnlyList<HandlerInfo> handlers,
+        string generatedNamespace
+    )
+    {
+        StringBuilder sb = new StringBuilder();
+        sb.AppendLine(
+            @"// <auto-generated />
+#nullable enable
+using LinKit.Core.Cqrs;
+using System.Runtime.CompilerServices;
+using System.Threading;
+using System.Threading.Tasks;
+
+"
+        );
+        sb.AppendLine($"namespace {generatedNamespace}");
+        sb.AppendLine("{");
+        sb.AppendLine("    public static class MediatorGeneratedExtensions");
+        sb.AppendLine("    {");
+
+        // Commands (Void)
+        foreach (
+            var h in handlers.Where(x =>
+                !x.IsNotification
+                && GetCleanName(x.HandlerInterface) == ICommandHandlerName
+                && x.ResponseType == UnitTypeName
+            )
+        )
+        {
+            sb.AppendLine(
+                $@"        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public static Task SendAsync(
+            this IMediator mediator,
+            {h.RequestType} command,
+            CancellationToken cancellationToken = default)
+        {{
+            if (mediator is global::{generatedNamespace}.Mediator m)
+            {{
+                return m.HandleVoidRequest(command, cancellationToken);
+            }}
+            return mediator.DispatchAsync(command, cancellationToken);
+        }}
+"
+            );
+        }
+
+        // Commands (With Response)
+        foreach (
+            var h in handlers.Where(x =>
+                !x.IsNotification
+                && GetCleanName(x.HandlerInterface) == ICommandHandlerName
+                && x.ResponseType != UnitTypeName
+            )
+        )
+        {
+            sb.AppendLine(
+                $@"        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public static Task<{h.ResponseType}> SendAsync(
+            this IMediator mediator,
+            {h.RequestType} command,
+            CancellationToken cancellationToken = default)
+        {{
+            if (mediator is global::{generatedNamespace}.Mediator m)
+            {{
+                return m.HandleResultRequest(command, cancellationToken);
+            }}
+            return mediator.DispatchAsync<{h.ResponseType}>(command, cancellationToken);
+        }}
+"
+            );
+        }
+
+        // Queries
+        foreach (
+            var h in handlers.Where(x =>
+                !x.IsNotification && GetCleanName(x.HandlerInterface) == IQueryHandlerName
+            )
+        )
+        {
+            sb.AppendLine(
+                $@"        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public static Task<{h.ResponseType}> QueryAsync(
+            this IMediator mediator,
+            {h.RequestType} query,
+            CancellationToken cancellationToken = default)
+        {{
+            if (mediator is global::{generatedNamespace}.Mediator m)
+            {{
+                return m.HandleResultRequest(query, cancellationToken);
+            }}
+            return mediator.DispatchQueryAsync<{h.ResponseType}>(query, cancellationToken);
+        }}
+"
+            );
+        }
+
+        // Notifications
+        var notificationGroups = handlers
+            .Where(h => h.IsNotification)
+            .GroupBy(h => h.RequestType)
+            .ToList();
+
+        foreach (var group in notificationGroups)
+        {
+            string safeName = GetSafeMethodSuffix(group.Key);
+            sb.AppendLine(
+                $@"        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public static Task PublishAsync(
+            this IMediator mediator,
+            {group.Key} notification,
+            PublishStrategy strategy = PublishStrategy.Sequential,
+            CancellationToken ct = default)
+        {{
+            if (mediator is global::{generatedNamespace}.Mediator m)
+            {{
+                return m.Publish_{safeName}(notification, strategy, ct);
+            }}
+            return mediator.DispatchNotificationAsync(notification, strategy, ct);
+        }}
+"
+            );
+        }
+
+        sb.AppendLine("    }");
+        sb.AppendLine("}");
+        return sb.ToString();
     }
     #endregion
 }

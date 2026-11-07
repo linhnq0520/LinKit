@@ -1,34 +1,29 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
     <TargetFrameworks>net8.0;net9.0;net10.0</TargetFrameworks>
-    <ImplicitUsings>enable</ImplicitUsings>
-    <Nullable>enable</Nullable>
     <PackageId>LinKit.Data</PackageId>
-    <Version>2.3.1</Version>
-    <Authors>Linh Nguyen</Authors>
-    <Description>Source-generated ADO.NET data access and additive schema synchronization for LinKit; selected paths are covered by Native AOT smoke tests.</Description>
+    <Version>2.4.0</Version>
+    <Description>Source-generated ADO.NET data access and additive schema synchronization for LinKit; every runtime path is Native AOT and trim analysed.</Description>
     <PackageTags>linkit;data;repository;schema-synchronization;ado-net;aot;cqrs</PackageTags>
-    <PackageLicenseExpression>MIT</PackageLicenseExpression>
-    <PackageReadmeFile>README.md</PackageReadmeFile>
-    <RepositoryUrl>https://github.com/linhnq0520/LinKit</RepositoryUrl>
-    <RepositoryType>git</RepositoryType>
-    <IncludeSymbols>true</IncludeSymbols>
-    <SymbolPackageFormat>snupkg</SymbolPackageFormat>
+    <PackageReleaseNotes>v2.4.0: Set-based InsertRange/UpdateRange/DeleteRange (multi-row VALUES and chunked IN) instead of one round-trip per row, typed DbDataReader accessors in generated mappers, inherited-property support for [DataRecord], configurable command timeout/isolation, and an opt-in concurrent DataSession mode. Full documentation &amp; release notes: https://quoclinh.id.vn/docs/linkit</PackageReleaseNotes>
   </PropertyGroup>
 
   <ItemGroup>
-    <None Include="README.md" Pack="true" PackagePath="\" />
+    <InternalsVisibleTo Include="LinKit.Messaging.Tests" />
   </ItemGroup>
 
   <ItemGroup>
     <ProjectReference Include="..\LinKit.Core\LinKit.Core.csproj" />
-    <ProjectReference Include="..\LinKit.Data.Generator\LinKit.Data.Generator.csproj" ReferenceOutputAssembly="false" />
+    <ProjectReference
+      Include="..\LinKit.Data.Generator\LinKit.Data.Generator.csproj"
+      ReferenceOutputAssembly="false"
+    />
   </ItemGroup>
 
   <ItemGroup>
-    <PackageReference Include="Microsoft.Extensions.DependencyInjection.Abstractions" Version="8.0.0" />
-    <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="8.0.0" />
-    <PackageReference Include="Microsoft.Extensions.Hosting.Abstractions" Version="8.0.0" />
+    <PackageReference Include="Microsoft.Extensions.DependencyInjection.Abstractions" />
+    <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" />
+    <PackageReference Include="Microsoft.Extensions.Hosting.Abstractions" />
   </ItemGroup>
 
   <ItemGroup>
@@ -38,5 +33,6 @@
       PackagePath="analyzers/dotnet/cs"
       Visible="false"
     />
+    <None Include="buildTransitive\**" Pack="true" PackagePath="buildTransitive\" />
   </ItemGroup>
 </Project>

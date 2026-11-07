@@ -55,6 +55,23 @@ public sealed class MigrationRunner : IMigrationRunner
             await conn.OpenAsync(ct);
         }
 
+        await AcquireMigrationLockAsync(conn, _connectionFactory.Dialect, ct);
+        try
+        {
+            await RunPendingMigrationsAsync(conn, dialect, migrations, ct);
+        }
+        finally
+        {
+            await ReleaseMigrationLockAsync(conn, _connectionFactory.Dialect, ct);
+        }
+    }
+
+    private async Task RunPendingMigrationsAsync(
+        DbConnection conn,
+        ISqlDialect dialect,
+        IReadOnlyList<MigrationDescriptor> migrations,
+        CancellationToken ct)
+    {
         // 1. Ensure __linkit_migrations history table exists
         var createTableSql = dialect.GenerateCreateMigrationsTableSql();
         await ExecuteNonQueryAsync(conn, createTableSql, null, ct);
@@ -62,10 +79,10 @@ public sealed class MigrationRunner : IMigrationRunner
         // 2. Query applied migrations
         var appliedIds = await GetAppliedMigrationIdsAsync(conn, dialect, ct);
 
-        // 3. Filter pending migrations in exact ordinal order
+        // 3. Filter pending migrations in natural version order (numeric runs compared as numbers)
         var pending = migrations
             .Where(m => !appliedIds.Contains(m.Version))
-            .OrderBy(m => m.Version, StringComparer.Ordinal)
+            .OrderBy(m => m.Version, MigrationVersionComparer.Instance)
             .ToList();
 
         if (pending.Count == 0)
@@ -135,22 +152,82 @@ public sealed class MigrationRunner : IMigrationRunner
             _ => "SELECT \"MigrationId\" FROM \"__linkit_migrations\""
         };
 
-        try
+        // The history table was created above; a failure here is a real error and must not be
+        // swallowed, otherwise already-applied migrations would be re-executed.
+        await using var cmd = conn.CreateCommand();
+        cmd.CommandText = sql;
+        await using var reader = await cmd.ExecuteReaderAsync(ct);
+        while (await reader.ReadAsync(ct))
         {
-            await using var cmd = conn.CreateCommand();
-            cmd.CommandText = sql;
-            await using var reader = await cmd.ExecuteReaderAsync(ct);
-            while (await reader.ReadAsync(ct))
-            {
-                set.Add(reader.GetString(0));
-            }
-        }
-        catch
-        {
-            // Table was just created or empty
+            set.Add(reader.GetString(0));
         }
 
         return set;
+    }
+
+    // Fixed key so every instance contends on the same lock.
+    private const string MigrationLockResource = "__linkit_migrations";
+    private const int PostgresMigrationLockKey = 760311;
+
+    private static async Task AcquireMigrationLockAsync(DbConnection conn, DatabaseDialect dialect, CancellationToken ct)
+    {
+        switch (dialect)
+        {
+            case DatabaseDialect.PostgreSql:
+                await ExecuteScalarAsync(conn, $"SELECT pg_advisory_lock({PostgresMigrationLockKey})", ct);
+                break;
+            case DatabaseDialect.SqlServer:
+            {
+                var result = await ExecuteScalarAsync(conn,
+                    "DECLARE @r int; EXEC @r = sp_getapplock @Resource = N'" + MigrationLockResource +
+                    "', @LockMode = 'Exclusive', @LockOwner = 'Session', @LockTimeout = 60000; SELECT @r;", ct);
+                if (result is null || Convert.ToInt32(result) < 0)
+                    throw new InvalidOperationException("Could not acquire the LinKit migration lock (sp_getapplock). Another instance may be running migrations.");
+                break;
+            }
+            case DatabaseDialect.MySql:
+            {
+                var result = await ExecuteScalarAsync(conn, $"SELECT GET_LOCK('{MigrationLockResource}', 60)", ct);
+                if (result is null || Convert.ToInt32(result) != 1)
+                    throw new InvalidOperationException("Could not acquire the LinKit migration lock (GET_LOCK). Another instance may be running migrations.");
+                break;
+            }
+            default:
+                // SQLite serializes writers at the database level; Oracle has no lightweight
+                // session advisory lock here. Concurrent startups on these providers are not locked.
+                break;
+        }
+    }
+
+    private static async Task ReleaseMigrationLockAsync(DbConnection conn, DatabaseDialect dialect, CancellationToken ct)
+    {
+        try
+        {
+            switch (dialect)
+            {
+                case DatabaseDialect.PostgreSql:
+                    await ExecuteScalarAsync(conn, $"SELECT pg_advisory_unlock({PostgresMigrationLockKey})", ct);
+                    break;
+                case DatabaseDialect.SqlServer:
+                    await ExecuteScalarAsync(conn, "EXEC sp_releaseapplock @Resource = N'" + MigrationLockResource + "', @LockOwner = 'Session';", ct);
+                    break;
+                case DatabaseDialect.MySql:
+                    await ExecuteScalarAsync(conn, $"SELECT RELEASE_LOCK('{MigrationLockResource}')", ct);
+                    break;
+            }
+        }
+        catch (Exception ex)
+        {
+            // Never mask the original migration outcome; the lock is session-scoped and dies with the connection.
+            Debug.WriteLine($"LinKit.Data: Failed to release migration lock: {ex.Message}");
+        }
+    }
+
+    private static async Task<object?> ExecuteScalarAsync(DbConnection conn, string sql, CancellationToken ct)
+    {
+        await using var cmd = conn.CreateCommand();
+        cmd.CommandText = sql;
+        return await cmd.ExecuteScalarAsync(ct);
     }
 
     private static async Task RecordMigrationAppliedAsync(
@@ -193,5 +270,47 @@ public sealed class MigrationRunner : IMigrationRunner
         cmd.Transaction = tx;
         cmd.CommandText = sql;
         await cmd.ExecuteNonQueryAsync(ct);
+    }
+}
+
+/// <summary>
+/// Natural-order comparison so numeric version segments sort numerically ("v9" before "v10").
+/// </summary>
+internal sealed class MigrationVersionComparer : IComparer<string>
+{
+    public static readonly MigrationVersionComparer Instance = new();
+
+    public int Compare(string? x, string? y)
+    {
+        if (ReferenceEquals(x, y)) return 0;
+        if (x is null) return -1;
+        if (y is null) return 1;
+
+        int i = 0, j = 0;
+        while (i < x.Length && j < y.Length)
+        {
+            char cx = x[i], cy = y[j];
+            if (char.IsDigit(cx) && char.IsDigit(cy))
+            {
+                int si = i, sj = j;
+                while (i < x.Length && char.IsDigit(x[i])) i++;
+                while (j < y.Length && char.IsDigit(y[j])) j++;
+
+                // Skip leading zeros, then compare by length and digits to avoid overflow.
+                ReadOnlySpan<char> nx = x.AsSpan(si, i - si).TrimStart('0');
+                ReadOnlySpan<char> ny = y.AsSpan(sj, j - sj).TrimStart('0');
+                if (nx.Length != ny.Length) return nx.Length - ny.Length;
+                int cmp = nx.CompareTo(ny, StringComparison.Ordinal);
+                if (cmp != 0) return cmp;
+            }
+            else
+            {
+                if (cx != cy) return cx.CompareTo(cy);
+                i++;
+                j++;
+            }
+        }
+
+        return (x.Length - i) - (y.Length - j);
     }
 }

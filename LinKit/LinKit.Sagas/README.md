@@ -4,7 +4,7 @@
 
 `LinKit.Sagas` provides saga state/step contracts, a coordinator for one explicitly supplied step at a time, and a replaceable repository abstraction.
 
-> The default repository is in-memory and volatile. This package does not provide a durable event log, automatic multi-step reverse orchestration, distributed locking, or exactly-once execution.
+> The default repository is in-memory and volatile. This package does not provide a durable event log, distributed locking, or exactly-once execution.
 
 ## Install
 
@@ -70,9 +70,53 @@ await coordinator.ExecuteStepAsync(
 
 The coordinator loads state by correlation ID or creates a new data object, runs the supplied step, updates `CurrentState`, and saves. If execution throws, it invokes that same step's compensation with a separate bounded token, records a compensated state when possible, and rethrows the original exception.
 
+## Concurrency and idempotent compensation
+
+`ISagaData` carries two fields that the coordinator and the repository rely on:
+
+- `Version` — an optimistic concurrency token. `ISagaRepository<TData>.SaveAsync` must increment it and reject a save whose token no longer matches the persisted value by throwing `SagaConcurrencyException`. Two workers on the same correlation ID therefore cannot interleave; the loser reloads the state and decides whether the step should be retried.
+- `CompensatedSteps` — the ledger of steps that already ran their compensation. It is persisted with the state, so a redelivered saga (at-least-once transports redeliver) never undoes the same side effect twice. A compensation that throws is _not_ recorded, so a later retry attempts it again.
+
+The in-memory repository implements both, so the same code paths are exercised in tests.
+
+```csharp
+public sealed class DurableSagaRepository<TData> : ISagaRepository<TData> where TData : class, ISagaData
+{
+    public Task SaveAsync(TData data, CancellationToken cancellationToken = default)
+    {
+        // UPDATE saga SET ..., version = @new, compensated_steps = @steps
+        //  WHERE correlation_id = @id AND version = @data.Version
+        // 0 rows affected -> throw new SagaConcurrencyException(data.CorrelationId, data.Version, actualVersion).
+        throw new NotImplementedException();
+    }
+
+    // FindByCorrelationIdAsync and GetStuckAsync are the other two members.
+}
+```
+
+## Stuck sagas
+
+`ISagaRepository<TData>.GetStuckAsync(TimeSpan olderThan)` returns every saga whose `UpdatedAtUtc` is older than the threshold — the signature of a step that threw after its side effect ran, or of a process that died mid-step. `AddLinKitSagas<TData>()` registers a background monitor that logs a warning with the correlation IDs whenever that set is non-empty.
+
+```csharp
+builder.Services.AddLinKitSagas<CheckoutSagaData>(options =>
+{
+    options.StuckAfter = TimeSpan.FromMinutes(5);
+    options.StuckSagaCheckInterval = TimeSpan.FromMinutes(1);
+    options.EnableStuckSagaMonitor = true;      // default
+    options.CompensationTimeout = TimeSpan.FromSeconds(30); // default
+});
+```
+
 ## Production persistence
 
-Register a durable `ISagaRepository<TData>` implementation before `AddLinKitSagas<TData>` so the default registration does not replace it. Durable persistence alone does not make a saga operation exactly-once: protect step side effects with idempotency keys, and design recovery for crashes between the remote side effect and the state save. Repository concurrency/versioning, retries, saga history, and compensation-failure recovery are application/provider responsibilities.
+Register a durable `ISagaRepository<TData>` implementation before `AddLinKitSagas<TData>` so the default registration does not replace it. Because the in-memory fallback loses every in-flight saga on restart, resolution throws in the `Production` environment unless you opt in explicitly:
+
+```csharp
+builder.Services.AddLinKitSagas<CheckoutSagaData>(options => options.AllowInMemoryInProduction = true);
+```
+
+Durable persistence alone does not make a saga operation exactly-once: protect step side effects with idempotency keys, and design recovery for crashes between the remote side effect and the state save. Saga history and compensation-failure recovery remain application/provider responsibilities.
 
 ## Native AOT
 

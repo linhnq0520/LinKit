@@ -7,10 +7,17 @@ public static class MessageHeaderNames
     public const string Timestamp = "linkit-timestamp";
     public const string RetryCount = "linkit-retry-count";
     public const string DestinationTopic = "linkit-destination-topic";
+    public const string RoutingKey = "linkit-routing-key";
     public const string PartitionKey = "linkit-partition-key";
     public const string ExchangeType = "linkit-exchange-type";
     public const string ReplyTo = "linkit-reply-to";
     public const string MessageId = "linkit-message-id";
+
+    /// <summary>
+    /// The tenant that owns the message. Captured when an Outbox message is created and restored by the publisher
+    /// before the broker call, so a tenant never leaks into another tenant's downstream work.
+    /// </summary>
+    public const string TenantId = "linkit-tenant-id";
 }
 
 public class MessageHeaders : Dictionary<string, object>
@@ -33,19 +40,52 @@ public class MessageHeaders : Dictionary<string, object>
     public string? MessageType
     {
         get => TryGetValue(MessageHeaderNames.MessageType, out var val) ? val?.ToString() : null;
-        set { if (value != null) this[MessageHeaderNames.MessageType] = value; }
+        set
+        {
+            if (value != null)
+                this[MessageHeaderNames.MessageType] = value;
+        }
     }
 
     public string? CorrelationId
     {
         get => TryGetValue(MessageHeaderNames.CorrelationId, out var val) ? val?.ToString() : null;
-        set { if (value != null) this[MessageHeaderNames.CorrelationId] = value; }
+        set
+        {
+            if (value != null)
+                this[MessageHeaderNames.CorrelationId] = value;
+        }
     }
 
     public string? DestinationTopic
     {
-        get => TryGetValue(MessageHeaderNames.DestinationTopic, out var val) ? val?.ToString() : null;
-        set { if (value != null) this[MessageHeaderNames.DestinationTopic] = value; }
+        get =>
+            TryGetValue(MessageHeaderNames.DestinationTopic, out var val) ? val?.ToString() : null;
+        set
+        {
+            if (value != null)
+                this[MessageHeaderNames.DestinationTopic] = value;
+        }
+    }
+
+    public string? RoutingKey
+    {
+        get => TryGetValue(MessageHeaderNames.RoutingKey, out var val) ? val?.ToString() : null;
+        set
+        {
+            if (value != null)
+                this[MessageHeaderNames.RoutingKey] = value;
+        }
+    }
+
+    public string? TenantId
+    {
+        get => TryGetValue(MessageHeaderNames.TenantId, out var val) ? val?.ToString() : null;
+        set
+        {
+            if (value != null)
+                this[MessageHeaderNames.TenantId] = value;
+        }
     }
 }
 
@@ -60,22 +100,31 @@ public interface IMessageMetadataProvider
 /// </summary>
 public interface IMessageConsumeInterceptor
 {
-    IDisposable? Enter(IServiceProvider scopedServices, IReadOnlyDictionary<string, object> headers);
+    IDisposable? Enter(
+        IServiceProvider scopedServices,
+        IReadOnlyDictionary<string, object> headers
+    );
 }
 
 public static class MessageConsumeInterceptors
 {
-    public static IDisposable Enter(IServiceProvider scopedServices, IReadOnlyDictionary<string, object> headers)
+    public static IDisposable Enter(
+        IServiceProvider scopedServices,
+        IReadOnlyDictionary<string, object> headers
+    )
     {
         var entered = new List<IDisposable>();
         try
         {
-            foreach (var interceptor in (IEnumerable<IMessageConsumeInterceptor>?)
-                         scopedServices.GetService(typeof(IEnumerable<IMessageConsumeInterceptor>))
-                     ?? Array.Empty<IMessageConsumeInterceptor>())
+            foreach (
+                var interceptor in (IEnumerable<IMessageConsumeInterceptor>?)
+                    scopedServices.GetService(typeof(IEnumerable<IMessageConsumeInterceptor>))
+                    ?? Array.Empty<IMessageConsumeInterceptor>()
+            )
             {
                 var scope = interceptor.Enter(scopedServices, headers);
-                if (scope is not null) entered.Add(scope);
+                if (scope is not null)
+                    entered.Add(scope);
             }
         }
         catch
@@ -88,7 +137,8 @@ public static class MessageConsumeInterceptors
 
     private static void Dispose(List<IDisposable> scopes)
     {
-        for (var i = scopes.Count - 1; i >= 0; i--) scopes[i].Dispose();
+        for (var i = scopes.Count - 1; i >= 0; i--)
+            scopes[i].Dispose();
     }
 
     private sealed class CompositeScope(List<IDisposable> scopes) : IDisposable
@@ -112,7 +162,12 @@ public interface IBrokerConnection
 {
     Task StartConsumingAsync(
         string queueName,
-        Func<string, ReadOnlyMemory<byte>, IReadOnlyDictionary<string, object>, Task> onMessageReceived,
+        Func<
+            string,
+            ReadOnlyMemory<byte>,
+            IReadOnlyDictionary<string, object>,
+            Task
+        > onMessageReceived,
         CancellationToken stoppingToken
     );
 
@@ -121,7 +176,12 @@ public interface IBrokerConnection
         string? exchangeName,
         string exchangeType,
         IEnumerable<string>? routingKeys,
-        Func<string, ReadOnlyMemory<byte>, IReadOnlyDictionary<string, object>, Task> onMessageReceived,
+        Func<
+            string,
+            ReadOnlyMemory<byte>,
+            IReadOnlyDictionary<string, object>,
+            Task
+        > onMessageReceived,
         CancellationToken stoppingToken,
         ushort prefetchCount = 10,
         bool durable = true,

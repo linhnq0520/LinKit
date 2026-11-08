@@ -101,7 +101,9 @@ builder.Services.AddSingleton<ICacheProvider, RedisCacheProvider>();
 
 The interface includes `GetAsync`, `SetAsync`, `RemoveAsync`, and a default `GetOrCreateAsync`. The default method does not guarantee single-flight across concurrent callers; implement provider-specific coordination if that behavior is required. `ICacheKeyResolver<TRequest>` is a contract for a typed key resolver and must be implemented/registered by the application when used; this package does not currently generate cache-key resolvers.
 
-`[CacheAside]` and `[InvalidateCache]` are metadata attributes only today; they do not add caching or invalidation behavior. The source generator reports `LKM003` when either attribute is used. Call `ICacheProvider.GetOrCreateAsync` and `RemoveAsync` explicitly until generated handling is available.
+`[CacheAside]` and `[InvalidateCache]` were **removed** in LinKit.Core 4.0.0. They only carried metadata and never cached or invalidated anything, so they were dropped instead of kept as an API that promises behavior it cannot deliver. Call `ICacheProvider.GetOrCreateAsync` and `RemoveAsync`/`RemoveByPrefixAsync` explicitly.
+
+`AddLinKitCaching` and `AddLinKitRedisCaching` validate the options before the provider is registered. A bad `Host`, `Port`, `Database`, `DefaultTtl`, `ConnectTimeout` or `ReadTimeout` throws `InvalidOperationException` at startup instead of turning every read into a silent miss.
 
 ## Native AOT
 
@@ -110,3 +112,4 @@ The in-memory provider uses statically typed generic APIs and does not require r
 ## License
 
 MIT. See the [repository license](https://github.com/linhnq0520/LinKit/blob/main/LICENSE).
+

@@ -2,10 +2,10 @@
   <PropertyGroup>
     <TargetFrameworks>net8.0;net9.0;net10.0</TargetFrameworks>
     <PackageId>LinKit.Caching</PackageId>
-    <Version>1.4.0</Version>
+    <Version>1.5.0</Version>
     <Description>Two-level (memory + RESP2 Redis) caching for LinKit with expiration, bounded LRU capacity, and single-flight creation.</Description>
     <PackageTags>linkit;caching;hybrid-cache;redis;resp2;aot</PackageTags>
-    <PackageReleaseNotes>v1.4.0: Redis TLS, ACL username authentication and key prefixes, plus EXISTS/TTL/EXPIRE/INCR/MGET/MSET and prefix invalidation. Single-flight no longer blocks a pool thread while holding a lock. Full documentation &amp; release notes: https://quoclinh.id.vn/docs/linkit</PackageReleaseNotes>
+    <PackageReleaseNotes>v1.5.0: Redis options are validated at registration - a bad host, port, database or timeout throws InvalidOperationException immediately instead of turning every read into a silent miss. The [CacheAside]/[InvalidateCache] metadata attributes were removed from LinKit.Core 4.0.0; call ICacheProvider.GetOrCreateAsync/RemoveAsync explicitly. Full documentation &amp; release notes: https://quoclinh.id.vn/docs/linkit</PackageReleaseNotes>
   </PropertyGroup>
 
   <ItemGroup>

@@ -209,17 +209,35 @@ public sealed class DataSession(
     public async Task<object?> ScalarAsync(CommandSpec spec, CancellationToken ct = default)
     {
         await EnterAsync(ct).ConfigureAwait(false);
+        using var activity = Activities.StartActivity("db.query", ActivityKind.Client);
+        activity?.SetTag("db.system.name", Dialect.Kind.ToString());
         try
         {
             await using var command = await PrepareAsync(spec, ct).ConfigureAwait(false);
             var result = await command.ExecuteScalarAsync(ct).ConfigureAwait(false);
             return result is DBNull ? null : result;
         }
+        catch (Exception error)
+        {
+            activity?.SetStatus(ActivityStatusCode.Error, error.GetType().Name);
+            throw;
+        }
         finally
         {
             Exit();
         }
     }
+
+    /// <summary>
+    /// Answers an existence probe without materialising a row: the statement is rendered as a single
+    /// <c>SELECT 1</c> row, so the provider can stop at the first match instead of counting the whole result set.
+    /// Safe to replay through the configured <see cref="IdempotentExecutor"/> because nothing is mutated.
+    /// </summary>
+    public Task<bool> ReadExistsAsync(CommandSpec spec, CancellationToken ct = default) =>
+        RunIdempotentAsync(
+            async token => await ScalarAsync(spec, token).ConfigureAwait(false) is not null,
+            ct
+        );
 
     /// <summary>
     /// <see cref="ScalarAsync"/> for statements that are safe to replay (a SELECT or an idempotent upsert check).
@@ -334,17 +352,88 @@ public sealed class DataSession(
         CommandSpec spec,
         Func<DbDataReader, T> read,
         CancellationToken ct = default
-    ) =>
-        RunIdempotentAsync(
-            async token =>
-            {
-                var results = new List<T>();
-                await foreach (var item in StreamAsync(spec, read, token).ConfigureAwait(false))
-                    results.Add(item);
-                return results;
-            },
-            ct
-        );
+    ) => RunIdempotentAsync(token => ReadRowsAsync(spec, read, int.MaxValue, token), ct);
+
+    /// <summary>
+    /// Materializes at most <paramref name="maxRows"/> rows. Used by <c>First</c>/<c>Single</c> terminals so the
+    /// provider stops reading once the answer is known instead of streaming a result set nobody consumes.
+    /// </summary>
+    public Task<List<T>> QueryTopAsync<T>(
+        CommandSpec spec,
+        Func<DbDataReader, T> read,
+        int maxRows,
+        CancellationToken ct = default
+    )
+    {
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(maxRows);
+        return RunIdempotentAsync(token => ReadRowsAsync(spec, read, maxRows, token), ct);
+    }
+
+    /// <summary>
+    /// Returns the first row and discards the rest of the result set. Unlike <see cref="QueryTopAsync"/> this never
+    /// allocates a list, which is what the <c>First</c>/<c>Single</c> terminals want for the single-row case.
+    /// </summary>
+    public Task<T?> QueryFirstAsync<T>(
+        CommandSpec spec,
+        Func<DbDataReader, T> read,
+        CancellationToken ct = default
+    ) => RunIdempotentAsync(token => ReadFirstAsync(spec, read, token), ct);
+
+    private async Task<List<T>> ReadRowsAsync<T>(
+        CommandSpec spec,
+        Func<DbDataReader, T> read,
+        int maxRows,
+        CancellationToken ct
+    )
+    {
+        await EnterAsync(ct).ConfigureAwait(false);
+        using var activity = Activities.StartActivity("db.query", ActivityKind.Client);
+        activity?.SetTag("db.system.name", Dialect.Kind.ToString());
+        try
+        {
+            await using var command = await PrepareAsync(spec, ct).ConfigureAwait(false);
+            await using var reader = await command.ExecuteReaderAsync(ct).ConfigureAwait(false);
+            var results = new List<T>();
+            while (results.Count < maxRows && await reader.ReadAsync(ct).ConfigureAwait(false))
+                results.Add(read(reader));
+            return results;
+        }
+        catch (Exception error)
+        {
+            activity?.SetStatus(ActivityStatusCode.Error, error.GetType().Name);
+            throw;
+        }
+        finally
+        {
+            Exit();
+        }
+    }
+
+    private async Task<T?> ReadFirstAsync<T>(
+        CommandSpec spec,
+        Func<DbDataReader, T> read,
+        CancellationToken ct
+    )
+    {
+        await EnterAsync(ct).ConfigureAwait(false);
+        using var activity = Activities.StartActivity("db.query", ActivityKind.Client);
+        activity?.SetTag("db.system.name", Dialect.Kind.ToString());
+        try
+        {
+            await using var command = await PrepareAsync(spec, ct).ConfigureAwait(false);
+            await using var reader = await command.ExecuteReaderAsync(ct).ConfigureAwait(false);
+            return await reader.ReadAsync(ct).ConfigureAwait(false) ? read(reader) : default;
+        }
+        catch (Exception error)
+        {
+            activity?.SetStatus(ActivityStatusCode.Error, error.GetType().Name);
+            throw;
+        }
+        finally
+        {
+            Exit();
+        }
+    }
 
     public Task<int> ExecuteSqlAsync(
         string sql,

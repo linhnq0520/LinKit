@@ -96,13 +96,15 @@ public sealed class CheckStockRemoteQuery : IQuery<CheckStockResponse>
 }
 ```
 
-Register the generated mediator and a channel provider. `AddLinKitGrpcClient()` supplies defaults for interceptor/metadata providers and the client factory; an `IGrpcChannelProvider` is required:
+Register the generated mediator and the client graph. `AddLinKitGrpc(baseAddress)` is the composition root: it registers the channel provider plus the default interceptor provider, metadata provider and client factory. `AddLinKitGrpcClient()` (generated) supplies the generated clients and the remote mediator.
 
 ```csharp
 builder.Services.AddLinKitCqrs();
 builder.Services.AddLinKitGrpcClient();
-builder.Services.AddGrpcChannel("https://inventory.example.net");
+builder.Services.AddLinKitGrpc("https://inventory.example.net"); // channel + defaults
 ```
+
+Register your own `IGrpcChannelProvider` or `IGrpcInterceptorProvider` _after_ `AddLinKitGrpc` to override a default; the last registration wins. `AddGrpcChannel(address)` still exists for callers that compose their own graph and registers only the channel provider.
 
 gRPC generated types and registration extensions use the project's `<RootNamespace>.Generated` namespace. The generator emits a global using for the current assembly; when calling a generated extension from a referenced contracts/service project, import that project's generated namespace explicitly.
 

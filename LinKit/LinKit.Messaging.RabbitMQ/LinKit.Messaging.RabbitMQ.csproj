@@ -4,10 +4,10 @@
     <EnableConfigurationBindingGenerator>true</EnableConfigurationBindingGenerator>
     <NoWarn>$(NoWarn);CS9270</NoWarn>
     <PackageId>LinKit.Messaging.RabbitMQ</PackageId>
-    <Version>1.5.0</Version>
+    <Version>1.6.0</Version>
     <Description>RabbitMQ producer and consumer integration for LinKit messaging abstractions.</Description>
     <PackageTags>linkit;messaging;rabbitmq;cqrs;aot</PackageTags>
-    <PackageReleaseNotes>v1.5.0: Native AOT and trimming analyzers are now enforced on the package. Full documentation &amp; release notes: https://quoclinh.id.vn/docs/linkit</PackageReleaseNotes>
+    <PackageReleaseNotes>v1.6.0: RabbitMqOptions are validated through IValidateOptions - an empty host or user name, an out-of-range port, a non-positive channel pool size or an unknown DefaultExchangeType fails at startup instead of on the first publish. Full documentation &amp; release notes: https://quoclinh.id.vn/docs/linkit</PackageReleaseNotes>
   </PropertyGroup>
 
   <ItemGroup>

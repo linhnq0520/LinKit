@@ -55,6 +55,30 @@ public sealed class LinKitRedisOptions
     /// and the operation is treated as a cache miss. Prevents a hung Redis from stalling callers.
     /// </summary>
     public TimeSpan ReadTimeout { get; set; } = TimeSpan.FromSeconds(5);
+
+    /// <summary>
+    /// Collects configuration problems; the list is empty when the options are usable. Registration calls this so a
+    /// typo in an address or timeout fails at startup instead of turning every cache read into a miss.
+    /// </summary>
+    internal IReadOnlyList<string> Validate()
+    {
+        List<string> errors = [];
+
+        if (string.IsNullOrWhiteSpace(Host))
+            errors.Add("Host must not be empty.");
+        if (Port is < 1 or > 65535)
+            errors.Add("Port must be between 1 and 65535.");
+        if (Database < 0)
+            errors.Add("Database must not be negative.");
+        if (DefaultTtl <= TimeSpan.Zero)
+            errors.Add("DefaultTtl must be positive.");
+        if (ConnectTimeout <= TimeSpan.Zero)
+            errors.Add("ConnectTimeout must be positive.");
+        if (ReadTimeout <= TimeSpan.Zero)
+            errors.Add("ReadTimeout must be positive.");
+
+        return errors;
+    }
 }
 
 /// <summary>

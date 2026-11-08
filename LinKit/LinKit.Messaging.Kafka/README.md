@@ -7,9 +7,9 @@ This package provides the Apache Kafka broker adapter for the messaging abstract
 
 ## Prerequisites
 
-*   You must have `LinKit.Core` installed.
-*   You need access to a running Kafka cluster.
-*   This package depends on the native `librdkafka` library via `Confluent.Kafka`. Ensure it is compatible with your target deployment environment, especially for AOT scenarios.
+- You must have `LinKit.Core` installed.
+- You need access to a running Kafka cluster.
+- This package depends on the native `librdkafka` library via `Confluent.Kafka`. Ensure it is compatible with your target deployment environment, especially for AOT scenarios.
 
 The `Confluent.Kafka` dependency uses native `librdkafka` components. Validate the package/runtime assets for each deployment OS and architecture. Source generation in LinKit does not itself certify the native Kafka client as Native AOT compatible.
 
@@ -33,7 +33,10 @@ Add a configuration section for your Kafka connection. The default section name 
   }
 }
 ```
+
 `GroupId` is required for consumer groups. `MaxProcessingAttempts` controls handler retries before publishing a failed record to `<source-topic>.dlq`; `0` retries indefinitely and can block progress on that partition. The destination topic must be provisioned/configured according to your Kafka cluster policy.
+
+`AddLinKitKafka` registers an `IValidateOptions<KafkaOptions>`, so configuration problems surface the first time `IOptions<KafkaOptions>.Value` is resolved (for a hosted consumer, during startup) as an `OptionsValidationException`. Validated: `BootstrapServers` and `GroupId` must not be blank, `BatchSize` must be positive, `LingerMs` and `MaxProcessingAttempts` must not be negative, and `DeadLetterTopicSuffix` must not be null.
 
 LinKit commits Kafka offsets only after the generated message handler completes successfully. Failed handler calls are sought back to the failed record and retried with a delay; this is at-least-once delivery, so handlers should be idempotent. `EnableAutoCommit` is retained for configuration compatibility, but LinKit disables broker auto-commit to avoid acknowledging unprocessed records.
 
@@ -63,10 +66,10 @@ using LinKit.Messaging.Kafka;
 
 var builder = Host.CreateApplicationBuilder(args);
 
-// 1. Register core LinKit services. 
+// 1. Register core LinKit services.
 // This generates the IMessagePublisher and your consumer IHostedService(s).
 builder.Services.AddLinKitCqrs();
-builder.Services.AddLinKitMessaging(); 
+builder.Services.AddLinKitMessaging();
 
 // 2. Provide the Kafka implementation.
 // This "plugs in" Kafka to the generated services.
@@ -75,4 +78,5 @@ builder.Services.AddLinKitKafka(builder.Configuration);
 var host = builder.Build();
 host.Run();
 ```
+
 `AddLinKitKafka` registers the `IBrokerProducer` and `IBrokerConnection` implementations. Offset commits occur after successful handler completion; failures seek back and retry. Delivery is at-least-once, so consumers should be idempotent. Publishing to a DLQ and committing the source offset are not one atomic transaction; a crash can duplicate a DLQ record.

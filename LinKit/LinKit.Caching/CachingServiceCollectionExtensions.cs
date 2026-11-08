@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 
@@ -15,10 +16,12 @@ public static class CachingServiceCollectionExtensions
         {
             LinKitRedisOptions opts = new();
             configureRedis(opts);
+            Validate(opts);
             services.AddSingleton<ICacheProvider>(sp => new HybridRedisCacheProvider(
                 opts,
                 sp.GetService<TimeProvider>(),
-                sp.GetService<ILoggerFactory>()));
+                sp.GetService<ILoggerFactory>()
+            ));
             return services;
         }
 
@@ -31,10 +34,23 @@ public static class CachingServiceCollectionExtensions
         LinKitRedisOptions options
     )
     {
+        Validate(options);
         services.AddSingleton<ICacheProvider>(sp => new HybridRedisCacheProvider(
             options,
             sp.GetService<TimeProvider>(),
-            sp.GetService<ILoggerFactory>()));
+            sp.GetService<ILoggerFactory>()
+        ));
         return services;
+    }
+
+    private static void Validate(LinKitRedisOptions options)
+    {
+        IReadOnlyList<string> errors = options.Validate();
+        if (errors.Count == 0)
+            return;
+
+        throw new InvalidOperationException(
+            "Redis caching is misconfigured: " + string.Join(" ", errors)
+        );
     }
 }

@@ -2,10 +2,10 @@
   <PropertyGroup>
     <TargetFrameworks>net8.0;net9.0;net10.0</TargetFrameworks>
     <PackageId>LinKit.Data</PackageId>
-    <Version>2.4.0</Version>
+    <Version>2.6.0</Version>
     <Description>Source-generated ADO.NET data access and additive schema synchronization for LinKit; every runtime path is Native AOT and trim analysed.</Description>
     <PackageTags>linkit;data;repository;schema-synchronization;ado-net;aot;cqrs</PackageTags>
-    <PackageReleaseNotes>v2.4.0: Set-based InsertRange/UpdateRange/DeleteRange (multi-row VALUES and chunked IN) instead of one round-trip per row, typed DbDataReader accessors in generated mappers, inherited-property support for [DataRecord], configurable command timeout/isolation, and an opt-in concurrent DataSession mode. Full documentation &amp; release notes: https://quoclinh.id.vn/docs/linkit</PackageReleaseNotes>
+    <PackageReleaseNotes>v2.6.0: richer expression surface and faster plans - column-to-column comparisons (NotEqual/GreaterThan/LessThan and their OrEqual variants), Sql.Lower/Upper/Trim/Length/Coalesce/Count/CountDistinct with per-provider function names, tenant and soft-delete predicates pushed into WHERE and into join ON clauses instead of wrapping tables in derived subqueries, Repository.FindManyAsync for chunked IN loads instead of N+1 loops, plus AnyAsync/CountAsync/ListAsync predicate overloads, StreamAsync and DeleteAsync(entity). Full documentation &amp; release notes: https://quoclinh.id.vn/docs/linkit</PackageReleaseNotes>
   </PropertyGroup>
 
   <ItemGroup>

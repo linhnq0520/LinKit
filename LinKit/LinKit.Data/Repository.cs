@@ -57,6 +57,90 @@ public class Repository<TEntity, TKey>(DataSession session, EntityMap<TEntity, T
     public Task<bool> ExistsAsync(TKey id, CancellationToken ct = default) =>
         Query().Where(new Column<TKey>("entity", Mapping.Model.Key).Equal(id)).AnyAsync(ct);
 
+    /// <summary>
+    /// Loads every entity whose key is in <paramref name="keys"/> with one chunked <c>key IN (...)</c> statement per
+    /// parameter batch, instead of one round trip per key. Duplicate keys are collapsed, so no row is returned
+    /// twice, and rows come back grouped by batch rather than in the order of <paramref name="keys"/>.
+    /// </summary>
+    public async Task<List<TEntity>> FindManyAsync(
+        IEnumerable<TKey> keys,
+        CancellationToken ct = default
+    )
+    {
+        ArgumentNullException.ThrowIfNull(keys);
+        var distinct = keys.Distinct().ToArray();
+        if (distinct.Length == 0)
+            return [];
+        var key = new Column<TKey>("entity", Mapping.Model.Key);
+        var chunkSize = Math.Max(1, Session.Dialect.MaxInItems);
+        var results = new List<TEntity>(distinct.Length);
+        foreach (var chunk in distinct.Chunk(chunkSize))
+        {
+            var rows = await Query().Where(key.In(chunk)).ToListAsync(ct).ConfigureAwait(false);
+            results.AddRange(rows);
+        }
+        return results;
+    }
+
+    /// <summary>Answers whether any row matches the predicate, with a single-row probe.</summary>
+    public Task<bool> AnyAsync(Predicate predicate, CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(predicate);
+        return Query().Where(predicate).AnyAsync(ct);
+    }
+
+    /// <summary>Counts the rows matching the predicate without rendering the entity projection.</summary>
+    public Task<long> CountAsync(Predicate predicate, CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(predicate);
+        return Query().Where(predicate).CountAsync(ct);
+    }
+
+    /// <summary>Filtered, paged read. <paramref name="skip"/> is only emitted when it is greater than zero.</summary>
+    public Task<List<TEntity>> ListAsync(
+        Predicate predicate,
+        int skip = 0,
+        int take = 100,
+        CancellationToken ct = default
+    )
+    {
+        ArgumentNullException.ThrowIfNull(predicate);
+        ArgumentOutOfRangeException.ThrowIfNegative(skip);
+        ArgumentOutOfRangeException.ThrowIfNegative(take);
+        var query = Query().Where(predicate);
+        if (skip > 0)
+            query = query.Skip(skip);
+        return query.Take(take).ToListAsync(ct);
+    }
+
+    /// <summary>
+    /// Streams matching rows without materialising them, for large exports and read-through paths that must not
+    /// buffer the whole result set.
+    /// </summary>
+    public IAsyncEnumerable<TEntity> StreamAsync(
+        int skip = 0,
+        int? take = null,
+        CancellationToken ct = default
+    )
+    {
+        ArgumentOutOfRangeException.ThrowIfNegative(skip);
+        if (take is < 0)
+            throw new ArgumentOutOfRangeException(nameof(take));
+        var query = Query();
+        if (skip > 0)
+            query = query.Skip(skip);
+        if (take is { } limit)
+            query = query.Take(limit);
+        return query.StreamAsync(ct);
+    }
+
+    /// <summary>Deletes the row identified by the entity's key.</summary>
+    public Task DeleteAsync(TEntity entity, CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(entity);
+        return DeleteAsync(Mapping.Key(entity), ct);
+    }
+
     public Task<int> DeleteWhereAsync(Predicate predicate, CancellationToken ct = default) =>
         Query().Where(predicate).ExecuteDeleteAsync(ct: ct);
 

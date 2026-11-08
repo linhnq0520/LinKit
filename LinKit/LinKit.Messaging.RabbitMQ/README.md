@@ -7,8 +7,8 @@ This package provides a RabbitMQ broker adapter for the messaging abstractions i
 
 ## Prerequisites
 
-*   You must have `LinKit.Core` installed.
-*   You need access to a running RabbitMQ instance.
+- You must have `LinKit.Core` installed.
+- You need access to a running RabbitMQ instance.
 
 Generated consumers remain active until host shutdown. Failed messages are retried by republishing with an incremented `x-linkit-attempt` header (bounded, immediate retries): `MaxRetryAttempts` (default 3, `0` = no retries) caps the attempts. After the cap, messages go to `DeadLetterExchange` if configured; otherwise they are nacked without requeue — a queue-level broker DLX applies, and if none exists the message is dropped with a warning. Previously, `RequeueOnFailure=true` requeued failed messages forever (poison-message loop). Handlers should still be idempotent and deployments should define a dead-letter policy.
 
@@ -69,10 +69,10 @@ using LinKit.Messaging.RabbitMQ;
 
 var builder = Host.CreateApplicationBuilder(args);
 
-// 1. Register core LinKit services. 
+// 1. Register core LinKit services.
 // This generates the IMessagePublisher and your consumer IHostedService(s).
 builder.Services.AddLinKitCqrs();
-builder.Services.AddLinKitMessaging(); 
+builder.Services.AddLinKitMessaging();
 
 // 2. Provide the RabbitMQ implementation.
 // This "plugs in" RabbitMQ to the generated services.
@@ -84,8 +84,13 @@ host.Run();
 
 `AddLinKitRabbitMQ` registers the producer and consumer connection. Producer sends persistent messages, supports configurable exchange types, header mapping (`CorrelationId`, `ReplyTo`, `MessageId`), and publisher confirms; consumer uses manual acknowledgements and supports dynamic exchange bindings and topologies. Delivery remains at-least-once. The adapter implements bounded immediate retries (`MaxRetryAttempts`, via the `x-linkit-attempt` header) and optional dead-letter routing (`DeadLetterExchange`); delayed retries are not implemented. Configure broker dead-letter routing appropriately to avoid poison-message loops. Test reconnection/recovery behavior against the RabbitMQ version and topology used in production.
 
+## Configuration validation
+
+`AddLinKitRabbitMQ` registers an `IValidateOptions<RabbitMqOptions>`, so configuration problems surface the first time `IOptions<RabbitMqOptions>.Value` is resolved (for the hosted consumer, during startup) as an `OptionsValidationException` instead of on the first publish. Validated: `HostName` and `UserName` must not be blank, `Port` must be between 1 and 65535, `VirtualHost` must not be null, `ChannelPoolSize` must be positive, and `DefaultExchangeType` must be `direct`, `topic`, `fanout` or `headers`.
+
 ## Consumer and producer reliability
 
 - Consumer channel operations are serialized, making acknowledgements thread-safe; channel setup failures dispose the channel. Retries republish directly to the failing queue via the default exchange (`""`) while preserving `x-linkit-original-routing-key` so other queues bound to the same exchange do not receive duplicate messages.
 - Producer confirms are event-driven and fully async — no `WaitForConfirmsOrDie` thread blocking. Any `ExchangeDeclare` failure, confirm timeout, or nack throws and safely disposes the channel instead of returning it to the pool.
 - The exchange declaration cache is keyed by (name, type), so the same exchange name declared with different types is not conflated.
+

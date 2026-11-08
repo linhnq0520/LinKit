@@ -4,10 +4,10 @@
     <EnableConfigurationBindingGenerator>true</EnableConfigurationBindingGenerator>
     <NoWarn>$(NoWarn);CS9270</NoWarn>
     <PackageId>LinKit.Messaging.Kafka</PackageId>
-    <Version>1.4.0</Version>
+    <Version>1.5.0</Version>
     <Description>Apache Kafka producer and consumer integration for LinKit messaging abstractions.</Description>
     <PackageTags>linkit;messaging;kafka;cqrs;aot</PackageTags>
-    <PackageReleaseNotes>v1.4.0: Native AOT and trimming analyzers are now enforced on the package. Full documentation &amp; release notes: https://quoclinh.id.vn/docs/linkit</PackageReleaseNotes>
+    <PackageReleaseNotes>v1.5.0: KafkaOptions are validated through IValidateOptions - an empty BootstrapServers or GroupId, a non-positive BatchSize or a negative attempt/linger setting fails at startup instead of degrading at runtime. Full documentation &amp; release notes: https://quoclinh.id.vn/docs/linkit</PackageReleaseNotes>
   </PropertyGroup>
 
   <ItemGroup>

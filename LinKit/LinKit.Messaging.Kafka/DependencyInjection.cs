@@ -1,6 +1,7 @@
 ﻿using LinKit.Core.Messaging;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Options;
 
 namespace LinKit.Messaging.Kafka;
@@ -20,6 +21,10 @@ public static class DependencyInjection
             new ConfigurationChangeTokenSource<KafkaOptions>(section)
         );
         services.AddSingleton<IConfigureOptions<KafkaOptions>>(new KafkaOptionsSetup(section));
+        // Validation runs on first IOptions<KafkaOptions>.Value resolve, which for a hosted consumer is startup.
+        services.TryAddEnumerable(
+            ServiceDescriptor.Singleton<IValidateOptions<KafkaOptions>, KafkaOptionsValidator>()
+        );
 
         // Đăng ký các triển khai của LinKit
         services.AddSingleton<IBrokerProducer, KafkaProducer>();
@@ -27,5 +32,20 @@ public static class DependencyInjection
         services.AddSingleton<IBrokerConnection, KafkaConnection>();
 
         return services;
+    }
+}
+
+/// <summary>
+/// Turns <see cref="KafkaOptions.Validate"/> into the standard options validation pipeline, so a misconfigured
+/// producer or consumer throws <c>OptionsValidationException</c> instead of failing later on the first message.
+/// </summary>
+internal sealed class KafkaOptionsValidator : IValidateOptions<KafkaOptions>
+{
+    public ValidateOptionsResult Validate(string? name, KafkaOptions options)
+    {
+        IReadOnlyList<string> errors = options.Validate();
+        return errors.Count == 0
+            ? ValidateOptionsResult.Success
+            : ValidateOptionsResult.Fail(errors);
     }
 }

@@ -23,6 +23,13 @@ public static class DependencyInjection
         services.AddSingleton<IConfigureOptions<RabbitMqOptions>>(
             new RabbitMqOptionsSetup(section)
         );
+        // Validation runs on first IOptions<RabbitMqOptions>.Value resolve, which for the hosted consumer is startup.
+        services.TryAddEnumerable(
+            ServiceDescriptor.Singleton<
+                IValidateOptions<RabbitMqOptions>,
+                RabbitMqOptionsValidator
+            >()
+        );
         services.TryAddSingleton<RabbitMqConnectionFactory>();
         services.TryAddSingleton<RabbitMqProducer>();
         services.TryAddSingleton<IBrokerProducer>(sp => sp.GetRequiredService<RabbitMqProducer>());
@@ -39,6 +46,12 @@ public static class DependencyInjection
     )
     {
         services.Configure(configure);
+        services.TryAddEnumerable(
+            ServiceDescriptor.Singleton<
+                IValidateOptions<RabbitMqOptions>,
+                RabbitMqOptionsValidator
+            >()
+        );
         services.TryAddSingleton<RabbitMqConnectionFactory>();
         services.TryAddSingleton<RabbitMqProducer>();
         services.TryAddSingleton<IBrokerProducer>(sp => sp.GetRequiredService<RabbitMqProducer>());
@@ -47,5 +60,20 @@ public static class DependencyInjection
             sp.GetRequiredService<RabbitMqConnection>()
         );
         return services;
+    }
+}
+
+/// <summary>
+/// Turns <see cref="RabbitMqOptions.Validate"/> into the standard options validation pipeline, so a misconfigured
+/// broker or exchange type throws <c>OptionsValidationException</c> instead of failing on the first publish.
+/// </summary>
+internal sealed class RabbitMqOptionsValidator : IValidateOptions<RabbitMqOptions>
+{
+    public ValidateOptionsResult Validate(string? name, RabbitMqOptions options)
+    {
+        IReadOnlyList<string> errors = options.Validate();
+        return errors.Count == 0
+            ? ValidateOptionsResult.Success
+            : ValidateOptionsResult.Fail(errors);
     }
 }

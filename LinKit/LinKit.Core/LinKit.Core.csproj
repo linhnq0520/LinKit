@@ -2,10 +2,10 @@
   <PropertyGroup>
     <TargetFrameworks>net8.0;net9.0;net10.0</TargetFrameworks>
     <PackageId>LinKit.Core</PackageId>
-    <Version>3.4.0</Version>
+    <Version>4.0.0</Version>
     <Description>A modular .NET toolkit with source-generated CQRS, endpoints, messaging, mapping, and dependency-injection helpers.</Description>
     <PackageTags>source-generator;performance;aot;cqrs;mediator;di;background;job</PackageTags>
-    <PackageReleaseNotes>v3.4.0: Native AOT and trimming analyzers are now enforced on the package itself. Microsoft.Extensions.* dependencies are published as normal transitive dependencies (previously PrivateAssets=all, which broke consumers). Full documentation &amp; release notes: https://quoclinh.id.vn/docs/linkit</PackageReleaseNotes>
+    <PackageReleaseNotes>v4.0.0 (breaking): the metadata-only policy attributes were removed because they advertised behavior the framework never provided. [CacheAside]/[InvalidateCache] (LinKit.Core.Caching) and [Retry]/[CircuitBreaker]/[Timeout] (LinKit.Core.Resilience) are gone; use ICacheProvider from LinKit.Caching and ResiliencePipeline from LinKit.Resilience instead. BackoffType and CircuitBreakerOpenException stay. Diagnostic LKM003 was removed with them. Full documentation &amp; release notes: https://quoclinh.id.vn/docs/linkit</PackageReleaseNotes>
   </PropertyGroup>
 
   <ItemGroup>

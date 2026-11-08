@@ -7,9 +7,29 @@ using System.Threading.Tasks;
 
 namespace LinKit.Caching;
 
+/// <summary>
+/// Abstraction over a key/value cache. Keys are opaque strings; callers choose their own namespacing convention (for
+/// example <c>orders:{id}</c>) so an entire namespace can be invalidated with
+/// <see cref="RemoveByPrefixAsync"/>. Implementations should be safe for concurrent use and should treat a cached null
+/// as a hit.
+/// </summary>
 public interface ICacheProvider
 {
+    /// <summary>Gets the cached value for <paramref name="key"/>.</summary>
+    /// <typeparam name="T">Expected value type; a value stored under a different type counts as a miss.</typeparam>
+    /// <param name="key">Cache key.</param>
+    /// <param name="cancellationToken">Token used to abort the lookup.</param>
+    /// <returns>The cached value, or <see langword="default"/> when the key is absent or expired.</returns>
     ValueTask<T?> GetAsync<T>(string key, CancellationToken cancellationToken = default);
+
+    /// <summary>Stores <paramref name="value"/> under <paramref name="key"/>.</summary>
+    /// <typeparam name="T">Type of the value being stored.</typeparam>
+    /// <param name="key">Cache key.</param>
+    /// <param name="value">Value to store; <see langword="null"/> is a valid cached value.</param>
+    /// <param name="ttl">Absolute time-to-live; <see langword="null"/> keeps the entry until it is evicted.</param>
+    /// <param name="sliding">Idle window that resets on every read; <see langword="null"/> disables sliding expiration.</param>
+    /// <param name="cancellationToken">Token used to abort the write.</param>
+    /// <exception cref="ArgumentOutOfRangeException"><paramref name="ttl"/> or <paramref name="sliding"/> is not positive.</exception>
     ValueTask SetAsync<T>(
         string key,
         T value,
@@ -17,6 +37,10 @@ public interface ICacheProvider
         TimeSpan? sliding = null,
         CancellationToken cancellationToken = default
     );
+
+    /// <summary>Removes a single entry. Removing a missing key is a no-op.</summary>
+    /// <param name="key">Cache key.</param>
+    /// <param name="cancellationToken">Token used to abort the operation.</param>
     ValueTask RemoveAsync(string key, CancellationToken cancellationToken = default);
 
     /// <summary>
@@ -50,9 +74,20 @@ public interface ICacheProvider
 /// </summary>
 public interface ICacheKeyResolver<in TRequest>
 {
+    /// <summary>Builds the cache key for <paramref name="request"/>.</summary>
+    /// <param name="request">Request whose fields identify the cache entry.</param>
+    /// <returns>A stable key; include every field that changes the cached payload.</returns>
     string ResolveKey(TRequest request);
 }
 
+/// <summary>
+/// Process-local cache with absolute and sliding expiration, a hard capacity cap and single-flight factory calls.
+/// </summary>
+/// <remarks>
+/// The cache is bounded: when <c>maxCapacity</c> is reached, expired entries are dropped first and then the least
+/// recently used tenth of the entries is evicted. Cancel a stored value with <see cref="RemoveAsync"/>; replacing a
+/// value requires a fresh <see cref="SetAsync{T}"/> call.
+/// </remarks>
 public class InMemoryCacheProvider : ICacheProvider
 {
     private class CacheEntry
@@ -84,19 +119,25 @@ public class InMemoryCacheProvider : ICacheProvider
 
     private void InvalidateFlight(string key) => _flight.Invalidate(key);
 
+    /// <summary>Creates a cache with the default capacity of 10,000 entries and the system clock.</summary>
     public InMemoryCacheProvider()
         : this(DefaultMaxCapacity, null) { }
 
+    /// <summary>Creates a cache with an explicit capacity cap and optional clock.</summary>
+    /// <param name="maxCapacity">Maximum number of entries; values of zero or less fall back to 10,000.</param>
+    /// <param name="timeProvider">Clock used for expiration; defaults to <see cref="TimeProvider.System"/>.</param>
     public InMemoryCacheProvider(int maxCapacity, TimeProvider? timeProvider = null)
     {
         _maxCapacity = maxCapacity > 0 ? maxCapacity : DefaultMaxCapacity;
         _time = timeProvider ?? TimeProvider.System;
     }
 
+    /// <summary>Number of entries currently held, including entries that have expired but not yet been observed.</summary>
     public int Count => _cache.Count;
 
     private DateTime Now => _time.GetUtcNow().UtcDateTime;
 
+    /// <inheritdoc/>
     public ValueTask<T?> GetAsync<T>(string key, CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
@@ -140,6 +181,7 @@ public class InMemoryCacheProvider : ICacheProvider
         return false;
     }
 
+    /// <inheritdoc/>
     public ValueTask SetAsync<T>(
         string key,
         T value,
@@ -199,6 +241,13 @@ public class InMemoryCacheProvider : ICacheProvider
             collection.Remove(kvp);
     }
 
+    /// <inheritdoc/>
+    /// <remarks>
+    /// Concurrent misses for the same key share a single factory invocation. The factory runs under a flight token that
+    /// is cancelled only after every waiter has given up, so one cancelled caller cannot fail the others. A result
+    /// produced after a concurrent <see cref="RemoveAsync"/> or <see cref="SetAsync{T}"/> is not written back, which
+    /// prevents a stale value from resurrecting an invalidated key.
+    /// </remarks>
     public ValueTask<T> GetOrCreateAsync<T>(
         string key,
         Func<CancellationToken, Task<T>> factory,
@@ -227,6 +276,8 @@ public class InMemoryCacheProvider : ICacheProvider
         }
     }
 
+    /// <inheritdoc/>
+    /// <remarks>Any in-flight factory for this key is invalidated so its result is not cached.</remarks>
     public ValueTask RemoveAsync(string key, CancellationToken cancellationToken = default)
     {
         InvalidateFlight(key);
@@ -234,6 +285,9 @@ public class InMemoryCacheProvider : ICacheProvider
         return ValueTask.CompletedTask;
     }
 
+    /// <inheritdoc/>
+    /// <remarks>An empty prefix removes every entry. Prefix matching uses ordinal comparison.</remarks>
+    /// <exception cref="ArgumentNullException"><paramref name="keyPrefix"/> is <see langword="null"/>.</exception>
     public ValueTask<int> RemoveByPrefixAsync(
         string keyPrefix,
         CancellationToken cancellationToken = default

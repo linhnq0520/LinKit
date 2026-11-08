@@ -9,22 +9,40 @@ using Microsoft.Extensions.DependencyInjection;
 namespace LinKit.Data.Migrations;
 
 /// <summary>
-/// Execution context implementation passed to IDataMigration during UpAsync / DownAsync.
+/// Default <see cref="IMigrationContext"/> passed to migrations during their up or down execution.
 /// </summary>
+/// <remarks>
+/// Parameters must be supplied as a dictionary or a sequence of key/value tuples; anonymous objects are rejected so
+/// migrations stay Native AOT compatible.
+/// </remarks>
 public sealed class MigrationContext : IMigrationContext
 {
     private readonly ISqlDialect _sqlDialect;
 
+    /// <inheritdoc/>
     public DbConnection Connection { get; }
+
+    /// <inheritdoc/>
     public DbTransaction? Transaction { get; }
+
+    /// <inheritdoc/>
     public DatabaseDialect Dialect { get; }
+
+    /// <inheritdoc/>
     public IServiceProvider Services { get; }
 
+    /// <summary>Creates the context.</summary>
+    /// <param name="connection">Open connection the migration runs on.</param>
+    /// <param name="transaction">Transaction wrapping the migration, or <see langword="null"/> for none.</param>
+    /// <param name="dialect">Dialect of the database being migrated.</param>
+    /// <param name="services">Service provider of the migration scope.</param>
+    /// <exception cref="ArgumentNullException"><paramref name="connection"/> or <paramref name="services"/> is <see langword="null"/>.</exception>
     public MigrationContext(
         DbConnection connection,
         DbTransaction? transaction,
         DatabaseDialect dialect,
-        IServiceProvider services)
+        IServiceProvider services
+    )
     {
         Connection = connection ?? throw new ArgumentNullException(nameof(connection));
         Transaction = transaction;
@@ -33,9 +51,15 @@ public sealed class MigrationContext : IMigrationContext
         _sqlDialect = SqlDialectFactory.GetDialect(dialect);
     }
 
-    public async Task<int> ExecuteSqlAsync(string sql, object? parameters = null, CancellationToken ct = default)
+    /// <inheritdoc/>
+    public async Task<int> ExecuteSqlAsync(
+        string sql,
+        object? parameters = null,
+        CancellationToken ct = default
+    )
     {
-        if (string.IsNullOrWhiteSpace(sql)) return 0;
+        if (string.IsNullOrWhiteSpace(sql))
+            return 0;
 
         await using var cmd = Connection.CreateCommand();
         cmd.Transaction = Transaction;
@@ -45,7 +69,13 @@ public sealed class MigrationContext : IMigrationContext
         return await cmd.ExecuteNonQueryAsync(ct);
     }
 
-    public async Task<List<T>> QuerySqlAsync<T>(string sql, Func<DbDataReader, T> map, object? parameters = null, CancellationToken ct = default)
+    /// <inheritdoc/>
+    public async Task<List<T>> QuerySqlAsync<T>(
+        string sql,
+        Func<DbDataReader, T> map,
+        object? parameters = null,
+        CancellationToken ct = default
+    )
     {
         await using var cmd = Connection.CreateCommand();
         cmd.Transaction = Transaction;
@@ -61,7 +91,12 @@ public sealed class MigrationContext : IMigrationContext
         return list;
     }
 
-    public async Task<object?> ExecuteScalarAsync(string sql, object? parameters = null, CancellationToken ct = default)
+    /// <inheritdoc/>
+    public async Task<object?> ExecuteScalarAsync(
+        string sql,
+        object? parameters = null,
+        CancellationToken ct = default
+    )
     {
         await using var cmd = Connection.CreateCommand();
         cmd.Transaction = Transaction;
@@ -72,71 +107,111 @@ public sealed class MigrationContext : IMigrationContext
         return res == DBNull.Value ? null : res;
     }
 
-    public async Task<bool> ExistsAsync(string tableName, string whereCondition, object? parameters = null, CancellationToken ct = default)
+    /// <inheritdoc/>
+    public async Task<bool> ExistsAsync(
+        string tableName,
+        string whereCondition,
+        object? parameters = null,
+        CancellationToken ct = default
+    )
     {
         var quotedTable = _sqlDialect.QuoteIdentifier(tableName);
-        var whereClause = !string.IsNullOrWhiteSpace(whereCondition) ? $" WHERE {whereCondition}" : "";
+        var whereClause = !string.IsNullOrWhiteSpace(whereCondition)
+            ? $" WHERE {whereCondition}"
+            : "";
         var sql = Dialect switch
         {
             DatabaseDialect.SqlServer => $"SELECT TOP 1 1 FROM {quotedTable}{whereClause}",
-            DatabaseDialect.Oracle => $"SELECT 1 FROM {quotedTable}{whereClause} FETCH FIRST 1 ROWS ONLY",
-            _ => $"SELECT 1 FROM {quotedTable}{whereClause} LIMIT 1"
+            DatabaseDialect.Oracle =>
+                $"SELECT 1 FROM {quotedTable}{whereClause} FETCH FIRST 1 ROWS ONLY",
+            _ => $"SELECT 1 FROM {quotedTable}{whereClause} LIMIT 1",
         };
 
         var res = await ExecuteScalarAsync(sql, parameters, ct);
         return res != null;
     }
 
-    public async Task<bool> ExistsAsync<TEntity>(System.Linq.Expressions.Expression<Func<TEntity, bool>> predicate, CancellationToken ct = default) where TEntity : class
+    /// <inheritdoc/>
+    public async Task<bool> ExistsAsync<TEntity>(
+        System.Linq.Expressions.Expression<Func<TEntity, bool>> predicate,
+        CancellationToken ct = default
+    )
+        where TEntity : class
     {
         var schemaProvider = Services.GetService<ITableSchemaProvider>();
-        var table = schemaProvider?.GetTables().FirstOrDefault(t => t.EntityType == typeof(TEntity));
+        var table = schemaProvider
+            ?.GetTables()
+            .FirstOrDefault(t => t.EntityType == typeof(TEntity));
         var tableName = table?.TableName ?? typeof(TEntity).Name;
 
-        var propToCol = table != null
-            ? System.Linq.Enumerable.ToDictionary(table.Columns, c => c.PropertyName, c => c.ColumnName, StringComparer.OrdinalIgnoreCase)
-            : new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        var propToCol =
+            table != null
+                ? System.Linq.Enumerable.ToDictionary(
+                    table.Columns,
+                    c => c.PropertyName,
+                    c => c.ColumnName,
+                    StringComparer.OrdinalIgnoreCase
+                )
+                : new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
 
         var translator = new LinKit.Data.Linq.ExpressionSqlTranslator(Dialect, propToCol);
         var translated = translator.Translate(predicate);
 
         var quotedTable = _sqlDialect.QuoteIdentifier(tableName);
-        var whereClause = !string.IsNullOrWhiteSpace(translated.WhereSql) ? $" WHERE {translated.WhereSql}" : "";
+        var whereClause = !string.IsNullOrWhiteSpace(translated.WhereSql)
+            ? $" WHERE {translated.WhereSql}"
+            : "";
 
         var sql = Dialect switch
         {
             DatabaseDialect.SqlServer => $"SELECT TOP 1 1 FROM {quotedTable}{whereClause}",
-            DatabaseDialect.Oracle => $"SELECT 1 FROM {quotedTable}{whereClause} FETCH FIRST 1 ROWS ONLY",
-            _ => $"SELECT 1 FROM {quotedTable}{whereClause} LIMIT 1"
+            DatabaseDialect.Oracle =>
+                $"SELECT 1 FROM {quotedTable}{whereClause} FETCH FIRST 1 ROWS ONLY",
+            _ => $"SELECT 1 FROM {quotedTable}{whereClause} LIMIT 1",
         };
 
         var res = await ExecuteScalarAsync(sql, translated.Parameters, ct);
         return res != null;
     }
 
-    public IRepository<TEntity, TId> GetRepository<TEntity, TId>() where TEntity : class
+    /// <inheritdoc/>
+    public IRepository<TEntity, TId> GetRepository<TEntity, TId>()
+        where TEntity : class
     {
         return Services.GetRequiredService<IRepository<TEntity, TId>>();
     }
 
-    public Task RenameColumnAsync(string tableName, string oldColumnName, string newColumnName, CancellationToken ct = default)
+    /// <inheritdoc/>
+    public Task RenameColumnAsync(
+        string tableName,
+        string oldColumnName,
+        string newColumnName,
+        CancellationToken ct = default
+    )
     {
         var sql = _sqlDialect.GenerateRenameColumnSql(tableName, oldColumnName, newColumnName);
         return ExecuteSqlAsync(sql, null, ct);
     }
 
+    /// <inheritdoc/>
     public Task DropColumnAsync(string tableName, string columnName, CancellationToken ct = default)
     {
         var sql = _sqlDialect.GenerateDropColumnSql(tableName, columnName);
         return ExecuteSqlAsync(sql, null, ct);
     }
 
-    public Task RenameTableAsync(string oldTableName, string newTableName, CancellationToken ct = default)
+    /// <inheritdoc/>
+    public Task RenameTableAsync(
+        string oldTableName,
+        string newTableName,
+        CancellationToken ct = default
+    )
     {
         var sql = _sqlDialect.GenerateRenameTableSql(oldTableName, newTableName);
         return ExecuteSqlAsync(sql, null, ct);
     }
 
+    /// <inheritdoc/>
     public Task DropTableAsync(string tableName, CancellationToken ct = default)
     {
         var sql = _sqlDialect.GenerateDropTableSql(tableName);
@@ -145,7 +220,8 @@ public sealed class MigrationContext : IMigrationContext
 
     private void AttachParameters(DbCommand cmd, object? parameters)
     {
-        if (parameters == null) return;
+        if (parameters == null)
+            return;
         var prefix = Dialect == DatabaseDialect.Oracle ? ":" : "@";
 
         if (parameters is IEnumerable<(string Key, object? Value)> tupleParams)
@@ -173,8 +249,8 @@ public sealed class MigrationContext : IMigrationContext
         }
 
         throw new NotSupportedException(
-            $"[LinKit Native AOT] Passing anonymous object '{parameters.GetType().FullName}' to parameters is not supported in Native AOT mode. " +
-            "Please pass Dictionary<string, object?> or IEnumerable<(string, object?)> instead."
+            $"[LinKit Native AOT] Passing anonymous object '{parameters.GetType().FullName}' to parameters is not supported in Native AOT mode. "
+                + "Please pass Dictionary<string, object?> or IEnumerable<(string, object?)> instead."
         );
     }
 }

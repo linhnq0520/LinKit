@@ -2,12 +2,24 @@ using System;
 
 namespace LinKit.Core.Endpoints;
 
+/// <summary>
+/// HTTP verb an <see cref="ApiEndpointAttribute"/> maps to.
+/// </summary>
 public enum ApiMethod
 {
+    /// <summary>Read operation, mapped to HTTP GET.</summary>
     Get,
+
+    /// <summary>Create operation, mapped to HTTP POST.</summary>
     Post,
+
+    /// <summary>Full update operation, mapped to HTTP PUT.</summary>
     Put,
+
+    /// <summary>Remove operation, mapped to HTTP DELETE.</summary>
     Delete,
+
+    /// <summary>Partial update operation, mapped to HTTP PATCH.</summary>
     Patch,
 }
 
@@ -82,6 +94,11 @@ public class ApiEndpointAttribute : Attribute
     /// API version (e.g., "1.0", "2.0")
     /// </summary>
     public string? Version { get; set; }
+
+    /// <summary>
+    /// Key used to resolve the mediator from the container when the application registers more than one. Leave it
+    /// <see langword="null"/> to use the default mediator.
+    /// </summary>
     public string? MediatorKey { get; set; }
 
     /// <summary>
@@ -132,6 +149,11 @@ public class ApiEndpointAttribute : Attribute
     /// </summary>
     public string? OperationId { get; set; }
 
+    /// <summary>
+    /// Initializes the attribute.
+    /// </summary>
+    /// <param name="method">HTTP verb the endpoint responds to.</param>
+    /// <param name="route">Route template, optionally without the group prefix.</param>
     public ApiEndpointAttribute(ApiMethod method, string route)
     {
         Method = method;
@@ -143,7 +165,11 @@ public class ApiEndpointAttribute : Attribute
 /// Applies an endpoint filter (IEndpointFilter) to the endpoint or route group.
 /// Can be specified multiple times; filters execute in order.
 /// </summary>
-[AttributeUsage(AttributeTargets.Class | AttributeTargets.Assembly, AllowMultiple = true, Inherited = false)]
+[AttributeUsage(
+    AttributeTargets.Class | AttributeTargets.Assembly,
+    AllowMultiple = true,
+    Inherited = false
+)]
 public sealed class EndpointFilterAttribute : Attribute
 {
     /// <summary>
@@ -156,6 +182,11 @@ public sealed class EndpointFilterAttribute : Attribute
     /// </summary>
     public int Order { get; set; }
 
+    /// <summary>
+    /// Initializes the attribute.
+    /// </summary>
+    /// <param name="filterType">Filter type, which must implement <c>Microsoft.AspNetCore.Http.IEndpointFilter</c>.</param>
+    /// <param name="order">Execution order; lower numbers execute first.</param>
     public EndpointFilterAttribute(Type filterType, int order = 0)
     {
         FilterType = filterType;
@@ -201,6 +232,10 @@ public sealed class ApiRouteGroupAttribute : Attribute
     /// </summary>
     public Type[]? Filters { get; set; }
 
+    /// <summary>
+    /// Initializes the attribute.
+    /// </summary>
+    /// <param name="prefix">Route prefix applied to every endpoint in the group.</param>
     public ApiRouteGroupAttribute(string prefix)
     {
         Prefix = prefix;
@@ -238,6 +273,10 @@ public sealed class ApiExceptionMappingAttribute : Attribute
     /// </summary>
     public string LogLevel { get; set; } = "Error";
 
+    /// <summary>
+    /// Initializes the attribute.
+    /// </summary>
+    /// <param name="statusCode">Status code returned to the client when this exception is thrown.</param>
     public ApiExceptionMappingAttribute(int statusCode)
     {
         StatusCode = statusCode;

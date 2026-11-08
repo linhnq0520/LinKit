@@ -2,10 +2,10 @@
   <PropertyGroup>
     <TargetFrameworks>net8.0;net9.0;net10.0</TargetFrameworks>
     <PackageId>LinKit.Json</PackageId>
-    <Version>1.2.0</Version>
+    <Version>1.2.1</Version>
     <Description>Strict, allocation-conscious JSON path navigation and typed value accessors for System.Text.Json.</Description>
     <PackageTags>linkit;json;jsonpath;system-text-json;source-generation</PackageTags>
-    <PackageReleaseNotes>v1.2.0: Native AOT and trimming analyzers are now enforced on the package. Full documentation &amp; release notes: https://quoclinh.id.vn/docs/linkit</PackageReleaseNotes>
+    <PackageReleaseNotes>v1.2.1: documentation and packaging patch - every public member now carries XML documentation (CS1591 is enforced as a build error) and the README was reviewed for accuracy. Previous release: v1.2.0 - Native AOT and trimming analyzers are now enforced on the package. Full documentation &amp; release notes: https://quoclinh.id.vn/docs/linkit</PackageReleaseNotes>
   </PropertyGroup>
 
   <ItemGroup>

@@ -41,8 +41,8 @@ dotnet_diagnostic.IDE0005.severity = silent
 dotnet_diagnostic.IDE0051.severity = suggestion
 dotnet_diagnostic.IDE0052.severity = suggestion
 
-# Public API documentation is tracked separately from compilation
-dotnet_diagnostic.CS1591.severity = none
+# Public API documentation is part of the shipped package (the XML file is what consumers read in IntelliSense), so a
+# missing XML comment on a public member is reported like any other compiler warning instead of being silenced here.
 
 # Roslyn analyzer-authoring rules: keep the release notes honest
 dotnet_diagnostic.RS2008.severity = warning

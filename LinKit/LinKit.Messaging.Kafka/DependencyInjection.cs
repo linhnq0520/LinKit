@@ -6,8 +6,19 @@ using Microsoft.Extensions.Options;
 
 namespace LinKit.Messaging.Kafka;
 
+/// <summary>
+/// Registration helpers for the Kafka transport adapters.
+/// </summary>
 public static class DependencyInjection
 {
+    /// <summary>
+    /// Registers the Kafka producer and consumer adapters, binding <see cref="KafkaOptions"/> from configuration.
+    /// </summary>
+    /// <param name="services">Service collection to configure.</param>
+    /// <param name="configuration">Configuration root that contains the section.</param>
+    /// <param name="sectionName">Section name to bind; defaults to <c>Kafka</c>.</param>
+    /// <returns>The same collection, to allow call chaining.</returns>
+    /// <exception cref="OptionsValidationException">The bound options are invalid; thrown on first resolution.</exception>
     public static IServiceCollection AddLinKitKafka(
         this IServiceCollection services,
         IConfiguration configuration,
@@ -26,9 +37,9 @@ public static class DependencyInjection
             ServiceDescriptor.Singleton<IValidateOptions<KafkaOptions>, KafkaOptionsValidator>()
         );
 
-        // Đăng ký các triển khai của LinKit
+        // LinKit implementations. The connection is a singleton because it aggregates every topic the process subscribes
+        // to and owns the shared consumer that feeds them.
         services.AddSingleton<IBrokerProducer, KafkaProducer>();
-        // IBrokerConnection được quản lý như một singleton để nó có thể thu thập tất cả các topic cần subscribe
         services.AddSingleton<IBrokerConnection, KafkaConnection>();
 
         return services;

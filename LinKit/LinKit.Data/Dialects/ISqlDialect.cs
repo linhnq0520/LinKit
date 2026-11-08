@@ -3,50 +3,129 @@ using System.Text;
 
 namespace LinKit.Data.Dialects;
 
+/// <summary>
+/// Database specific SQL generation used by the schema synchronizer and the migration runner.
+/// </summary>
+/// <remarks>
+/// Implementations are stateless and safe to reuse across threads. Identifiers are quoted with the dialect's own quoting
+/// style and every DDL statement is emitted in the dialect's idempotent form, so generated scripts can run repeatedly
+/// against the same database.
+/// </remarks>
 public interface ISqlDialect
 {
+    /// <summary>Database engine this dialect targets.</summary>
     DatabaseDialect DialectType { get; }
+
+    /// <summary>Prefix used for command parameters, for example <c>@</c> or <c>:</c>.</summary>
     string ParameterPrefix { get; }
+
+    /// <summary>Quotes an identifier so reserved words and mixed case names are preserved.</summary>
+    /// <param name="identifier">Table, column or index name to quote.</param>
+    /// <returns>The quoted identifier.</returns>
     string QuoteIdentifier(string identifier);
+
+    /// <summary>Maps a CLR column type onto the closest database type.</summary>
+    /// <param name="column">Column metadata including length, precision, Unicode and JSON hints.</param>
+    /// <returns>The SQL type fragment, without any nullability clause.</returns>
     string MapSqlType(ColumnSchemaMetadata column);
 
+    /// <summary>Builds an idempotent <c>CREATE TABLE</c> statement for the table.</summary>
+    /// <param name="table">Table metadata with columns, foreign keys and check constraints.</param>
+    /// <returns>SQL that is safe to run when the table already exists.</returns>
     string GenerateCreateTableSql(TableSchemaMetadata table);
+
+    /// <summary>Builds an idempotent <c>ADD COLUMN</c> statement, giving non-nullable columns a safe default.</summary>
+    /// <param name="table">Table that receives the column.</param>
+    /// <param name="column">Column to add.</param>
+    /// <returns>SQL that is safe to run when the column already exists.</returns>
     string GenerateAddColumnSql(TableSchemaMetadata table, ColumnSchemaMetadata column);
+
+    /// <summary>Builds an idempotent single column index creation statement.</summary>
+    /// <param name="table">Table that owns the index.</param>
+    /// <param name="column">Column to index; carries the optional index name and the uniqueness flag.</param>
+    /// <returns>SQL that is safe to run when the index already exists.</returns>
     string GenerateCreateIndexSql(TableSchemaMetadata table, ColumnSchemaMetadata column);
+
+    /// <summary>Builds an idempotent composite index creation statement.</summary>
+    /// <param name="table">Table that owns the index.</param>
+    /// <param name="index">Index name, column list and uniqueness flag.</param>
+    /// <returns>SQL that is safe to run when the index already exists.</returns>
     string GenerateCreateCompositeIndexSql(TableSchemaMetadata table, IndexSchemaMetadata index)
     {
         var unique = index.IsUnique ? "UNIQUE " : "";
-        var cols = string.Join(", ", System.Linq.Enumerable.Select(index.ColumnNames, QuoteIdentifier));
+        var cols = string.Join(
+            ", ",
+            System.Linq.Enumerable.Select(index.ColumnNames, QuoteIdentifier)
+        );
         return $"CREATE {unique}INDEX IF NOT EXISTS {QuoteIdentifier(index.IndexName)} ON {QuoteIdentifier(table.TableName)} ({cols});";
     }
+
+    /// <summary>Builds the query that lists the columns that already exist for the table.</summary>
+    /// <param name="table">Table to inspect.</param>
+    /// <returns>A query whose single result column holds existing column names.</returns>
     string GenerateGetExistingColumnsSql(TableSchemaMetadata table);
+
+    /// <summary>Builds the query that lists the indexes that already exist for the table.</summary>
+    /// <param name="table">Table to inspect.</param>
+    /// <returns>A query whose single result column holds existing index names.</returns>
     string GenerateGetExistingIndexesSql(TableSchemaMetadata table);
 
+    /// <summary>Builds the statement that creates the migration history table.</summary>
+    /// <returns>SQL that is safe to run when the table already exists.</returns>
     string GenerateCreateMigrationsTableSql();
+
+    /// <summary>Builds the statement that renames a column.</summary>
+    /// <param name="tableName">Table that owns the column.</param>
+    /// <param name="oldColumnName">Current column name.</param>
+    /// <param name="newColumnName">New column name.</param>
+    /// <returns>The rename statement.</returns>
     string GenerateRenameColumnSql(string tableName, string oldColumnName, string newColumnName);
+
+    /// <summary>Builds the statement that drops a column.</summary>
+    /// <param name="tableName">Table that owns the column.</param>
+    /// <param name="columnName">Column to drop.</param>
+    /// <returns>The drop statement.</returns>
     string GenerateDropColumnSql(string tableName, string columnName);
+
+    /// <summary>Builds the statement that renames a table.</summary>
+    /// <param name="oldTableName">Current table name.</param>
+    /// <param name="newTableName">New table name.</param>
+    /// <returns>The rename statement.</returns>
     string GenerateRenameTableSql(string oldTableName, string newTableName);
+
+    /// <summary>Builds the statement that drops a table.</summary>
+    /// <param name="tableName">Table to drop.</param>
+    /// <returns>A statement that is safe to run when the table is already absent.</returns>
     string GenerateDropTableSql(string tableName);
 }
 
+/// <summary>
+/// Resolves the <see cref="ISqlDialect"/> implementation for a <see cref="DatabaseDialect"/> value.
+/// </summary>
 public static class SqlDialectFactory
 {
-    public static ISqlDialect GetDialect(DatabaseDialect dialect) => dialect switch
-    {
-        DatabaseDialect.Sqlite => new SqliteDialect(),
-        DatabaseDialect.PostgreSql => new PostgreSqlDialect(),
-        DatabaseDialect.SqlServer => new SqlServerDialect(),
-        DatabaseDialect.MySql => new MySqlDialect(),
-        DatabaseDialect.Oracle => new OracleDialect(),
-        _ => throw new NotSupportedException($"Database dialect {dialect} is not supported.")
-    };
+    /// <summary>Gets the dialect instance for the requested database engine.</summary>
+    /// <param name="dialect">Database engine to resolve.</param>
+    /// <returns>A stateless dialect instance.</returns>
+    /// <exception cref="NotSupportedException">The enum value has no implementation.</exception>
+    public static ISqlDialect GetDialect(DatabaseDialect dialect) =>
+        dialect switch
+        {
+            DatabaseDialect.Sqlite => new SqliteDialect(),
+            DatabaseDialect.PostgreSql => new PostgreSqlDialect(),
+            DatabaseDialect.SqlServer => new SqlServerDialect(),
+            DatabaseDialect.MySql => new MySqlDialect(),
+            DatabaseDialect.Oracle => new OracleDialect(),
+            _ => throw new NotSupportedException($"Database dialect {dialect} is not supported."),
+        };
 }
 
 internal static class SqlDialectHelper
 {
     public static string EscapeLiteral(string value) => value.Replace("'", "''");
 
-    public static string EscapeMySqlLiteral(string value) => value.Replace("\\", "\\\\").Replace("'", "''");
+    public static string EscapeMySqlLiteral(string value) =>
+        value.Replace("\\", "\\\\").Replace("'", "''");
 
     public static string QuoteAnsi(string identifier) => $"\"{identifier.Replace("\"", "\"\"")}\"";
 
@@ -56,13 +135,20 @@ internal static class SqlDialectHelper
 
     public static string NormalizeClrTypeName(string clrTypeName)
     {
-        if (string.IsNullOrWhiteSpace(clrTypeName)) return "";
+        if (string.IsNullOrWhiteSpace(clrTypeName))
+            return "";
         var clean = clrTypeName.Replace("global::", "").Trim();
-        if (clean.StartsWith("System.Nullable<", StringComparison.Ordinal) && clean.EndsWith(">", StringComparison.Ordinal))
+        if (
+            clean.StartsWith("System.Nullable<", StringComparison.Ordinal)
+            && clean.EndsWith(">", StringComparison.Ordinal)
+        )
         {
             clean = clean.Substring(16, clean.Length - 17).Trim().Replace("global::", "");
         }
-        else if (clean.StartsWith("Nullable<", StringComparison.Ordinal) && clean.EndsWith(">", StringComparison.Ordinal))
+        else if (
+            clean.StartsWith("Nullable<", StringComparison.Ordinal)
+            && clean.EndsWith(">", StringComparison.Ordinal)
+        )
         {
             clean = clean.Substring(9, clean.Length - 10).Trim().Replace("global::", "");
         }
@@ -70,13 +156,19 @@ internal static class SqlDialectHelper
     }
 }
 
+/// <summary>SQLite dialect: double quoted identifiers, <c>IF NOT EXISTS</c> DDL and loose type affinity.</summary>
 public class SqliteDialect : ISqlDialect
 {
+    /// <inheritdoc/>
     public DatabaseDialect DialectType => DatabaseDialect.Sqlite;
+
+    /// <inheritdoc/>
     public string ParameterPrefix => "@";
 
+    /// <inheritdoc/>
     public string QuoteIdentifier(string identifier) => SqlDialectHelper.QuoteAnsi(identifier);
 
+    /// <inheritdoc/>
     public string MapSqlType(ColumnSchemaMetadata column)
     {
         if (!string.IsNullOrEmpty(column.CustomSqlType))
@@ -110,10 +202,11 @@ public class SqliteDialect : ISqlDialect
             "System.TimeSpan" or "TimeSpan" => "TEXT",
             "System.Guid" => "TEXT",
             "System.Byte[]" or "byte[]" => "BLOB",
-            _ => "TEXT"
+            _ => "TEXT",
         };
     }
 
+    /// <inheritdoc/>
     public string GenerateCreateTableSql(TableSchemaMetadata table)
     {
         var sb = new StringBuilder();
@@ -122,13 +215,15 @@ public class SqliteDialect : ISqlDialect
         for (int i = 0; i < table.Columns.Count; i++)
         {
             var col = table.Columns[i];
-            if (i > 0) sb.Append(", ");
+            if (i > 0)
+                sb.Append(", ");
             sb.Append($"{QuoteIdentifier(col.ColumnName)} {MapSqlType(col)}");
 
             if (col.IsPrimaryKey)
             {
                 sb.Append(" PRIMARY KEY");
-                if (col.IsAutoIncrement) sb.Append(" AUTOINCREMENT");
+                if (col.IsAutoIncrement)
+                    sb.Append(" AUTOINCREMENT");
             }
             else
             {
@@ -151,16 +246,20 @@ public class SqliteDialect : ISqlDialect
                     OnDeleteAction.Cascade => " ON DELETE CASCADE",
                     OnDeleteAction.SetNull => " ON DELETE SET NULL",
                     OnDeleteAction.Restrict => " ON DELETE RESTRICT",
-                    _ => ""
+                    _ => "",
                 };
-                sb.Append($", FOREIGN KEY ({QuoteIdentifier(col.ColumnName)}) REFERENCES {QuoteIdentifier(col.ForeignKeyTargetTable!)} ({QuoteIdentifier(targetCol)}){onDelete}");
+                sb.Append(
+                    $", FOREIGN KEY ({QuoteIdentifier(col.ColumnName)}) REFERENCES {QuoteIdentifier(col.ForeignKeyTargetTable!)} ({QuoteIdentifier(targetCol)}){onDelete}"
+                );
             }
         }
 
         // Check constraints
         foreach (var check in table.CheckConstraints)
         {
-            var name = !string.IsNullOrEmpty(check.Name) ? $"CONSTRAINT {QuoteIdentifier(check.Name!)} " : "";
+            var name = !string.IsNullOrEmpty(check.Name)
+                ? $"CONSTRAINT {QuoteIdentifier(check.Name!)} "
+                : "";
             sb.Append($", {name}CHECK ({check.SqlExpression})");
         }
 
@@ -168,10 +267,13 @@ public class SqliteDialect : ISqlDialect
         return sb.ToString();
     }
 
+    /// <inheritdoc/>
     public string GenerateAddColumnSql(TableSchemaMetadata table, ColumnSchemaMetadata column)
     {
         var sb = new StringBuilder();
-        sb.Append($"ALTER TABLE {QuoteIdentifier(table.TableName)} ADD COLUMN {QuoteIdentifier(column.ColumnName)} {MapSqlType(column)}");
+        sb.Append(
+            $"ALTER TABLE {QuoteIdentifier(table.TableName)} ADD COLUMN {QuoteIdentifier(column.ColumnName)} {MapSqlType(column)}"
+        );
         if (!string.IsNullOrEmpty(column.DefaultValueSql))
         {
             sb.Append($" DEFAULT {column.DefaultValueSql}");
@@ -185,57 +287,89 @@ public class SqliteDialect : ISqlDialect
         return sb.ToString();
     }
 
+    /// <inheritdoc/>
     public string GenerateCreateIndexSql(TableSchemaMetadata table, ColumnSchemaMetadata column)
     {
-        var idxName = column.IndexName ?? $"idx_{table.TableName}_{column.PropertyName.ToLowerInvariant()}";
+        var idxName =
+            column.IndexName ?? $"idx_{table.TableName}_{column.PropertyName.ToLowerInvariant()}";
         var unique = column.IsUniqueIndex ? "UNIQUE " : "";
         return $"CREATE {unique}INDEX IF NOT EXISTS {QuoteIdentifier(idxName)} ON {QuoteIdentifier(table.TableName)} ({QuoteIdentifier(column.ColumnName)});";
     }
 
+    /// <inheritdoc/>
     public string GenerateGetExistingColumnsSql(TableSchemaMetadata table) =>
         $"PRAGMA table_info({QuoteIdentifier(table.TableName)});";
 
+    /// <inheritdoc/>
     public string GenerateGetExistingIndexesSql(TableSchemaMetadata table) =>
         $"SELECT name FROM pragma_index_list('{SqlDialectHelper.EscapeLiteral(table.TableName)}');";
 
+    /// <inheritdoc/>
     public string GenerateCreateMigrationsTableSql() =>
         "CREATE TABLE IF NOT EXISTS \"__linkit_migrations\" (\"MigrationId\" TEXT PRIMARY KEY, \"Description\" TEXT, \"AppliedAt\" TEXT NOT NULL, \"ExecutionTimeMs\" INTEGER NOT NULL);";
 
-    public string GenerateRenameColumnSql(string tableName, string oldColumnName, string newColumnName) =>
+    /// <inheritdoc/>
+    public string GenerateRenameColumnSql(
+        string tableName,
+        string oldColumnName,
+        string newColumnName
+    ) =>
         $"ALTER TABLE {QuoteIdentifier(tableName)} RENAME COLUMN {QuoteIdentifier(oldColumnName)} TO {QuoteIdentifier(newColumnName)};";
 
+    /// <inheritdoc/>
     public string GenerateDropColumnSql(string tableName, string columnName) =>
         $"ALTER TABLE {QuoteIdentifier(tableName)} DROP COLUMN {QuoteIdentifier(columnName)};";
 
+    /// <inheritdoc/>
     public string GenerateRenameTableSql(string oldTableName, string newTableName) =>
         $"ALTER TABLE {QuoteIdentifier(oldTableName)} RENAME TO {QuoteIdentifier(newTableName)};";
 
+    /// <inheritdoc/>
     public string GenerateDropTableSql(string tableName) =>
         $"DROP TABLE IF EXISTS {QuoteIdentifier(tableName)};";
 
     private static string GetSafeDefaultSql(ColumnSchemaMetadata column)
     {
-        if (column.IsEnum) return "0";
+        if (column.IsEnum)
+            return "0";
         var type = SqlDialectHelper.NormalizeClrTypeName(column.ClrTypeName);
         return type switch
         {
-            "System.Int32" or "int" or "System.Int64" or "long" or "System.Int16" or "short" or "System.Byte" or "byte" => "0",
+            "System.Int32"
+            or "int"
+            or "System.Int64"
+            or "long"
+            or "System.Int16"
+            or "short"
+            or "System.Byte"
+            or "byte" => "0",
             "System.Boolean" or "bool" => "0",
-            "System.Decimal" or "decimal" or "System.Double" or "double" or "System.Single" or "float" => "0.0",
+            "System.Decimal"
+            or "decimal"
+            or "System.Double"
+            or "double"
+            or "System.Single"
+            or "float" => "0.0",
             "System.DateTime" or "System.DateTimeOffset" => "'1970-01-01 00:00:00'",
             "System.Guid" => "'00000000-0000-0000-0000-000000000000'",
-            _ => "''"
+            _ => "''",
         };
     }
 }
 
+/// <summary>PostgreSQL dialect: double quoted identifiers, <c>SERIAL</c> identity and JSONB columns.</summary>
 public class PostgreSqlDialect : ISqlDialect
 {
+    /// <inheritdoc/>
     public DatabaseDialect DialectType => DatabaseDialect.PostgreSql;
+
+    /// <inheritdoc/>
     public string ParameterPrefix => "@";
 
+    /// <inheritdoc/>
     public string QuoteIdentifier(string identifier) => SqlDialectHelper.QuoteAnsi(identifier);
 
+    /// <inheritdoc/>
     public string MapSqlType(ColumnSchemaMetadata column)
     {
         if (!string.IsNullOrEmpty(column.CustomSqlType))
@@ -275,10 +409,11 @@ public class PostgreSqlDialect : ISqlDialect
             "System.String" or "string" => column.IsFixedLength && column.MaxLength.HasValue
                 ? $"CHAR({column.MaxLength.Value})"
                 : (column.MaxLength.HasValue ? $"VARCHAR({column.MaxLength.Value})" : "TEXT"),
-            _ => "TEXT"
+            _ => "TEXT",
         };
     }
 
+    /// <inheritdoc/>
     public string GenerateCreateTableSql(TableSchemaMetadata table)
     {
         var sb = new StringBuilder();
@@ -291,7 +426,8 @@ public class PostgreSqlDialect : ISqlDialect
         for (int i = 0; i < table.Columns.Count; i++)
         {
             var col = table.Columns[i];
-            if (i > 0) sb.Append(", ");
+            if (i > 0)
+                sb.Append(", ");
             sb.Append($"{QuoteIdentifier(col.ColumnName)} {MapSqlType(col)}");
 
             if (col.IsPrimaryKey)
@@ -319,16 +455,20 @@ public class PostgreSqlDialect : ISqlDialect
                     OnDeleteAction.Cascade => " ON DELETE CASCADE",
                     OnDeleteAction.SetNull => " ON DELETE SET NULL",
                     OnDeleteAction.Restrict => " ON DELETE RESTRICT",
-                    _ => ""
+                    _ => "",
                 };
-                sb.Append($", FOREIGN KEY ({QuoteIdentifier(col.ColumnName)}) REFERENCES {QuoteIdentifier(col.ForeignKeyTargetTable!)} ({QuoteIdentifier(targetCol)}){onDelete}");
+                sb.Append(
+                    $", FOREIGN KEY ({QuoteIdentifier(col.ColumnName)}) REFERENCES {QuoteIdentifier(col.ForeignKeyTargetTable!)} ({QuoteIdentifier(targetCol)}){onDelete}"
+                );
             }
         }
 
         // Check constraints
         foreach (var check in table.CheckConstraints)
         {
-            var name = !string.IsNullOrEmpty(check.Name) ? $"CONSTRAINT {QuoteIdentifier(check.Name!)} " : "";
+            var name = !string.IsNullOrEmpty(check.Name)
+                ? $"CONSTRAINT {QuoteIdentifier(check.Name!)} "
+                : "";
             sb.Append($", {name}CHECK ({check.SqlExpression})");
         }
 
@@ -336,6 +476,7 @@ public class PostgreSqlDialect : ISqlDialect
         return sb.ToString();
     }
 
+    /// <inheritdoc/>
     public string GenerateAddColumnSql(TableSchemaMetadata table, ColumnSchemaMetadata column)
     {
         var sb = new StringBuilder();
@@ -343,11 +484,14 @@ public class PostgreSqlDialect : ISqlDialect
             ? $"{QuoteIdentifier(table.Schema!)}.{QuoteIdentifier(table.TableName)}"
             : QuoteIdentifier(table.TableName);
 
-        sb.Append($"ALTER TABLE {tableRef} ADD COLUMN IF NOT EXISTS {QuoteIdentifier(column.ColumnName)} {MapSqlType(column)}");
+        sb.Append(
+            $"ALTER TABLE {tableRef} ADD COLUMN IF NOT EXISTS {QuoteIdentifier(column.ColumnName)} {MapSqlType(column)}"
+        );
         if (!string.IsNullOrEmpty(column.DefaultValueSql))
         {
             sb.Append($" DEFAULT {column.DefaultValueSql}");
-            if (!column.IsNullable) sb.Append(" NOT NULL");
+            if (!column.IsNullable)
+                sb.Append(" NOT NULL");
         }
         else if (!column.IsNullable)
         {
@@ -357,9 +501,11 @@ public class PostgreSqlDialect : ISqlDialect
         return sb.ToString();
     }
 
+    /// <inheritdoc/>
     public string GenerateCreateIndexSql(TableSchemaMetadata table, ColumnSchemaMetadata column)
     {
-        var idxName = column.IndexName ?? $"idx_{table.TableName}_{column.PropertyName.ToLowerInvariant()}";
+        var idxName =
+            column.IndexName ?? $"idx_{table.TableName}_{column.PropertyName.ToLowerInvariant()}";
         var unique = column.IsUniqueIndex ? "UNIQUE " : "";
         var tableRef = !string.IsNullOrEmpty(table.Schema)
             ? $"{QuoteIdentifier(table.Schema!)}.{QuoteIdentifier(table.TableName)}"
@@ -368,50 +514,80 @@ public class PostgreSqlDialect : ISqlDialect
         return $"CREATE {unique}INDEX IF NOT EXISTS {QuoteIdentifier(idxName)} ON {tableRef} ({QuoteIdentifier(column.ColumnName)});";
     }
 
+    /// <inheritdoc/>
     public string GenerateGetExistingColumnsSql(TableSchemaMetadata table) =>
         $"SELECT column_name FROM information_schema.columns WHERE {(string.IsNullOrEmpty(table.Schema) ? "table_schema = CURRENT_SCHEMA" : $"table_schema = '{SqlDialectHelper.EscapeLiteral(table.Schema)}'")} AND table_name = '{SqlDialectHelper.EscapeLiteral(table.TableName)}';";
 
+    /// <inheritdoc/>
     public string GenerateGetExistingIndexesSql(TableSchemaMetadata table) =>
         $"SELECT indexname FROM pg_indexes WHERE schemaname = {(string.IsNullOrEmpty(table.Schema) ? "CURRENT_SCHEMA" : $"'{SqlDialectHelper.EscapeLiteral(table.Schema)}'")} AND tablename = '{SqlDialectHelper.EscapeLiteral(table.TableName)}';";
 
+    /// <inheritdoc/>
     public string GenerateCreateMigrationsTableSql() =>
         "CREATE TABLE IF NOT EXISTS \"__linkit_migrations\" (\"MigrationId\" VARCHAR(128) PRIMARY KEY, \"Description\" VARCHAR(512), \"AppliedAt\" TIMESTAMPTZ NOT NULL, \"ExecutionTimeMs\" BIGINT NOT NULL);";
 
-    public string GenerateRenameColumnSql(string tableName, string oldColumnName, string newColumnName) =>
+    /// <inheritdoc/>
+    public string GenerateRenameColumnSql(
+        string tableName,
+        string oldColumnName,
+        string newColumnName
+    ) =>
         $"ALTER TABLE {QuoteIdentifier(tableName)} RENAME COLUMN {QuoteIdentifier(oldColumnName)} TO {QuoteIdentifier(newColumnName)};";
 
+    /// <inheritdoc/>
     public string GenerateDropColumnSql(string tableName, string columnName) =>
         $"ALTER TABLE {QuoteIdentifier(tableName)} DROP COLUMN IF EXISTS {QuoteIdentifier(columnName)};";
 
+    /// <inheritdoc/>
     public string GenerateRenameTableSql(string oldTableName, string newTableName) =>
         $"ALTER TABLE {QuoteIdentifier(oldTableName)} RENAME TO {QuoteIdentifier(newTableName)};";
 
+    /// <inheritdoc/>
     public string GenerateDropTableSql(string tableName) =>
         $"DROP TABLE IF EXISTS {QuoteIdentifier(tableName)} CASCADE;";
 
     private static string GetSafeDefaultSql(ColumnSchemaMetadata column)
     {
-        if (column.IsEnum) return "0";
+        if (column.IsEnum)
+            return "0";
         var type = SqlDialectHelper.NormalizeClrTypeName(column.ClrTypeName);
         return type switch
         {
-            "System.Int32" or "int" or "System.Int64" or "long" or "System.Int16" or "short" or "System.Byte" or "byte" => "0",
+            "System.Int32"
+            or "int"
+            or "System.Int64"
+            or "long"
+            or "System.Int16"
+            or "short"
+            or "System.Byte"
+            or "byte" => "0",
             "System.Boolean" or "bool" => "FALSE",
-            "System.Decimal" or "decimal" or "System.Double" or "double" or "System.Single" or "float" => "0.0",
+            "System.Decimal"
+            or "decimal"
+            or "System.Double"
+            or "double"
+            or "System.Single"
+            or "float" => "0.0",
             "System.DateTime" or "System.DateTimeOffset" => "NOW()",
             "System.Guid" => "'00000000-0000-0000-0000-000000000000'",
-            _ => "''"
+            _ => "''",
         };
     }
 }
 
+/// <summary>SQL Server dialect: bracket quoting, <c>IDENTITY</c> columns and <c>sys.*</c> catalog probes.</summary>
 public class SqlServerDialect : ISqlDialect
 {
+    /// <inheritdoc/>
     public DatabaseDialect DialectType => DatabaseDialect.SqlServer;
+
+    /// <inheritdoc/>
     public string ParameterPrefix => "@";
 
+    /// <inheritdoc/>
     public string QuoteIdentifier(string identifier) => SqlDialectHelper.QuoteBracket(identifier);
 
+    /// <inheritdoc/>
     public string MapSqlType(ColumnSchemaMetadata column)
     {
         if (!string.IsNullOrEmpty(column.CustomSqlType))
@@ -447,16 +623,30 @@ public class SqlServerDialect : ISqlDialect
             "System.TimeOnly" or "TimeOnly" => "TIME",
             "System.TimeSpan" or "TimeSpan" => "TIME",
             "System.Guid" => "UNIQUEIDENTIFIER",
-            "System.Byte[]" or "byte[]" => column.MaxLength.HasValue ? $"VARBINARY({column.MaxLength.Value})" : "VARBINARY(MAX)",
-            "System.String" or "string" => column.IsFixedLength && column.EffectiveMaxLength.HasValue
-                ? (column.IsUnicode ? $"NCHAR({column.EffectiveMaxLength.Value})" : $"CHAR({column.EffectiveMaxLength.Value})")
-                : (column.EffectiveMaxLength.HasValue
-                    ? (column.IsUnicode ? $"NVARCHAR({column.EffectiveMaxLength.Value})" : $"VARCHAR({column.EffectiveMaxLength.Value})")
-                    : (column.IsUnicode ? "NVARCHAR(MAX)" : "VARCHAR(MAX)")),
-            _ => column.IsUnicode ? "NVARCHAR(MAX)" : "VARCHAR(MAX)"
+            "System.Byte[]" or "byte[]" => column.MaxLength.HasValue
+                ? $"VARBINARY({column.MaxLength.Value})"
+                : "VARBINARY(MAX)",
+            "System.String" or "string" => column.IsFixedLength
+            && column.EffectiveMaxLength.HasValue
+                ? (
+                    column.IsUnicode
+                        ? $"NCHAR({column.EffectiveMaxLength.Value})"
+                        : $"CHAR({column.EffectiveMaxLength.Value})"
+                )
+                : (
+                    column.EffectiveMaxLength.HasValue
+                        ? (
+                            column.IsUnicode
+                                ? $"NVARCHAR({column.EffectiveMaxLength.Value})"
+                                : $"VARCHAR({column.EffectiveMaxLength.Value})"
+                        )
+                        : (column.IsUnicode ? "NVARCHAR(MAX)" : "VARCHAR(MAX)")
+                ),
+            _ => column.IsUnicode ? "NVARCHAR(MAX)" : "VARCHAR(MAX)",
         };
     }
 
+    /// <inheritdoc/>
     public string GenerateCreateTableSql(TableSchemaMetadata table)
     {
         var sb = new StringBuilder();
@@ -464,14 +654,17 @@ public class SqlServerDialect : ISqlDialect
             ? $"{QuoteIdentifier(table.Schema!)}.{QuoteIdentifier(table.TableName)}"
             : QuoteIdentifier(table.TableName);
 
-        sb.AppendLine($"IF NOT EXISTS (SELECT * FROM sys.tables WHERE name = N'{SqlDialectHelper.EscapeLiteral(table.TableName)}')");
+        sb.AppendLine(
+            $"IF NOT EXISTS (SELECT * FROM sys.tables WHERE name = N'{SqlDialectHelper.EscapeLiteral(table.TableName)}')"
+        );
         sb.AppendLine("BEGIN");
         sb.Append($"    CREATE TABLE {tableRef} (");
 
         for (int i = 0; i < table.Columns.Count; i++)
         {
             var col = table.Columns[i];
-            if (i > 0) sb.Append(", ");
+            if (i > 0)
+                sb.Append(", ");
             sb.Append($"{QuoteIdentifier(col.ColumnName)} {MapSqlType(col)}");
 
             if (col.IsPrimaryKey)
@@ -499,16 +692,20 @@ public class SqlServerDialect : ISqlDialect
                     OnDeleteAction.Cascade => " ON DELETE CASCADE",
                     OnDeleteAction.SetNull => " ON DELETE SET NULL",
                     OnDeleteAction.Restrict => " ON DELETE NO ACTION",
-                    _ => ""
+                    _ => "",
                 };
-                sb.Append($", FOREIGN KEY ({QuoteIdentifier(col.ColumnName)}) REFERENCES {QuoteIdentifier(col.ForeignKeyTargetTable!)} ({QuoteIdentifier(targetCol)}){onDelete}");
+                sb.Append(
+                    $", FOREIGN KEY ({QuoteIdentifier(col.ColumnName)}) REFERENCES {QuoteIdentifier(col.ForeignKeyTargetTable!)} ({QuoteIdentifier(targetCol)}){onDelete}"
+                );
             }
         }
 
         // Check constraints
         foreach (var check in table.CheckConstraints)
         {
-            var name = !string.IsNullOrEmpty(check.Name) ? $"CONSTRAINT {QuoteIdentifier(check.Name!)} " : "";
+            var name = !string.IsNullOrEmpty(check.Name)
+                ? $"CONSTRAINT {QuoteIdentifier(check.Name!)} "
+                : "";
             sb.Append($", {name}CHECK ({check.SqlExpression})");
         }
 
@@ -517,6 +714,7 @@ public class SqlServerDialect : ISqlDialect
         return sb.ToString();
     }
 
+    /// <inheritdoc/>
     public string GenerateAddColumnSql(TableSchemaMetadata table, ColumnSchemaMetadata column)
     {
         var tableRef = !string.IsNullOrEmpty(table.Schema)
@@ -527,81 +725,122 @@ public class SqlServerDialect : ISqlDialect
             ? $"DEFAULT {column.DefaultValueSql} {(column.IsNullable ? "NULL" : "NOT NULL")}"
             : (column.IsNullable ? "NULL" : $"NOT NULL DEFAULT {GetSafeDefaultSql(column)}");
 
-        return $"IF NOT EXISTS (SELECT * FROM sys.columns WHERE object_id = OBJECT_ID(N'{SqlDialectHelper.EscapeLiteral(table.TableName)}') AND name = N'{SqlDialectHelper.EscapeLiteral(column.ColumnName)}') " +
-               $"ALTER TABLE {tableRef} ADD {QuoteIdentifier(column.ColumnName)} {MapSqlType(column)} {nullability};";
+        return $"IF NOT EXISTS (SELECT * FROM sys.columns WHERE object_id = OBJECT_ID(N'{SqlDialectHelper.EscapeLiteral(table.TableName)}') AND name = N'{SqlDialectHelper.EscapeLiteral(column.ColumnName)}') "
+            + $"ALTER TABLE {tableRef} ADD {QuoteIdentifier(column.ColumnName)} {MapSqlType(column)} {nullability};";
     }
 
+    /// <inheritdoc/>
     public string GenerateCreateIndexSql(TableSchemaMetadata table, ColumnSchemaMetadata column)
     {
-        var idxName = column.IndexName ?? $"idx_{table.TableName}_{column.PropertyName.ToLowerInvariant()}";
+        var idxName =
+            column.IndexName ?? $"idx_{table.TableName}_{column.PropertyName.ToLowerInvariant()}";
         var unique = column.IsUniqueIndex ? "UNIQUE " : "";
         var tableRef = !string.IsNullOrEmpty(table.Schema)
             ? $"{QuoteIdentifier(table.Schema!)}.{QuoteIdentifier(table.TableName)}"
             : QuoteIdentifier(table.TableName);
 
-        return $"IF NOT EXISTS (SELECT * FROM sys.indexes WHERE name = N'{SqlDialectHelper.EscapeLiteral(idxName)}' AND object_id = OBJECT_ID(N'{SqlDialectHelper.EscapeLiteral(table.TableName)}')) " +
-               $"CREATE {unique}INDEX {QuoteIdentifier(idxName)} ON {tableRef} ({QuoteIdentifier(column.ColumnName)});";
+        return $"IF NOT EXISTS (SELECT * FROM sys.indexes WHERE name = N'{SqlDialectHelper.EscapeLiteral(idxName)}' AND object_id = OBJECT_ID(N'{SqlDialectHelper.EscapeLiteral(table.TableName)}')) "
+            + $"CREATE {unique}INDEX {QuoteIdentifier(idxName)} ON {tableRef} ({QuoteIdentifier(column.ColumnName)});";
     }
 
-    public string GenerateCreateCompositeIndexSql(TableSchemaMetadata table, IndexSchemaMetadata index)
+    /// <inheritdoc/>
+    public string GenerateCreateCompositeIndexSql(
+        TableSchemaMetadata table,
+        IndexSchemaMetadata index
+    )
     {
         var unique = index.IsUnique ? "UNIQUE " : "";
         var tableRef = !string.IsNullOrEmpty(table.Schema)
             ? $"{QuoteIdentifier(table.Schema!)}.{QuoteIdentifier(table.TableName)}"
             : QuoteIdentifier(table.TableName);
-        var cols = string.Join(", ", System.Linq.Enumerable.Select(index.ColumnNames, QuoteIdentifier));
+        var cols = string.Join(
+            ", ",
+            System.Linq.Enumerable.Select(index.ColumnNames, QuoteIdentifier)
+        );
 
-        return $"IF NOT EXISTS (SELECT * FROM sys.indexes WHERE name = N'{SqlDialectHelper.EscapeLiteral(index.IndexName)}' AND object_id = OBJECT_ID(N'{SqlDialectHelper.EscapeLiteral(table.TableName)}')) " +
-               $"CREATE {unique}INDEX {QuoteIdentifier(index.IndexName)} ON {tableRef} ({cols});";
+        return $"IF NOT EXISTS (SELECT * FROM sys.indexes WHERE name = N'{SqlDialectHelper.EscapeLiteral(index.IndexName)}' AND object_id = OBJECT_ID(N'{SqlDialectHelper.EscapeLiteral(table.TableName)}')) "
+            + $"CREATE {unique}INDEX {QuoteIdentifier(index.IndexName)} ON {tableRef} ({cols});";
     }
 
+    /// <inheritdoc/>
     public string GenerateGetExistingColumnsSql(TableSchemaMetadata table) =>
         $"SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = N'{SqlDialectHelper.EscapeLiteral(table.TableName)}'{(string.IsNullOrEmpty(table.Schema) ? "" : $" AND TABLE_SCHEMA = N'{SqlDialectHelper.EscapeLiteral(table.Schema)}'")};";
 
+    /// <inheritdoc/>
     public string GenerateGetExistingIndexesSql(TableSchemaMetadata table)
     {
-        var tableRef = !string.IsNullOrEmpty(table.Schema) ? $"{table.Schema}.{table.TableName}" : table.TableName;
+        var tableRef = !string.IsNullOrEmpty(table.Schema)
+            ? $"{table.Schema}.{table.TableName}"
+            : table.TableName;
         return $"SELECT name FROM sys.indexes WHERE object_id = OBJECT_ID(N'{SqlDialectHelper.EscapeLiteral(tableRef)}') AND name IS NOT NULL;";
     }
 
+    /// <inheritdoc/>
     public string GenerateCreateMigrationsTableSql() =>
         "IF OBJECT_ID(N'__linkit_migrations', N'U') IS NULL CREATE TABLE [__linkit_migrations] ([MigrationId] NVARCHAR(128) PRIMARY KEY, [Description] NVARCHAR(512), [AppliedAt] DATETIME2 NOT NULL, [ExecutionTimeMs] BIGINT NOT NULL);";
 
-    public string GenerateRenameColumnSql(string tableName, string oldColumnName, string newColumnName) =>
+    /// <inheritdoc/>
+    public string GenerateRenameColumnSql(
+        string tableName,
+        string oldColumnName,
+        string newColumnName
+    ) =>
         $"EXEC sp_rename N'{SqlDialectHelper.EscapeLiteral($"{tableName}.{oldColumnName}")}', N'{SqlDialectHelper.EscapeLiteral(newColumnName)}', 'COLUMN';";
 
+    /// <inheritdoc/>
     public string GenerateDropColumnSql(string tableName, string columnName) =>
         $"ALTER TABLE {QuoteIdentifier(tableName)} DROP COLUMN {QuoteIdentifier(columnName)};";
 
+    /// <inheritdoc/>
     public string GenerateRenameTableSql(string oldTableName, string newTableName) =>
         $"EXEC sp_rename N'{SqlDialectHelper.EscapeLiteral(oldTableName)}', N'{SqlDialectHelper.EscapeLiteral(newTableName)}';";
 
+    /// <inheritdoc/>
     public string GenerateDropTableSql(string tableName) =>
         $"IF OBJECT_ID(N'{SqlDialectHelper.EscapeLiteral(tableName)}', N'U') IS NOT NULL DROP TABLE {QuoteIdentifier(tableName)};";
 
     private static string GetSafeDefaultSql(ColumnSchemaMetadata column)
     {
-        if (column.IsEnum) return "0";
+        if (column.IsEnum)
+            return "0";
         var type = SqlDialectHelper.NormalizeClrTypeName(column.ClrTypeName);
         return type switch
         {
-            "System.Int32" or "int" or "System.Int64" or "long" or "System.Int16" or "short" or "System.Byte" or "byte" => "0",
+            "System.Int32"
+            or "int"
+            or "System.Int64"
+            or "long"
+            or "System.Int16"
+            or "short"
+            or "System.Byte"
+            or "byte" => "0",
             "System.Boolean" or "bool" => "0",
-            "System.Decimal" or "decimal" or "System.Double" or "double" or "System.Single" or "float" => "0.0",
+            "System.Decimal"
+            or "decimal"
+            or "System.Double"
+            or "double"
+            or "System.Single"
+            or "float" => "0.0",
             "System.DateTime" or "System.DateTimeOffset" => "SYSUTCDATETIME()",
             "System.Guid" => "NEWID()",
-            _ => "''"
+            _ => "''",
         };
     }
 }
 
+/// <summary>MySQL dialect: backtick quoting, <c>AUTO_INCREMENT</c> columns and InnoDB defaults.</summary>
 public class MySqlDialect : ISqlDialect
 {
+    /// <inheritdoc/>
     public DatabaseDialect DialectType => DatabaseDialect.MySql;
+
+    /// <inheritdoc/>
     public string ParameterPrefix => "@";
 
+    /// <inheritdoc/>
     public string QuoteIdentifier(string identifier) => SqlDialectHelper.QuoteBacktick(identifier);
 
+    /// <inheritdoc/>
     public string MapSqlType(ColumnSchemaMetadata column)
     {
         if (!string.IsNullOrEmpty(column.CustomSqlType))
@@ -636,14 +875,22 @@ public class MySqlDialect : ISqlDialect
             "System.TimeOnly" or "TimeOnly" => "TIME",
             "System.TimeSpan" or "TimeSpan" => "TIME",
             "System.Guid" => "CHAR(36)",
-            "System.Byte[]" or "byte[]" => column.MaxLength.HasValue ? $"VARBINARY({column.MaxLength.Value})" : "LONGBLOB",
-            "System.String" or "string" => column.IsFixedLength && column.EffectiveMaxLength.HasValue
+            "System.Byte[]" or "byte[]" => column.MaxLength.HasValue
+                ? $"VARBINARY({column.MaxLength.Value})"
+                : "LONGBLOB",
+            "System.String" or "string" => column.IsFixedLength
+            && column.EffectiveMaxLength.HasValue
                 ? $"CHAR({column.EffectiveMaxLength.Value})"
-                : (column.EffectiveMaxLength.HasValue ? $"VARCHAR({column.EffectiveMaxLength.Value})" : "LONGTEXT"),
-            _ => "LONGTEXT"
+                : (
+                    column.EffectiveMaxLength.HasValue
+                        ? $"VARCHAR({column.EffectiveMaxLength.Value})"
+                        : "LONGTEXT"
+                ),
+            _ => "LONGTEXT",
         };
     }
 
+    /// <inheritdoc/>
     public string GenerateCreateTableSql(TableSchemaMetadata table)
     {
         var sb = new StringBuilder();
@@ -652,7 +899,8 @@ public class MySqlDialect : ISqlDialect
         for (int i = 0; i < table.Columns.Count; i++)
         {
             var col = table.Columns[i];
-            if (i > 0) sb.Append(", ");
+            if (i > 0)
+                sb.Append(", ");
             sb.Append($"{QuoteIdentifier(col.ColumnName)} {MapSqlType(col)}");
 
             if (col.IsPrimaryKey)
@@ -680,16 +928,20 @@ public class MySqlDialect : ISqlDialect
                     OnDeleteAction.Cascade => " ON DELETE CASCADE",
                     OnDeleteAction.SetNull => " ON DELETE SET NULL",
                     OnDeleteAction.Restrict => " ON DELETE RESTRICT",
-                    _ => ""
+                    _ => "",
                 };
-                sb.Append($", FOREIGN KEY ({QuoteIdentifier(col.ColumnName)}) REFERENCES {QuoteIdentifier(col.ForeignKeyTargetTable!)} ({QuoteIdentifier(targetCol)}){onDelete}");
+                sb.Append(
+                    $", FOREIGN KEY ({QuoteIdentifier(col.ColumnName)}) REFERENCES {QuoteIdentifier(col.ForeignKeyTargetTable!)} ({QuoteIdentifier(targetCol)}){onDelete}"
+                );
             }
         }
 
         // Check constraints
         foreach (var check in table.CheckConstraints)
         {
-            var name = !string.IsNullOrEmpty(check.Name) ? $"CONSTRAINT {QuoteIdentifier(check.Name!)} " : "";
+            var name = !string.IsNullOrEmpty(check.Name)
+                ? $"CONSTRAINT {QuoteIdentifier(check.Name!)} "
+                : "";
             sb.Append($", {name}CHECK ({check.SqlExpression})");
         }
 
@@ -697,14 +949,18 @@ public class MySqlDialect : ISqlDialect
         return sb.ToString();
     }
 
+    /// <inheritdoc/>
     public string GenerateAddColumnSql(TableSchemaMetadata table, ColumnSchemaMetadata column)
     {
         var sb = new StringBuilder();
-        sb.Append($"ALTER TABLE {QuoteIdentifier(table.TableName)} ADD COLUMN {QuoteIdentifier(column.ColumnName)} {MapSqlType(column)}");
+        sb.Append(
+            $"ALTER TABLE {QuoteIdentifier(table.TableName)} ADD COLUMN {QuoteIdentifier(column.ColumnName)} {MapSqlType(column)}"
+        );
         if (!string.IsNullOrEmpty(column.DefaultValueSql))
         {
             sb.Append($" DEFAULT {column.DefaultValueSql}");
-            if (!column.IsNullable) sb.Append(" NOT NULL");
+            if (!column.IsNullable)
+                sb.Append(" NOT NULL");
         }
         else if (!column.IsNullable)
         {
@@ -714,57 +970,91 @@ public class MySqlDialect : ISqlDialect
         return sb.ToString();
     }
 
+    /// <inheritdoc/>
     public string GenerateCreateIndexSql(TableSchemaMetadata table, ColumnSchemaMetadata column)
     {
-        var idxName = column.IndexName ?? $"idx_{table.TableName}_{column.PropertyName.ToLowerInvariant()}";
+        var idxName =
+            column.IndexName ?? $"idx_{table.TableName}_{column.PropertyName.ToLowerInvariant()}";
         var unique = column.IsUniqueIndex ? "UNIQUE " : "";
         return $"CREATE {unique}INDEX {QuoteIdentifier(idxName)} ON {QuoteIdentifier(table.TableName)} ({QuoteIdentifier(column.ColumnName)});";
     }
 
+    /// <inheritdoc/>
     public string GenerateGetExistingColumnsSql(TableSchemaMetadata table) =>
         $"SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = '{SqlDialectHelper.EscapeMySqlLiteral(table.TableName)}';";
 
+    /// <inheritdoc/>
     public string GenerateGetExistingIndexesSql(TableSchemaMetadata table) =>
         $"SELECT DISTINCT INDEX_NAME FROM INFORMATION_SCHEMA.STATISTICS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = '{SqlDialectHelper.EscapeMySqlLiteral(table.TableName)}';";
 
+    /// <inheritdoc/>
     public string GenerateCreateMigrationsTableSql() =>
         "CREATE TABLE IF NOT EXISTS `__linkit_migrations` (`MigrationId` VARCHAR(128) PRIMARY KEY, `Description` VARCHAR(512), `AppliedAt` DATETIME(6) NOT NULL, `ExecutionTimeMs` BIGINT NOT NULL);";
 
-    public string GenerateRenameColumnSql(string tableName, string oldColumnName, string newColumnName) =>
+    /// <inheritdoc/>
+    public string GenerateRenameColumnSql(
+        string tableName,
+        string oldColumnName,
+        string newColumnName
+    ) =>
         $"ALTER TABLE {QuoteIdentifier(tableName)} RENAME COLUMN {QuoteIdentifier(oldColumnName)} TO {QuoteIdentifier(newColumnName)};";
 
+    /// <inheritdoc/>
     public string GenerateDropColumnSql(string tableName, string columnName) =>
         $"ALTER TABLE {QuoteIdentifier(tableName)} DROP COLUMN {QuoteIdentifier(columnName)};";
 
+    /// <inheritdoc/>
     public string GenerateRenameTableSql(string oldTableName, string newTableName) =>
         $"RENAME TABLE {QuoteIdentifier(oldTableName)} TO {QuoteIdentifier(newTableName)};";
 
+    /// <inheritdoc/>
     public string GenerateDropTableSql(string tableName) =>
         $"DROP TABLE IF EXISTS {QuoteIdentifier(tableName)};";
 
     private static string GetSafeDefaultSql(ColumnSchemaMetadata column)
     {
-        if (column.IsEnum) return "0";
+        if (column.IsEnum)
+            return "0";
         var type = SqlDialectHelper.NormalizeClrTypeName(column.ClrTypeName);
         return type switch
         {
-            "System.Int32" or "int" or "System.Int64" or "long" or "System.Int16" or "short" or "System.Byte" or "byte" => "0",
+            "System.Int32"
+            or "int"
+            or "System.Int64"
+            or "long"
+            or "System.Int16"
+            or "short"
+            or "System.Byte"
+            or "byte" => "0",
             "System.Boolean" or "bool" => "0",
-            "System.Decimal" or "decimal" or "System.Double" or "double" or "System.Single" or "float" => "0.0",
+            "System.Decimal"
+            or "decimal"
+            or "System.Double"
+            or "double"
+            or "System.Single"
+            or "float" => "0.0",
             "System.DateTime" or "System.DateTimeOffset" => "'1970-01-01 00:00:00'",
             "System.Guid" => "'00000000-0000-0000-0000-000000000000'",
-            _ => "''"
+            _ => "''",
         };
     }
 }
 
+/// <summary>
+/// Oracle dialect: <c>:</c> parameters, <c>NUMBER</c> types and PL/SQL blocks that swallow "already exists" errors.
+/// </summary>
 public class OracleDialect : ISqlDialect
 {
+    /// <inheritdoc/>
     public DatabaseDialect DialectType => DatabaseDialect.Oracle;
+
+    /// <inheritdoc/>
     public string ParameterPrefix => ":";
 
+    /// <inheritdoc/>
     public string QuoteIdentifier(string identifier) => SqlDialectHelper.QuoteAnsi(identifier);
 
+    /// <inheritdoc/>
     public string MapSqlType(ColumnSchemaMetadata column)
     {
         if (!string.IsNullOrEmpty(column.CustomSqlType))
@@ -802,16 +1092,29 @@ public class OracleDialect : ISqlDialect
             "System.Guid" => "VARCHAR2(36)",
             "System.Byte[]" or "byte[]" => "BLOB",
             "System.String" or "string" => column.IsUnicode
-                ? (column.IsFixedLength && column.EffectiveMaxLength.HasValue
-                    ? $"NCHAR({column.EffectiveMaxLength.Value})"
-                    : (column.EffectiveMaxLength.HasValue ? $"NVARCHAR2({column.EffectiveMaxLength.Value})" : "NCLOB"))
-                : (column.IsFixedLength && column.EffectiveMaxLength.HasValue
-                    ? $"CHAR({column.EffectiveMaxLength.Value})"
-                    : (column.EffectiveMaxLength.HasValue ? $"VARCHAR2({column.EffectiveMaxLength.Value})" : "CLOB")),
-            _ => "NCLOB"
+                ? (
+                    column.IsFixedLength && column.EffectiveMaxLength.HasValue
+                        ? $"NCHAR({column.EffectiveMaxLength.Value})"
+                        : (
+                            column.EffectiveMaxLength.HasValue
+                                ? $"NVARCHAR2({column.EffectiveMaxLength.Value})"
+                                : "NCLOB"
+                        )
+                )
+                : (
+                    column.IsFixedLength && column.EffectiveMaxLength.HasValue
+                        ? $"CHAR({column.EffectiveMaxLength.Value})"
+                        : (
+                            column.EffectiveMaxLength.HasValue
+                                ? $"VARCHAR2({column.EffectiveMaxLength.Value})"
+                                : "CLOB"
+                        )
+                ),
+            _ => "NCLOB",
         };
     }
 
+    /// <inheritdoc/>
     public string GenerateCreateTableSql(TableSchemaMetadata table)
     {
         var sb = new StringBuilder();
@@ -826,7 +1129,8 @@ public class OracleDialect : ISqlDialect
         for (int i = 0; i < table.Columns.Count; i++)
         {
             var col = table.Columns[i];
-            if (i > 0) sb.Append(", ");
+            if (i > 0)
+                sb.Append(", ");
             sb.Append($"{QuoteIdentifier(col.ColumnName)} {MapSqlType(col)}");
 
             if (col.IsPrimaryKey)
@@ -860,16 +1164,20 @@ public class OracleDialect : ISqlDialect
                 {
                     OnDeleteAction.Cascade => " ON DELETE CASCADE",
                     OnDeleteAction.SetNull => " ON DELETE SET NULL",
-                    _ => ""
+                    _ => "",
                 };
-                sb.Append($", FOREIGN KEY ({QuoteIdentifier(col.ColumnName)}) REFERENCES {QuoteIdentifier(col.ForeignKeyTargetTable!)} ({QuoteIdentifier(targetCol)}){onDelete}");
+                sb.Append(
+                    $", FOREIGN KEY ({QuoteIdentifier(col.ColumnName)}) REFERENCES {QuoteIdentifier(col.ForeignKeyTargetTable!)} ({QuoteIdentifier(targetCol)}){onDelete}"
+                );
             }
         }
 
         // Check constraints
         foreach (var check in table.CheckConstraints)
         {
-            var name = !string.IsNullOrEmpty(check.Name) ? $"CONSTRAINT {QuoteIdentifier(check.Name!)} " : "";
+            var name = !string.IsNullOrEmpty(check.Name)
+                ? $"CONSTRAINT {QuoteIdentifier(check.Name!)} "
+                : "";
             sb.Append($", {name}CHECK ({check.SqlExpression})");
         }
 
@@ -877,6 +1185,7 @@ public class OracleDialect : ISqlDialect
         return $"BEGIN EXECUTE IMMEDIATE '{SqlDialectHelper.EscapeLiteral(sb.ToString())}'; EXCEPTION WHEN OTHERS THEN IF SQLCODE != -955 THEN RAISE; END IF; END;";
     }
 
+    /// <inheritdoc/>
     public string GenerateAddColumnSql(TableSchemaMetadata table, ColumnSchemaMetadata column)
     {
         var tableRef = !string.IsNullOrEmpty(table.Schema)
@@ -884,11 +1193,14 @@ public class OracleDialect : ISqlDialect
             : QuoteIdentifier(table.TableName);
 
         var sb = new StringBuilder();
-        sb.Append($"ALTER TABLE {tableRef} ADD ({QuoteIdentifier(column.ColumnName)} {MapSqlType(column)}");
+        sb.Append(
+            $"ALTER TABLE {tableRef} ADD ({QuoteIdentifier(column.ColumnName)} {MapSqlType(column)}"
+        );
         if (!string.IsNullOrEmpty(column.DefaultValueSql))
         {
             sb.Append($" DEFAULT {column.DefaultValueSql}");
-            if (!column.IsNullable) sb.Append(" NOT NULL");
+            if (!column.IsNullable)
+                sb.Append(" NOT NULL");
         }
         else if (!column.IsNullable)
         {
@@ -898,57 +1210,85 @@ public class OracleDialect : ISqlDialect
         return sb.ToString();
     }
 
+    /// <inheritdoc/>
     public string GenerateCreateIndexSql(TableSchemaMetadata table, ColumnSchemaMetadata column)
     {
         var tableRef = !string.IsNullOrEmpty(table.Schema)
             ? $"{QuoteIdentifier(table.Schema!)}.{QuoteIdentifier(table.TableName)}"
             : QuoteIdentifier(table.TableName);
 
-        var idxName = column.IndexName ?? $"idx_{table.TableName}_{column.PropertyName.ToLowerInvariant()}";
+        var idxName =
+            column.IndexName ?? $"idx_{table.TableName}_{column.PropertyName.ToLowerInvariant()}";
         var unique = column.IsUniqueIndex ? "UNIQUE " : "";
-        var innerSql = $"CREATE {unique}INDEX {QuoteIdentifier(idxName)} ON {tableRef} ({QuoteIdentifier(column.ColumnName)})";
+        var innerSql =
+            $"CREATE {unique}INDEX {QuoteIdentifier(idxName)} ON {tableRef} ({QuoteIdentifier(column.ColumnName)})";
         return $"BEGIN EXECUTE IMMEDIATE '{SqlDialectHelper.EscapeLiteral(innerSql)}'; EXCEPTION WHEN OTHERS THEN IF SQLCODE != -955 AND SQLCODE != -1408 THEN RAISE; END IF; END;";
     }
 
+    /// <inheritdoc/>
     public string GenerateGetExistingColumnsSql(TableSchemaMetadata table) =>
         $"SELECT COLUMN_NAME FROM ALL_TAB_COLS WHERE {GetOwnerPredicate(table.Schema)} AND (TABLE_NAME = '{EscapeMetadataLiteral(table.TableName)}' OR TABLE_NAME = '{EscapeMetadataLiteral(table.TableName.ToUpperInvariant())}');";
 
+    /// <inheritdoc/>
     public string GenerateGetExistingIndexesSql(TableSchemaMetadata table) =>
         $"SELECT INDEX_NAME FROM ALL_INDEXES WHERE {GetOwnerPredicate(table.Schema)} AND (TABLE_NAME = '{EscapeMetadataLiteral(table.TableName)}' OR TABLE_NAME = '{EscapeMetadataLiteral(table.TableName.ToUpperInvariant())}');";
 
     private static string EscapeMetadataLiteral(string value) => value.Replace("'", "''");
+
     private static string GetOwnerPredicate(string? schema) =>
         string.IsNullOrEmpty(schema)
             ? "OWNER = SYS_CONTEXT('USERENV', 'CURRENT_SCHEMA')"
             : $"OWNER = '{EscapeMetadataLiteral(schema)}'";
 
+    /// <inheritdoc/>
     public string GenerateCreateMigrationsTableSql() =>
         "BEGIN EXECUTE IMMEDIATE 'CREATE TABLE \"__linkit_migrations\" (\"MigrationId\" VARCHAR2(128) PRIMARY KEY, \"Description\" VARCHAR2(512), \"AppliedAt\" TIMESTAMP WITH TIME ZONE NOT NULL, \"ExecutionTimeMs\" NUMBER(19) NOT NULL)'; EXCEPTION WHEN OTHERS THEN IF SQLCODE != -955 THEN RAISE; END IF; END;";
 
-    public string GenerateRenameColumnSql(string tableName, string oldColumnName, string newColumnName) =>
+    /// <inheritdoc/>
+    public string GenerateRenameColumnSql(
+        string tableName,
+        string oldColumnName,
+        string newColumnName
+    ) =>
         $"ALTER TABLE {QuoteIdentifier(tableName)} RENAME COLUMN {QuoteIdentifier(oldColumnName)} TO {QuoteIdentifier(newColumnName)}";
 
+    /// <inheritdoc/>
     public string GenerateDropColumnSql(string tableName, string columnName) =>
         $"ALTER TABLE {QuoteIdentifier(tableName)} DROP COLUMN {QuoteIdentifier(columnName)}";
 
+    /// <inheritdoc/>
     public string GenerateRenameTableSql(string oldTableName, string newTableName) =>
         $"RENAME {QuoteIdentifier(oldTableName)} TO {QuoteIdentifier(newTableName)}";
 
+    /// <inheritdoc/>
     public string GenerateDropTableSql(string tableName) =>
         $"BEGIN EXECUTE IMMEDIATE '{SqlDialectHelper.EscapeLiteral($"DROP TABLE {QuoteIdentifier(tableName)} CASCADE CONSTRAINTS PURGE")}'; EXCEPTION WHEN OTHERS THEN IF SQLCODE != -942 THEN RAISE; END IF; END;";
 
     private static string GetSafeDefaultSql(ColumnSchemaMetadata column)
     {
-        if (column.IsEnum) return "0";
+        if (column.IsEnum)
+            return "0";
         var type = SqlDialectHelper.NormalizeClrTypeName(column.ClrTypeName);
         return type switch
         {
-            "System.Int32" or "int" or "System.Int64" or "long" or "System.Int16" or "short" or "System.Byte" or "byte" => "0",
+            "System.Int32"
+            or "int"
+            or "System.Int64"
+            or "long"
+            or "System.Int16"
+            or "short"
+            or "System.Byte"
+            or "byte" => "0",
             "System.Boolean" or "bool" => "0",
-            "System.Decimal" or "decimal" or "System.Double" or "double" or "System.Single" or "float" => "0.0",
+            "System.Decimal"
+            or "decimal"
+            or "System.Double"
+            or "double"
+            or "System.Single"
+            or "float" => "0.0",
             "System.DateTime" or "System.DateTimeOffset" => "TIMESTAMP '1970-01-01 00:00:00'",
             "System.Guid" => "'00000000-0000-0000-0000-000000000000'",
-            _ => "''"
+            _ => "''",
         };
     }
 }

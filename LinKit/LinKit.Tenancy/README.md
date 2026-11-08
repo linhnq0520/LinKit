@@ -1,7 +1,5 @@
 # LinKit.Tenancy
 
-[![NuGet](https://img.shields.io/nuget/v/LinKit.Tenancy.svg)](https://www.nuget.org/packages/LinKit.Tenancy/)
-
 `LinKit.Tenancy` provides an asynchronous-flow tenant context and helpers to explicitly place/read a tenant ID in LinKit message headers. It does not automatically resolve HTTP identity, authorize a tenant, or filter database queries.
 
 ## Install and register

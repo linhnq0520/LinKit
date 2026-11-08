@@ -8,6 +8,24 @@ using RabbitMQ.Client.Events;
 
 namespace LinKit.Messaging.RabbitMQ;
 
+/// <summary>
+/// Consumes messages from a RabbitMQ queue and forwards them to a handler until the stopping token is signalled.
+/// </summary>
+/// <remarks>
+/// <para>
+/// The <see cref="global::RabbitMQ.Client.IModel"/> used for consumption is not thread-safe, so every channel operation
+/// is serialized through an internal semaphore. The handler is awaited before the message is acknowledged, which keeps
+/// delivery effectively at-least-once per message.
+/// </para>
+/// <para>
+/// An existing queue is attached as-is (probed with <c>QueueDeclarePassive</c>) instead of being redeclared, so a queue
+/// created elsewhere with different arguments does not fail with <c>PRECONDITION_FAILED</c>. Failed handler calls follow
+/// <see cref="RabbitMqRetryPolicy.DecideFailureAction"/>: the message is requeued, republished to its own queue for
+/// another attempt, or dead-lettered once <see cref="RabbitMqOptions.MaxRetryAttempts"/> is exhausted. Retries are
+/// published through the default exchange so other queues bound to the same exchange do not receive duplicates, and the
+/// original routing key is preserved in the <c>x-linkit-original-routing-key</c> header.
+/// </para>
+/// </remarks>
 public sealed class RabbitMqConnection : IBrokerConnection
 {
     private readonly RabbitMqConnectionFactory _connectionFactory;
@@ -17,6 +35,10 @@ public sealed class RabbitMqConnection : IBrokerConnection
     private readonly int _maxRetryAttempts;
     private readonly string? _deadLetterExchange;
 
+    /// <summary>Creates the consumer with the delivery settings taken from <see cref="RabbitMqOptions"/>.</summary>
+    /// <param name="connectionFactory">Factory that supplies the shared AMQP connection.</param>
+    /// <param name="serviceProvider">Provider used to resolve the optional logger.</param>
+    /// <param name="options">Prefetch, retry and dead-letter settings; defaults are used when omitted.</param>
     public RabbitMqConnection(
         RabbitMqConnectionFactory connectionFactory,
         IServiceProvider serviceProvider,
@@ -25,10 +47,13 @@ public sealed class RabbitMqConnection : IBrokerConnection
     {
         _connectionFactory = connectionFactory;
         _logger = serviceProvider.GetService<ILogger<RabbitMqConnection>>();
-        _prefetchCount = options?.Value.PrefetchCount > 0 ? options.Value.PrefetchCount : (ushort)50;
+        _prefetchCount =
+            options?.Value.PrefetchCount > 0 ? options.Value.PrefetchCount : (ushort)50;
         _requeueOnFailure = options?.Value.RequeueOnFailure ?? true;
         _maxRetryAttempts = Math.Max(0, options?.Value.MaxRetryAttempts ?? 3);
-        _deadLetterExchange = string.IsNullOrWhiteSpace(options?.Value.DeadLetterExchange) ? null : options!.Value.DeadLetterExchange;
+        _deadLetterExchange = string.IsNullOrWhiteSpace(options?.Value.DeadLetterExchange)
+            ? null
+            : options!.Value.DeadLetterExchange;
     }
 
     private static bool QueueExists(IConnection connection, string queueName)
@@ -59,30 +84,67 @@ public sealed class RabbitMqConnection : IBrokerConnection
         }
     }
 
+    /// <summary>
+    /// Starts consuming from <paramref name="queueName"/> only, using the configured prefetch, a durable queue and topic
+    /// exchange defaults.
+    /// </summary>
+    /// <param name="queueName">Queue to consume from; created when it does not exist.</param>
+    /// <param name="onMessageReceived">Handler invoked per message with the routing key, body and headers.</param>
+    /// <param name="stoppingToken">Token that stops the consumer and closes the channel.</param>
+    /// <returns>A task that completes when the consumer has stopped.</returns>
+    /// <inheritdoc cref="StartConsumingAsync(string, string?, string, IEnumerable{string}?, Func{string, ReadOnlyMemory{byte}, IReadOnlyDictionary{string, object}, Task}, CancellationToken, ushort, bool, bool, bool, IDictionary{string, object?}?)" path="/exception"/>
     public Task StartConsumingAsync(
         string queueName,
-        Func<string, ReadOnlyMemory<byte>, IReadOnlyDictionary<string, object>, Task> onMessageReceived,
+        Func<
+            string,
+            ReadOnlyMemory<byte>,
+            IReadOnlyDictionary<string, object>,
+            Task
+        > onMessageReceived,
         CancellationToken stoppingToken
-    ) => StartConsumingAsync(
-        queueName: queueName,
-        exchangeName: null,
-        exchangeType: ExchangeType.Topic,
-        routingKeys: null,
-        onMessageReceived: onMessageReceived,
-        stoppingToken: stoppingToken,
-        prefetchCount: _prefetchCount,
-        durable: true,
-        exclusive: false,
-        autoDelete: false,
-        queueArguments: null
-    );
+    ) =>
+        StartConsumingAsync(
+            queueName: queueName,
+            exchangeName: null,
+            exchangeType: ExchangeType.Topic,
+            routingKeys: null,
+            onMessageReceived: onMessageReceived,
+            stoppingToken: stoppingToken,
+            prefetchCount: _prefetchCount,
+            durable: true,
+            exclusive: false,
+            autoDelete: false,
+            queueArguments: null
+        );
 
+    /// <summary>
+    /// Starts consuming from <paramref name="queueName"/>, declaring the exchange and bindings when they are supplied.
+    /// </summary>
+    /// <param name="queueName">Queue to consume from; an existing queue is attached as-is.</param>
+    /// <param name="exchangeName">Exchange to declare and bind; <see langword="null"/> skips exchange setup.</param>
+    /// <param name="exchangeType">Exchange type used when the exchange must be declared; defaults to direct.</param>
+    /// <param name="routingKeys">Routing keys to bind; when empty the queue name is used as the binding key.</param>
+    /// <param name="onMessageReceived">Handler invoked per message with the routing key, body and headers.</param>
+    /// <param name="stoppingToken">Token that stops the consumer and closes the channel.</param>
+    /// <param name="prefetchCount">Unacknowledged message limit; zero falls back to <see cref="RabbitMqOptions.PrefetchCount"/>.</param>
+    /// <param name="durable">Whether a newly declared queue survives a broker restart.</param>
+    /// <param name="exclusive">Whether a newly declared queue is restricted to this connection.</param>
+    /// <param name="autoDelete">Whether a newly declared queue is deleted when the last consumer detaches.</param>
+    /// <param name="queueArguments">Extra queue arguments such as a dead-letter exchange; null values are dropped.</param>
+    /// <returns>A task that completes when the consumer has stopped.</returns>
+    /// <exception cref="System.OperationCanceledException">Cancelled through <paramref name="stoppingToken"/>; treated as a normal shutdown.</exception>
+    /// <exception cref="System.IO.IOException">The broker rejected the exchange, queue or binding declarations.</exception>
     public async Task StartConsumingAsync(
         string queueName,
         string? exchangeName,
         string exchangeType,
         IEnumerable<string>? routingKeys,
-        Func<string, ReadOnlyMemory<byte>, IReadOnlyDictionary<string, object>, Task> onMessageReceived,
+        Func<
+            string,
+            ReadOnlyMemory<byte>,
+            IReadOnlyDictionary<string, object>,
+            Task
+        > onMessageReceived,
         CancellationToken stoppingToken,
         ushort prefetchCount = 10,
         bool durable = true,
@@ -112,7 +174,9 @@ public sealed class RabbitMqConnection : IBrokerConnection
             {
                 channel.ExchangeDeclare(
                     exchange: exchangeName,
-                    type: string.IsNullOrWhiteSpace(exchangeType) ? ExchangeType.Direct : exchangeType,
+                    type: string.IsNullOrWhiteSpace(exchangeType)
+                        ? ExchangeType.Direct
+                        : exchangeType,
                     durable: true,
                     autoDelete: false
                 );
@@ -120,7 +184,12 @@ public sealed class RabbitMqConnection : IBrokerConnection
 
             if (_deadLetterExchange is not null && !ExchangeExists(connection, _deadLetterExchange))
             {
-                channel.ExchangeDeclare(exchange: _deadLetterExchange, type: ExchangeType.Direct, durable: true, autoDelete: false);
+                channel.ExchangeDeclare(
+                    exchange: _deadLetterExchange,
+                    type: ExchangeType.Direct,
+                    durable: true,
+                    autoDelete: false
+                );
             }
 
             IDictionary<string, object>? args = null;
@@ -161,7 +230,11 @@ public sealed class RabbitMqConnection : IBrokerConnection
                     {
                         if (!string.IsNullOrWhiteSpace(rk))
                         {
-                            channel.QueueBind(queue: actualQueueName, exchange: exchangeName, routingKey: rk);
+                            channel.QueueBind(
+                                queue: actualQueueName,
+                                exchange: exchangeName,
+                                routingKey: rk
+                            );
                             boundAny = true;
                         }
                     }
@@ -169,7 +242,11 @@ public sealed class RabbitMqConnection : IBrokerConnection
 
                 if (!boundAny && !string.IsNullOrWhiteSpace(actualQueueName))
                 {
-                    channel.QueueBind(queue: actualQueueName, exchange: exchangeName, routingKey: actualQueueName);
+                    channel.QueueBind(
+                        queue: actualQueueName,
+                        exchange: exchangeName,
+                        routingKey: actualQueueName
+                    );
                 }
             }
 
@@ -203,17 +280,15 @@ public sealed class RabbitMqConnection : IBrokerConnection
                     headers[MessageHeaderNames.MessageId] = ea.BasicProperties.MessageId;
 
                 var effectiveRoutingKey =
-                    headers.TryGetValue("x-linkit-original-routing-key", out var origRkObj) && origRkObj is string origRk && !string.IsNullOrEmpty(origRk)
+                    headers.TryGetValue("x-linkit-original-routing-key", out var origRkObj)
+                    && origRkObj is string origRk
+                    && !string.IsNullOrEmpty(origRk)
                         ? origRk
                         : ea.RoutingKey;
 
                 try
                 {
-                    await onMessageReceived(
-                        effectiveRoutingKey,
-                        ea.Body,
-                        headers
-                    );
+                    await onMessageReceived(effectiveRoutingKey, ea.Body, headers);
 
                     await channelLock.WaitAsync();
                     try
@@ -241,20 +316,25 @@ public sealed class RabbitMqConnection : IBrokerConnection
                 }
             };
 
-            var consumerTag = channel.BasicConsume(queue: actualQueueName, autoAck: false, consumer: consumer);
+            var consumerTag = channel.BasicConsume(
+                queue: actualQueueName,
+                autoAck: false,
+                consumer: consumer
+            );
 
             try
             {
                 await Task.Delay(Timeout.Infinite, stoppingToken);
             }
-            catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
-            {
-            }
+            catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested) { }
             finally
             {
                 try
                 {
-                    _logger?.LogInformation("Stopping RabbitMQ consumer for queue '{QueueName}'...", actualQueueName);
+                    _logger?.LogInformation(
+                        "Stopping RabbitMQ consumer for queue '{QueueName}'...",
+                        actualQueueName
+                    );
                     await channelLock.WaitAsync();
                     try
                     {
@@ -272,7 +352,11 @@ public sealed class RabbitMqConnection : IBrokerConnection
                 }
                 catch (Exception ex)
                 {
-                    _logger?.LogWarning(ex, "Error while closing consumer channel for queue '{QueueName}'.", actualQueueName);
+                    _logger?.LogWarning(
+                        ex,
+                        "Error while closing consumer channel for queue '{QueueName}'.",
+                        actualQueueName
+                    );
                 }
             }
         }
@@ -289,7 +373,11 @@ public sealed class RabbitMqConnection : IBrokerConnection
             throw;
         }
 
-        async Task HandleFailureAsync(BasicDeliverEventArgs ea, IReadOnlyDictionary<string, object> headers, string originalRoutingKey)
+        async Task HandleFailureAsync(
+            BasicDeliverEventArgs ea,
+            IReadOnlyDictionary<string, object> headers,
+            string originalRoutingKey
+        )
         {
             var attemptCount = RabbitMqRetryPolicy.GetAttemptCount(headers);
             var action = RabbitMqRetryPolicy.DecideFailureAction(
@@ -319,10 +407,12 @@ public sealed class RabbitMqConnection : IBrokerConnection
 
                 // When retrying, publish directly to the failing consumer queue via the default exchange ("")
                 // so retries do not broadcast duplicate messages to other queues bound to the same exchange.
-                var useDirectQueueRetry = action == RabbitMqFailureAction.Retry && !string.IsNullOrEmpty(actualQueueName);
-                var targetExchange = action == RabbitMqFailureAction.DeadLetter
-                    ? _deadLetterExchange!
-                    : (useDirectQueueRetry ? string.Empty : ea.Exchange);
+                var useDirectQueueRetry =
+                    action == RabbitMqFailureAction.Retry && !string.IsNullOrEmpty(actualQueueName);
+                var targetExchange =
+                    action == RabbitMqFailureAction.DeadLetter
+                        ? _deadLetterExchange!
+                        : (useDirectQueueRetry ? string.Empty : ea.Exchange);
                 var targetRoutingKey = useDirectQueueRetry ? actualQueueName! : originalRoutingKey;
 
                 var properties = channel.CreateBasicProperties();

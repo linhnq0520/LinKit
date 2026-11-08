@@ -2,10 +2,10 @@
   <PropertyGroup>
     <TargetFrameworks>net8.0;net9.0;net10.0</TargetFrameworks>
     <PackageId>LinKit.Tenancy</PackageId>
-    <Version>2.0.0</Version>
+    <Version>2.0.1</Version>
     <Description>Async-flow tenant context with explicit scopes and message-header propagation primitives for LinKit.</Description>
     <PackageTags>linkit;multitenancy;saas;aot</PackageTags>
-    <PackageReleaseNotes>v2.0.0: the ambient tenant is no longer auto-created. TryGet/Require are separate and ITenantScope guarantees a deterministic reset. Tenant id is propagated through outbox message headers. Full documentation &amp; release notes: https://quoclinh.id.vn/docs/linkit</PackageReleaseNotes>
+    <PackageReleaseNotes>v2.0.1: documentation and packaging patch - every public member now carries XML documentation (CS1591 is enforced as a build error) and the README was reviewed for accuracy. Previous release: v2.0.0 - the ambient tenant is no longer auto-created. TryGet/Require are separate and ITenantScope guarantees a deterministic reset. Tenant id is propagated through outbox message headers. Full documentation &amp; release notes: https://quoclinh.id.vn/docs/linkit</PackageReleaseNotes>
   </PropertyGroup>
 
   <ItemGroup>

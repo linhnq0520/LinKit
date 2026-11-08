@@ -2,10 +2,10 @@
   <PropertyGroup>
     <TargetFrameworks>net8.0;net9.0;net10.0</TargetFrameworks>
     <PackageId>LinKit.Data</PackageId>
-    <Version>2.6.0</Version>
+    <Version>2.6.1</Version>
     <Description>Source-generated ADO.NET data access and additive schema synchronization for LinKit; every runtime path is Native AOT and trim analysed.</Description>
     <PackageTags>linkit;data;repository;schema-synchronization;ado-net;aot;cqrs</PackageTags>
-    <PackageReleaseNotes>v2.6.0: richer expression surface and faster plans - column-to-column comparisons (NotEqual/GreaterThan/LessThan and their OrEqual variants), Sql.Lower/Upper/Trim/Length/Coalesce/Count/CountDistinct with per-provider function names, tenant and soft-delete predicates pushed into WHERE and into join ON clauses instead of wrapping tables in derived subqueries, Repository.FindManyAsync for chunked IN loads instead of N+1 loops, plus AnyAsync/CountAsync/ListAsync predicate overloads, StreamAsync and DeleteAsync(entity). Full documentation &amp; release notes: https://quoclinh.id.vn/docs/linkit</PackageReleaseNotes>
+    <PackageReleaseNotes>v2.6.1: documentation and packaging patch - every public member now carries XML documentation (CS1591 is enforced as a build error) and the README was reviewed for accuracy; LNKDATA001 now reports only when the declared tenant column is not mapped, instead of whenever [MultiTenant] is used; [TenantKey] now supplies the tenant column at property level and [ConcurrencyToken] is honoured as a synonym of [ConcurrencyCheck], so neither attribute is a silent no-op. Previous release: v2.6.0 - richer expression surface and faster plans - column-to-column comparisons (NotEqual/GreaterThan/LessThan and their OrEqual variants), Sql.Lower/Upper/Trim/Length/Coalesce/Count/CountDistinct with per-provider function names, tenant and soft-delete predicates pushed into WHERE and into join ON clauses instead of wrapping tables in derived subqueries, Repository.FindManyAsync for chunked IN loads instead of N+1 loops, plus AnyAsync/CountAsync/ListAsync predicate overloads, StreamAsync and DeleteAsync(entity). Full documentation &amp; release notes: https://quoclinh.id.vn/docs/linkit</PackageReleaseNotes>
   </PropertyGroup>
 
   <ItemGroup>

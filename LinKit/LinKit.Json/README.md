@@ -24,7 +24,7 @@ dotnet add package LinKit.Json
 Or add a package reference to your project file:
 
 ```xml
-<PackageReference Include="LinKit.Json" Version="1.0.0" />
+<PackageReference Include="LinKit.Json" Version="1.2.1" />
 ```
 
 ## Quick start
@@ -73,14 +73,14 @@ for every query.
 
 Every path starts at `$`, which selects the root value:
 
-| Syntax | Description | Example |
-| --- | --- | --- |
-| `$` | The root value | `$` |
-| `.name` | An unquoted property name | `$.profile.name` |
-| `['name']` or `["name"]` | A quoted property name | `$.profile['display.name']` |
-| `[0]` | A zero-based array index | `$.orders[0]` |
-| `[-1]` | An index from the end of an array | `$.orders[-1]` |
-| `[*]` or `.*` | Each element of an array | `$.orders[*].id` |
+| Syntax                   | Description                       | Example                     |
+| ------------------------ | --------------------------------- | --------------------------- |
+| `$`                      | The root value                    | `$`                         |
+| `.name`                  | An unquoted property name         | `$.profile.name`            |
+| `['name']` or `["name"]` | A quoted property name            | `$.profile['display.name']` |
+| `[0]`                    | A zero-based array index          | `$.orders[0]`               |
+| `[-1]`                   | An index from the end of an array | `$.orders[-1]`              |
+| `[*]` or `.*`            | Each element of an array          | `$.orders[*].id`            |
 
 Unquoted property names use ASCII identifiers: the first character must be an ASCII letter
 or `_`; subsequent characters can also include digits. Use quoted bracket notation for
@@ -228,20 +228,24 @@ an incompatible JSON value, or a JSON deserialization error. `GetValueByPath` th
 
 ## Error behavior
 
-| API | No matching value | Invalid JSON input | Invalid path |
-| --- | --- | --- | --- |
-| `TrySelect` / `TryGetValueByPath` on a JSON value | Returns `false` | Not applicable | Throws |
-| `GetValueByPath` on a JSON value | Throws `JsonException` | Not applicable | Throws |
-| `TryGetValueByPath` on a JSON string | Returns `false` for `null` or blank input | Throws `JsonException` for malformed, nonblank JSON | Throws |
-| `GetValueByPath` on a JSON string | Throws `JsonException` for `null` or blank input | Throws `JsonException` for malformed JSON | Throws |
-| `GetRequired...` | Throws `JsonPathReadException` | Not applicable | Throws |
+| API                                               | No matching value                                | Invalid JSON input                                  | Invalid path |
+| ------------------------------------------------- | ------------------------------------------------ | --------------------------------------------------- | ------------ |
+| `TrySelect` / `TryGetValueByPath` on a JSON value | Returns `false`                                  | Not applicable                                      | Throws       |
+| `GetValueByPath` on a JSON value                  | Throws `JsonException`                           | Not applicable                                      | Throws       |
+| `TryGetValueByPath` on a JSON string              | Returns `false` for `null` or blank input        | Throws `JsonException` for malformed, nonblank JSON | Throws       |
+| `GetValueByPath` on a JSON string                 | Throws `JsonException` for `null` or blank input | Throws `JsonException` for malformed JSON           | Throws       |
+| `GetRequired...`                                  | Throws `JsonPathReadException`                   | Not applicable                                      | Throws       |
 
 ## Framework support
 
 | Target framework | Supported |
-| --- | --- |
-| .NET 8 | Yes |
-| .NET 9 | Yes |
-| .NET 10 | Yes |
+| ---------------- | --------- |
+| .NET 8           | Yes       |
+| .NET 9           | Yes       |
+| .NET 10          | Yes       |
 
 The library has no third-party package dependencies.
+
+## License
+
+MIT. See the [repository license](https://github.com/linhnq0520/LinKit/blob/main/LICENSE).

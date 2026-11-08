@@ -39,19 +39,33 @@ internal sealed record FunctionNode(
 
 internal sealed record ExistsNode(SelectPlan Plan, bool Negate) : SqlNode;
 
+/// <summary>
+/// Root of the strongly typed SQL expression tree used to build portable predicates, projections and orderings.
+/// </summary>
+/// <remarks>
+/// Expressions are declarative only: nothing is evaluated in process. The tree is translated to SQL when the query runs,
+/// so a predicate can be composed and passed around without touching a database.
+/// </remarks>
 public abstract class SqlExpression
 {
     internal abstract SqlNode Node { get; }
 }
 
+/// <summary>Exposes the expression behind a value that can be used in a SQL predicate.</summary>
+/// <typeparam name="T">Type of the value.</typeparam>
 public interface ISqlValue<out T>
 {
+    /// <summary>The expression this value contributes to the surrounding predicate.</summary>
     SqlExpression Expression { get; }
 }
 
+/// <summary>Typed expression over a single column or scalar, produced by the FluentQuery column members.</summary>
+/// <typeparam name="T">Column type; use <c>T?</c> for a nullable column.</typeparam>
 public class SqlExpression<T> : SqlExpression, IProjection<T>, ISqlValue<T>
 {
     internal override SqlNode Node { get; }
+
+    /// <summary>This expression, so a column can also be passed as an <see cref="ISqlValue{T}"/>.</summary>
     public SqlExpression Expression => this;
     private readonly Func<DbDataReader, int, T?> _read;
 
@@ -70,8 +84,13 @@ public class SqlExpression<T> : SqlExpression, IProjection<T>, ISqlValue<T>
 
     internal T ReadScalar(DbDataReader reader, int ordinal) => _read(reader, ordinal)!;
 
+    /// <summary>Packages this expression as a one column projection so it can be selected on its own.</summary>
+    /// <returns>A projection that reads the single scalar this expression renders.</returns>
     public Projection<T> Build() => new([this], reader => _read(reader, 0)!);
 
+    /// <summary>Wraps a constant in an expression, which is what allows <c>column &gt; 5</c> to reach the translator.</summary>
+    /// <param name="value">Constant to wrap.</param>
+    /// <returns>An expression that renders the value as a command parameter.</returns>
     public static implicit operator SqlExpression<T>(T value) => Sql.Value(value);
 
     private static Predicate Compare(
@@ -89,41 +108,85 @@ public class SqlExpression<T> : SqlExpression, IProjection<T>, ISqlValue<T>
         return new(new BinaryNode(leftNode, operation, rightNode));
     }
 
+    /// <summary>Builds an equality predicate, handling <see langword="null"/> as <c>IS NULL</c>.</summary>
+    /// <param name="left">Left operand; <see langword="null"/> is rendered as a null value.</param>
+    /// <param name="right">Right operand; <see langword="null"/> is rendered as a null value.</param>
+    /// <returns>The composed predicate.</returns>
     public static Predicate operator ==(SqlExpression<T>? left, SqlExpression<T>? right) =>
         Compare(left, "=", right);
 
+    /// <summary>Builds an inequality predicate that treats two <see langword="null"/> values as equal.</summary>
+    /// <param name="left">Left operand.</param>
+    /// <param name="right">Right operand.</param>
+    /// <returns>The composed predicate.</returns>
     public static Predicate operator !=(SqlExpression<T>? left, SqlExpression<T>? right) =>
         Compare(left, "<>", right);
 
+    /// <summary>Builds a <c>&gt;</c> predicate; comparisons against <see langword="null"/> never match.</summary>
+    /// <param name="left">Left operand.</param>
+    /// <param name="right">Right operand.</param>
+    /// <returns>The composed predicate.</returns>
     public static Predicate operator >(SqlExpression<T>? left, SqlExpression<T>? right) =>
         Compare(left, ">", right);
 
+    /// <summary>Builds a <c>&lt;</c> predicate; comparisons against <see langword="null"/> never match.</summary>
+    /// <param name="left">Left operand.</param>
+    /// <param name="right">Right operand.</param>
+    /// <returns>The composed predicate.</returns>
     public static Predicate operator <(SqlExpression<T>? left, SqlExpression<T>? right) =>
         Compare(left, "<", right);
 
+    /// <summary>Builds a <c>&gt;=</c> predicate; comparisons against <see langword="null"/> never match.</summary>
+    /// <param name="left">Left operand.</param>
+    /// <param name="right">Right operand.</param>
+    /// <returns>The composed predicate.</returns>
     public static Predicate operator >=(SqlExpression<T>? left, SqlExpression<T>? right) =>
         Compare(left, ">=", right);
 
+    /// <summary>Builds a <c>&lt;=</c> predicate; comparisons against <see langword="null"/> never match.</summary>
+    /// <param name="left">Left operand.</param>
+    /// <param name="right">Right operand.</param>
+    /// <returns>The composed predicate.</returns>
     public static Predicate operator <=(SqlExpression<T>? left, SqlExpression<T>? right) =>
         Compare(left, "<=", right);
 
+    /// <summary>
+    /// Identity comparison. The overloaded comparison operators build SQL, so this method must not compare by value.
+    /// </summary>
+    /// <param name="other">Object to compare.</param>
+    /// <returns><see langword="true"/> only when <paramref name="other"/> is the same instance.</returns>
     public override bool Equals(object? other) => ReferenceEquals(this, other);
 
+    /// <summary>Returns the identity hash code, matching <see cref="Equals(object?)"/>.</summary>
+    /// <returns>The runtime identity hash of this expression.</returns>
     public override int GetHashCode() =>
         System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(this);
 
     private SqlNode Value(T value) => new ValueNode(value, (Node as ColumnNode)?.Column);
 
+    /// <summary>Builds an equality predicate against a constant.</summary>
+    /// <param name="value">Constant to compare with; the column metadata is carried to the parameter.</param>
+    /// <returns>The composed predicate.</returns>
     public Predicate Equal(T value) => new(new BinaryNode(Node, "=", Value(value)));
 
+    /// <summary>Builds an equality predicate against another column or expression.</summary>
+    /// <param name="other">Right operand.</param>
+    /// <returns>The composed predicate.</returns>
     public Predicate Equal(SqlExpression<T> other) => new(new BinaryNode(Node, "=", other.Node));
 
+    /// <summary>Builds an inequality predicate against another column or expression.</summary>
+    /// <param name="other">Right operand.</param>
+    /// <returns>The composed predicate.</returns>
+    /// <exception cref="ArgumentNullException"><paramref name="other"/> is <see langword="null"/>.</exception>
     public Predicate NotEqual(SqlExpression<T> other)
     {
         ArgumentNullException.ThrowIfNull(other);
         return new(new BinaryNode(Node, "<>", other.Node));
     }
 
+    /// <summary>Builds an inequality predicate against a constant.</summary>
+    /// <param name="value">Constant to compare with.</param>
+    /// <returns>The composed predicate.</returns>
     public Predicate NotEqual(T value) => new(new BinaryNode(Node, "<>", Value(value)));
 
     /// <summary>Compares two columns (or expressions) with <c>&gt;</c>, for example <c>a.EndsAt.GreaterThan(a.StartsAt)</c>.</summary>
@@ -133,82 +196,166 @@ public class SqlExpression<T> : SqlExpression, IProjection<T>, ISqlValue<T>
         return new(new BinaryNode(Node, ">", other.Node));
     }
 
+    /// <summary>Builds a <c>&gt;=</c> predicate against another column or expression.</summary>
+    /// <param name="other">Right operand.</param>
+    /// <returns>The composed predicate.</returns>
+    /// <exception cref="ArgumentNullException"><paramref name="other"/> is <see langword="null"/>.</exception>
     public Predicate GreaterThanOrEqual(SqlExpression<T> other)
     {
         ArgumentNullException.ThrowIfNull(other);
         return new(new BinaryNode(Node, ">=", other.Node));
     }
 
+    /// <summary>Builds a <c>&lt;</c> predicate against another column or expression.</summary>
+    /// <param name="other">Right operand.</param>
+    /// <returns>The composed predicate.</returns>
+    /// <exception cref="ArgumentNullException"><paramref name="other"/> is <see langword="null"/>.</exception>
     public Predicate LessThan(SqlExpression<T> other)
     {
         ArgumentNullException.ThrowIfNull(other);
         return new(new BinaryNode(Node, "<", other.Node));
     }
 
+    /// <summary>Builds a <c>&lt;=</c> predicate against another column or expression.</summary>
+    /// <param name="other">Right operand.</param>
+    /// <returns>The composed predicate.</returns>
+    /// <exception cref="ArgumentNullException"><paramref name="other"/> is <see langword="null"/>.</exception>
     public Predicate LessThanOrEqual(SqlExpression<T> other)
     {
         ArgumentNullException.ThrowIfNull(other);
         return new(new BinaryNode(Node, "<=", other.Node));
     }
 
+    /// <summary>Builds a <c>&gt;</c> predicate against a constant.</summary>
+    /// <param name="value">Constant to compare with.</param>
+    /// <returns>The composed predicate.</returns>
     public Predicate GreaterThan(T value) => new(new BinaryNode(Node, ">", Value(value)));
 
+    /// <summary>Builds a <c>&gt;=</c> predicate against a constant.</summary>
+    /// <param name="value">Constant to compare with.</param>
+    /// <returns>The composed predicate.</returns>
     public Predicate GreaterThanOrEqual(T value) => new(new BinaryNode(Node, ">=", Value(value)));
 
+    /// <summary>Builds a <c>&lt;</c> predicate against a constant.</summary>
+    /// <param name="value">Constant to compare with.</param>
+    /// <returns>The composed predicate.</returns>
     public Predicate LessThan(T value) => new(new BinaryNode(Node, "<", Value(value)));
 
+    /// <summary>Builds a <c>&lt;=</c> predicate against a constant.</summary>
+    /// <param name="value">Constant to compare with.</param>
+    /// <returns>The composed predicate.</returns>
     public Predicate LessThanOrEqual(T value) => new(new BinaryNode(Node, "<=", Value(value)));
 
+    /// <summary>Builds an <c>IS NULL</c> predicate.</summary>
+    /// <returns>The composed predicate.</returns>
     public Predicate IsNull() => new(new NullNode(Node, false));
 
+    /// <summary>Builds an <c>IS NOT NULL</c> predicate.</summary>
+    /// <returns>The composed predicate.</returns>
     public Predicate IsNotNull() => new(new NullNode(Node, true));
 
+    /// <summary>
+    /// Builds an <c>IN</c> predicate. Long lists are split into several <c>IN</c> groups to respect the provider
+    /// parameter limit, and <see langword="null"/> entries are folded into an extra <c>IS NULL</c> check.
+    /// </summary>
+    /// <param name="values">Values to match; an empty sequence never matches.</param>
+    /// <returns>The composed predicate.</returns>
     public Predicate In(IEnumerable<T> values) =>
         new(new InNode(Node, values.Cast<object?>().ToArray()));
 
+    /// <summary>Builds an <c>IN</c> predicate from an inline value list.</summary>
+    /// <param name="values">Values to match.</param>
+    /// <returns>The composed predicate.</returns>
     public Predicate In(params T[] values) => In((IEnumerable<T>)values);
 
+    /// <summary>Negates <see cref="In(IEnumerable{T})"/>, keeping <c>NULL</c> semantics correct.</summary>
+    /// <param name="values">Values to exclude; an empty sequence always matches.</param>
+    /// <returns>The composed predicate.</returns>
     public Predicate NotIn(IEnumerable<T> values) => !In(values);
 
+    /// <summary>Negates <see cref="In(T[])"/>, keeping <c>NULL</c> semantics correct.</summary>
+    /// <param name="values">Values to exclude.</param>
+    /// <returns>The composed predicate.</returns>
     public Predicate NotIn(params T[] values) => !In((IEnumerable<T>)values);
 
+    /// <summary>Builds an inclusive <c>BETWEEN</c> predicate.</summary>
+    /// <param name="lower">Inclusive lower bound.</param>
+    /// <param name="upper">Inclusive upper bound.</param>
+    /// <returns>The composed predicate.</returns>
     public Predicate Between(T lower, T upper) =>
         GreaterThanOrEqual(lower) & LessThanOrEqual(upper);
 
+    /// <summary>Orders this expression ascending.</summary>
+    /// <returns>An ordering that renders as <c>ASC</c>.</returns>
     public Ordering Asc() => new(this, false);
 
+    /// <summary>Orders this expression descending.</summary>
+    /// <returns>An ordering that renders as <c>DESC</c>.</returns>
     public Ordering Desc() => new(this, true);
 }
 
+/// <summary>A column expression bound to one table alias, as exposed by the FluentQuery table members.</summary>
+/// <typeparam name="T">Column type; use <c>T?</c> for a nullable column.</typeparam>
 public sealed class Column<T> : SqlExpression<T>
 {
+    /// <summary>Creates a column expression.</summary>
+    /// <param name="alias">Alias of the table that owns the column.</param>
+    /// <param name="column">Column metadata used for quoting and parameter typing.</param>
+    /// <param name="read">Optional custom reader; the default converter is used when omitted.</param>
     public Column(string alias, ColumnModel column, Func<DbDataReader, int, T?>? read = null)
         : base(new ColumnNode(alias, column), read) { }
 
+    /// <summary>Creates an assignment for a bulk update.</summary>
+    /// <param name="value">Replacement value.</param>
+    /// <returns>The assignment consumed by the update builder.</returns>
     public Assignment Set(T value) => new((ColumnNode)Node, value);
 }
 
+/// <summary>Immutable boolean SQL predicate, composed with <see cref="And"/>, <see cref="Or"/> and <see cref="Not"/>.</summary>
 public sealed class Predicate
 {
     internal SqlNode Node { get; }
 
     internal Predicate(SqlNode node) => Node = node;
 
+    /// <summary>Combines this predicate with another one using <c>AND</c>.</summary>
+    /// <param name="other">Predicate to combine.</param>
+    /// <returns>The combined predicate.</returns>
     public Predicate And(Predicate other) => new(new BinaryNode(Node, "AND", other.Node));
 
+    /// <summary>Combines this predicate with another one using <c>OR</c>.</summary>
+    /// <param name="other">Predicate to combine.</param>
+    /// <returns>The combined predicate.</returns>
     public Predicate Or(Predicate other) => new(new BinaryNode(Node, "OR", other.Node));
 
+    /// <summary>Negates this predicate, pushing the negation through <c>IN</c> and <c>IS NULL</c> when possible.</summary>
+    /// <returns>The negated predicate.</returns>
     public Predicate Not() => new(new NotNode(Node));
 
+    /// <summary>Shorthand for <see cref="And"/>.</summary>
+    /// <param name="left">Left predicate.</param>
+    /// <param name="right">Right predicate.</param>
+    /// <returns>The combined predicate.</returns>
     public static Predicate operator &(Predicate left, Predicate right) => left.And(right);
 
+    /// <summary>Shorthand for <see cref="Or"/>.</summary>
+    /// <param name="left">Left predicate.</param>
+    /// <param name="right">Right predicate.</param>
+    /// <returns>The combined predicate.</returns>
     public static Predicate operator |(Predicate left, Predicate right) => left.Or(right);
 
+    /// <summary>Shorthand for <see cref="Not"/>.</summary>
+    /// <param name="predicate">Predicate to negate.</param>
+    /// <returns>The negated predicate.</returns>
     public static Predicate operator !(Predicate predicate) => predicate.Not();
 }
 
+/// <summary>One ordering term of an <c>ORDER BY</c> clause.</summary>
+/// <param name="Expression">Expression to sort by.</param>
+/// <param name="Descending">Whether the term sorts descending.</param>
 public sealed record Ordering(SqlExpression Expression, bool Descending);
 
+/// <summary>One <c>SET column = value</c> term of a set-based update.</summary>
 public sealed class Assignment
 {
     internal ColumnNode Column { get; }
@@ -221,16 +368,38 @@ public sealed class Assignment
     }
 }
 
+/// <summary>
+/// Entry point for the SQL expression DSL: aggregates, scalar functions and string matching that render into the query.
+/// </summary>
+/// <remarks>
+/// Functions with provider specific names (for example <c>LENGTH</c> versus <c>LEN</c>) are resolved when the statement
+/// is rendered, so the same expression works on every supported database.
+/// </remarks>
 public static class Sql
 {
+    /// <summary>Compares a nullable column with a non-nullable one, keeping the nullable side explicit.</summary>
+    /// <typeparam name="T">Underlying value type.</typeparam>
+    /// <param name="left">Nullable expression.</param>
+    /// <param name="right">Non-nullable expression.</param>
+    /// <returns>The composed predicate.</returns>
     public static Predicate Equal<T>(this SqlExpression<T?> left, SqlExpression<T> right)
         where T : struct => left.Equal(Nullable(right));
 
+    /// <summary>Compares a non-nullable column with a nullable one, keeping the nullable side explicit.</summary>
+    /// <typeparam name="T">Underlying value type.</typeparam>
+    /// <param name="left">Non-nullable expression.</param>
+    /// <param name="right">Nullable expression.</param>
+    /// <returns>The composed predicate.</returns>
     public static Predicate Equal<T>(this SqlExpression<T> left, SqlExpression<T?> right)
         where T : struct => Nullable(left).Equal(right);
 
+    /// <summary><c>COUNT(*)</c>, which counts rows and never returns <see langword="null"/>.</summary>
+    /// <returns>An expression holding the row count.</returns>
     public static SqlExpression<long> Count() => new(new AggregateNode("COUNT", null));
 
+    /// <summary><c>SUM(expression)</c>; returns <see langword="null"/> when no row matches.</summary>
+    /// <param name="expression">Numeric expression to sum.</param>
+    /// <returns>An expression holding the sum.</returns>
     public static SqlExpression<decimal?> Sum(SqlExpression<decimal> expression) =>
         new(
             new AggregateNode("SUM", expression.Node),
@@ -238,6 +407,9 @@ public static class Sql
                 reader.IsDBNull(ordinal) ? null : DbValues.Read<decimal>(reader, ordinal)
         );
 
+    /// <summary><c>AVG(expression)</c>; returns <see langword="null"/> when no row matches.</summary>
+    /// <param name="expression">Numeric expression to average.</param>
+    /// <returns>An expression holding the average.</returns>
     public static SqlExpression<decimal?> Average(SqlExpression<decimal> expression) =>
         new(
             new AggregateNode("AVG", expression.Node),
@@ -245,6 +417,10 @@ public static class Sql
                 reader.IsDBNull(ordinal) ? null : DbValues.Read<decimal>(reader, ordinal)
         );
 
+    /// <summary><c>MIN(expression)</c>; returns <see langword="null"/> when no row matches.</summary>
+    /// <typeparam name="T">Value type to aggregate.</typeparam>
+    /// <param name="expression">Expression to aggregate.</param>
+    /// <returns>An expression holding the minimum.</returns>
     public static SqlExpression<T?> Min<T>(SqlExpression<T> expression)
         where T : struct =>
         new(
@@ -253,6 +429,10 @@ public static class Sql
                 reader.IsDBNull(ordinal) ? null : expression.ReadScalar(reader, ordinal)
         );
 
+    /// <summary><c>MAX(expression)</c>; returns <see langword="null"/> when no row matches.</summary>
+    /// <typeparam name="T">Value type to aggregate.</typeparam>
+    /// <param name="expression">Expression to aggregate.</param>
+    /// <returns>An expression holding the maximum.</returns>
     public static SqlExpression<T?> Max<T>(SqlExpression<T> expression)
         where T : struct =>
         new(
@@ -261,9 +441,15 @@ public static class Sql
                 reader.IsDBNull(ordinal) ? null : expression.ReadScalar(reader, ordinal)
         );
 
+    /// <summary><c>MIN(text)</c>; returns <see langword="null"/> when no row matches.</summary>
+    /// <param name="expression">String expression to aggregate.</param>
+    /// <returns>An expression holding the minimum value.</returns>
     public static SqlExpression<string?> Min(ISqlValue<string> expression) =>
         new(new AggregateNode("MIN", expression.Expression.Node));
 
+    /// <summary><c>MAX(text)</c>; returns <see langword="null"/> when no row matches.</summary>
+    /// <param name="expression">String expression to aggregate.</param>
+    /// <returns>An expression holding the maximum value.</returns>
     public static SqlExpression<string?> Max(ISqlValue<string> expression) =>
         new(new AggregateNode("MAX", expression.Expression.Node));
 
@@ -327,6 +513,10 @@ public static class Sql
         );
     }
 
+    /// <summary>Reinterprets a non-nullable expression as nullable so it can be compared with a nullable column.</summary>
+    /// <typeparam name="T">Underlying value type.</typeparam>
+    /// <param name="expression">Expression to reinterpret.</param>
+    /// <returns>An expression that reads <see langword="null"/> for <c>NULL</c>.</returns>
     public static SqlExpression<T?> Nullable<T>(SqlExpression<T> expression)
         where T : struct =>
         new(
@@ -335,6 +525,10 @@ public static class Sql
                 reader.IsDBNull(ordinal) ? null : expression.ReadScalar(reader, ordinal)
         );
 
+    /// <summary>Reinterprets a reference expression so <c>NULL</c> is read as <see langword="null"/>.</summary>
+    /// <typeparam name="T">Reference type.</typeparam>
+    /// <param name="expression">Expression to reinterpret.</param>
+    /// <returns>An expression that reads <see langword="null"/> for <c>NULL</c>.</returns>
     public static SqlExpression<T?> Optional<T>(SqlExpression<T> expression)
         where T : class =>
         new(
@@ -343,21 +537,42 @@ public static class Sql
                 reader.IsDBNull(ordinal) ? null : expression.ReadScalar(reader, ordinal)
         );
 
+    /// <summary>Wraps a constant so it can be compared with a column.</summary>
+    /// <typeparam name="T">Constant type.</typeparam>
+    /// <param name="value">Constant value.</param>
+    /// <returns>An expression that renders the value as a command parameter.</returns>
     public static SqlExpression<T> Value<T>(T value) =>
         new(new ValueNode(value), (reader, ordinal) => value);
 
+    /// <summary>Builds an explicit <c>LIKE</c> predicate with an already formatted pattern.</summary>
+    /// <param name="expression">Text expression to match.</param>
+    /// <param name="pattern">Pattern including its own <c>%</c> and <c>_</c> wildcards.</param>
+    /// <returns>The composed predicate.</returns>
+    /// <exception cref="ArgumentNullException"><paramref name="pattern"/> is <see langword="null"/>.</exception>
     public static Predicate Like(this ISqlValue<string> expression, string pattern)
     {
         ArgumentNullException.ThrowIfNull(pattern);
         return new(new LikeNode(expression.Expression.Node, pattern));
     }
 
+    /// <summary>Builds a case-sensitive <c>LIKE '%text%'</c> predicate with the input escaped.</summary>
+    /// <param name="expression">Text expression to search.</param>
+    /// <param name="text">Literal text; wildcards inside it are escaped and matched literally.</param>
+    /// <returns>The composed predicate.</returns>
     public static Predicate Contains(this ISqlValue<string> expression, string text) =>
         Like(expression, text, "%", "%");
 
+    /// <summary>Builds a <c>LIKE 'text%'</c> predicate with the input escaped.</summary>
+    /// <param name="expression">Text expression to search.</param>
+    /// <param name="text">Literal prefix; wildcards inside it are escaped and matched literally.</param>
+    /// <returns>The composed predicate.</returns>
     public static Predicate StartsWith(this ISqlValue<string> expression, string text) =>
         Like(expression, text, string.Empty, "%");
 
+    /// <summary>Builds a <c>LIKE '%text'</c> predicate with the input escaped.</summary>
+    /// <param name="expression">Text expression to search.</param>
+    /// <param name="text">Literal suffix; wildcards inside it are escaped and matched literally.</param>
+    /// <returns>The composed predicate.</returns>
     public static Predicate EndsWith(this ISqlValue<string> expression, string text) =>
         Like(expression, text, "%", string.Empty);
 
@@ -878,6 +1093,12 @@ internal sealed class SqlWriter(SqlDialect dialect, string? tenantId)
     }
 }
 
+/// <summary>One bound command parameter together with the column metadata that gives it a database type.</summary>
+/// <param name="Value">Parameter value; <see langword="null"/> renders as <c>NULL</c>.</param>
+/// <param name="Column">Source column used to infer <see cref="System.Data.DbType"/> and scale, when known.</param>
 public sealed record SqlArgument(object? Value, ColumnModel? Column);
 
+/// <summary>A rendered SQL statement and the parameters it binds, in placeholder order.</summary>
+/// <param name="Sql">SQL text with dialect specific placeholders.</param>
+/// <param name="Arguments">Values to bind, in the order they appear in <paramref name="Sql"/>.</param>
 public sealed record CommandSpec(string Sql, IReadOnlyList<SqlArgument> Arguments);

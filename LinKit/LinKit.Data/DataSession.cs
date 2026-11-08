@@ -17,9 +17,27 @@ internal static class Activities
         Source.StartActivity(name, kind);
 }
 
+/// <summary>
+/// Thrown when a commit failed in a way that leaves the outcome unknown, for example a lost connection during
+/// <c>COMMIT</c>. The transaction may or may not have been applied, so the operation must be reconciled by the caller.
+/// </summary>
 public sealed class CommitOutcomeUnknownException(Exception inner)
     : Exception("Transaction commit outcome is unknown.", inner);
 
+/// <summary>
+/// Owns one connection (and optionally one transaction) and executes commands against it.
+/// </summary>
+/// <remarks>
+/// <para>
+/// The session is scoped: it opens the connection lazily on the first command and keeps it open until the session is
+/// disposed, so several commands share one round trip. All operations are instrumented with an
+/// <see cref="ActivitySource"/> named <c>LinKit.Data</c>.
+/// </para>
+/// <para>
+/// Concurrent operations on one session throw unless <see cref="AllowConcurrentOperations"/> is enabled. Commands that
+/// can be replayed are routed through <see cref="IdempotentExecutor"/>; mutations are never retried.
+/// </para>
+/// </remarks>
 public sealed class DataSession(
     Func<DbConnection> connectionFactory,
     SqlDialect dialect,
@@ -35,8 +53,13 @@ public sealed class DataSession(
     private int _busy;
     private SemaphoreSlim? _gate;
 
+    /// <summary>Dialect used to quote identifiers, bind parameters and render provider specific SQL.</summary>
     public SqlDialect Dialect { get; } = dialect;
+
+    /// <summary>Tenant of the current scope, or <see langword="null"/> when the scope is not tenant-scoped.</summary>
     public string? TenantId { get; } = tenantId;
+
+    /// <summary>Whether a transaction, local or borrowed from the scoped unit of work, is active.</summary>
     public bool HasTransaction => ActiveTransaction is not null;
 
     /// <summary>
@@ -79,6 +102,10 @@ public sealed class DataSession(
     internal bool OwnsTransaction(DbTransaction transaction) =>
         !_disposed && ReferenceEquals(ActiveTransaction, transaction);
 
+    /// <summary>Starts a query over the given table.</summary>
+    /// <typeparam name="TEntity">Entity type mapped by <paramref name="table"/>.</typeparam>
+    /// <param name="table">Generated table accessor that carries the schema metadata of the entity.</param>
+    /// <returns>A query builder bound to this session.</returns>
     public Query<TEntity> From<TEntity>(Table<TEntity> table)
         where TEntity : class => Query<TEntity>.From(this, table);
 
@@ -185,6 +212,10 @@ public sealed class DataSession(
         }
     }
 
+    /// <summary>Executes a statement and returns the number of affected rows.</summary>
+    /// <param name="spec">SQL text and its bound arguments.</param>
+    /// <param name="ct">Token used to cancel the command.</param>
+    /// <returns>The number of affected rows.</returns>
     public async Task<int> ExecuteAsync(CommandSpec spec, CancellationToken ct = default)
     {
         await EnterAsync(ct).ConfigureAwait(false);
@@ -206,6 +237,10 @@ public sealed class DataSession(
         }
     }
 
+    /// <summary>Executes a statement and returns the first column of the first row.</summary>
+    /// <param name="spec">SQL text and its bound arguments.</param>
+    /// <param name="ct">Token used to cancel the command.</param>
+    /// <returns>The scalar value, or <see langword="null"/> when the database returned <c>NULL</c> or no row.</returns>
     public async Task<object?> ScalarAsync(CommandSpec spec, CancellationToken ct = default)
     {
         await EnterAsync(ct).ConfigureAwait(false);
@@ -322,6 +357,14 @@ public sealed class DataSession(
         }
     }
 
+    /// <summary>Streams the rows of a query without buffering the result set.</summary>
+    /// <typeparam name="T">Row type produced by <paramref name="read"/>.</typeparam>
+    /// <param name="spec">SQL text and its bound arguments.</param>
+    /// <param name="read">Maps the current row of the reader to a value.</param>
+    /// <param name="ct">Token used to cancel the enumeration.</param>
+    /// <returns>The rows in statement order.</returns>
+    /// <remarks>The connected command stays open for the duration of the enumeration, so finish or dispose it before
+    /// starting another operation on the same session.</remarks>
     public async IAsyncEnumerable<T> StreamAsync<T>(
         CommandSpec spec,
         Func<DbDataReader, T> read,
@@ -435,18 +478,35 @@ public sealed class DataSession(
         }
     }
 
+    /// <summary>Executes a statement written as raw SQL text.</summary>
+    /// <param name="sql">SQL text with dialect placeholders such as <c>@p0</c>.</param>
+    /// <param name="arguments">Values bound to the placeholders in order.</param>
+    /// <param name="ct">Token used to cancel the command.</param>
+    /// <returns>The number of affected rows.</returns>
     public Task<int> ExecuteSqlAsync(
         string sql,
         IReadOnlyList<SqlArgument>? arguments = null,
         CancellationToken ct = default
     ) => ExecuteAsync(new CommandSpec(sql, arguments ?? Array.Empty<SqlArgument>()), ct);
 
+    /// <summary>Executes a raw SQL statement and returns the first column of the first row.</summary>
+    /// <param name="sql">SQL text with dialect placeholders such as <c>@p0</c>.</param>
+    /// <param name="arguments">Values bound to the placeholders in order.</param>
+    /// <param name="ct">Token used to cancel the command.</param>
+    /// <returns>The scalar value, or <see langword="null"/> when the database returned <c>NULL</c> or no row.</returns>
     public Task<object?> ScalarSqlAsync(
         string sql,
         IReadOnlyList<SqlArgument>? arguments = null,
         CancellationToken ct = default
     ) => ScalarAsync(new CommandSpec(sql, arguments ?? Array.Empty<SqlArgument>()), ct);
 
+    /// <summary>Executes a raw SQL query and maps every row.</summary>
+    /// <typeparam name="T">Row type produced by <paramref name="read"/>.</typeparam>
+    /// <param name="sql">SQL text with dialect placeholders such as <c>@p0</c>.</param>
+    /// <param name="read">Maps the current row of the reader to a value.</param>
+    /// <param name="arguments">Values bound to the placeholders in order.</param>
+    /// <param name="ct">Token used to cancel the command.</param>
+    /// <returns>The materialised rows.</returns>
     public Task<List<T>> QuerySqlAsync<T>(
         string sql,
         Func<DbDataReader, T> read,
@@ -454,6 +514,11 @@ public sealed class DataSession(
         CancellationToken ct = default
     ) => QueryAsync(new CommandSpec(sql, arguments ?? Array.Empty<SqlArgument>()), read, ct);
 
+    /// <summary>Starts a transaction, or joins the scoped unit of work's transaction when one is shared.</summary>
+    /// <param name="isolation">Isolation level; <see cref="IsolationLevel.Unspecified"/> uses <see cref="DefaultIsolationLevel"/>.</param>
+    /// <param name="ct">Token used to cancel the operation.</param>
+    /// <returns>A handle that commits on <see cref="SessionTransaction.CommitAsync"/> and rolls back on dispose.</returns>
+    /// <exception cref="InvalidOperationException">A transaction is already active; nesting is not supported.</exception>
     public async Task<SessionTransaction> BeginTransactionAsync(
         IsolationLevel isolation = IsolationLevel.Unspecified,
         CancellationToken ct = default
@@ -538,6 +603,9 @@ public sealed class DataSession(
         }
     }
 
+    /// <summary>Releases the connection; a borrowed unit of work connection is left to its owner.</summary>
+    /// <returns>A task that completes when the connection is released.</returns>
+    /// <exception cref="InvalidOperationException">An operation or stream is still active on the session.</exception>
     public async ValueTask DisposeAsync()
     {
         if (_disposed)
@@ -568,6 +636,9 @@ public sealed class DataSession(
     }
 }
 
+/// <summary>
+/// Handle returned by <see cref="DataSession.BeginTransactionAsync"/>: commit explicitly, or dispose to roll back.
+/// </summary>
 public sealed class SessionTransaction : IAsyncDisposable
 {
     private readonly DataSession session;
@@ -580,6 +651,11 @@ public sealed class SessionTransaction : IAsyncDisposable
         this.transaction = transaction;
     }
 
+    /// <summary>Commits the transaction.</summary>
+    /// <param name="ct">Token used to cancel the commit.</param>
+    /// <returns>A task that completes when the transaction is committed.</returns>
+    /// <exception cref="InvalidOperationException">The transaction already completed.</exception>
+    /// <exception cref="CommitOutcomeUnknownException">The commit failed; the outcome must be reconciled.</exception>
     public async Task CommitAsync(CancellationToken ct = default)
     {
         if (_completed)
@@ -588,6 +664,9 @@ public sealed class SessionTransaction : IAsyncDisposable
         _completed = true;
     }
 
+    /// <summary>Rolls back unless the transaction already completed; failures are swallowed because the session is
+    /// discarded anyway.</summary>
+    /// <returns>A task that completes when the rollback attempt finishes.</returns>
     public async ValueTask DisposeAsync()
     {
         if (_completed || !session.OwnsTransaction(transaction))

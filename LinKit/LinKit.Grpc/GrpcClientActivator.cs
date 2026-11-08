@@ -11,6 +11,12 @@ public static class GrpcClientActivator<TClient>
 {
     private static Func<CallInvoker, TClient>? _factory;
 
+    /// <summary>
+    /// Registers the generated construction delegate. Called from the generated module initializer, so application code
+    /// normally never calls this directly.
+    /// </summary>
+    /// <param name="factory">Delegate that creates the client from a <see cref="CallInvoker"/>.</param>
+    /// <exception cref="ArgumentNullException"><paramref name="factory"/> is <see langword="null"/>.</exception>
     public static void Register(Func<CallInvoker, TClient> factory) =>
         Volatile.Write(ref _factory, factory ?? throw new ArgumentNullException(nameof(factory)));
 

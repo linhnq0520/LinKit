@@ -8,5 +8,8 @@ namespace LinKit.Data.Initialization;
 /// </summary>
 public interface IDatabaseInitializer
 {
+    /// <summary>Creates the database and its application user when the options ask for it.</summary>
+    /// <param name="ct">Token used to cancel the initialization.</param>
+    /// <returns>A task that completes when the database is ready for schema synchronization.</returns>
     Task InitializeAsync(CancellationToken ct = default);
 }

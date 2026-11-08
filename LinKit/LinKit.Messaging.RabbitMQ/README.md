@@ -1,8 +1,5 @@
 # LinKit.Messaging.RabbitMQ
 
-[![NuGet Version](https://img.shields.io/nuget/v/LinKit.Messaging.RabbitMQ.svg)](https://www.nuget.org/packages/LinKit.Messaging.RabbitMQ/)
-[![NuGet Downloads](https://img.shields.io/nuget/dt/LinKit.Messaging.RabbitMQ.svg)](https://www.nuget.org/packages/LinKit.Messaging.RabbitMQ/)
-
 This package provides a RabbitMQ broker adapter for the messaging abstractions in `LinKit.Core`. Core source generation wires supported message declarations and consumers to this broker adapter.
 
 ## Prerequisites
@@ -10,7 +7,7 @@ This package provides a RabbitMQ broker adapter for the messaging abstractions i
 - You must have `LinKit.Core` installed.
 - You need access to a running RabbitMQ instance.
 
-Generated consumers remain active until host shutdown. Failed messages are retried by republishing with an incremented `x-linkit-attempt` header (bounded, immediate retries): `MaxRetryAttempts` (default 3, `0` = no retries) caps the attempts. After the cap, messages go to `DeadLetterExchange` if configured; otherwise they are nacked without requeue — a queue-level broker DLX applies, and if none exists the message is dropped with a warning. Previously, `RequeueOnFailure=true` requeued failed messages forever (poison-message loop). Handlers should still be idempotent and deployments should define a dead-letter policy.
+Generated consumers remain active until host shutdown. Failed messages are retried by republishing with an incremented `x-linkit-attempt` header (bounded, immediate retries): `MaxRetryAttempts` (default 3, `0` = no retries) caps the attempts, and `RequeueOnFailure=false` skips retries entirely. After the cap, messages go to `DeadLetterExchange` if configured; otherwise they are nacked without requeue — a queue-level broker DLX applies, and if none exists the message is dropped with a warning. Retries are bounded, so a failing handler can no longer create a poison-message loop. Handlers should still be idempotent and deployments should define a dead-letter policy.
 
 For trimmed or Native AOT applications, define and register a `System.Text.Json` source-generated context containing every message type used by producers and consumers:
 
@@ -59,6 +56,23 @@ Add a configuration section for your RabbitMQ connection. The default section na
 
 `MaxRetryAttempts` defaults to 3 (`0` disables retries); `DeadLetterExchange` is optional.
 
+#### Configuration reference
+
+| Property              | Default     | Purpose                                                                                                                                                                                                                          |
+| :-------------------- | :---------- | :------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `HostName`            | `localhost` | Broker host name or IP address.                                                                                                                                                                                                  |
+| `UserName`            | `guest`     | User name used for the AMQP handshake.                                                                                                                                                                                           |
+| `Password`            | `guest`     | Password for the AMQP handshake; load it from a secret store in production.                                                                                                                                                      |
+| `Port`                | `5672`      | AMQP port: `5672` for plain TCP, `5671` for TLS.                                                                                                                                                                                 |
+| `VirtualHost`         | `/`         | Virtual host to operate in.                                                                                                                                                                                                      |
+| `PrefetchCount`       | `50`        | Unacknowledged deliveries allowed per consumer channel.                                                                                                                                                                          |
+| `ChannelPoolSize`     | `64`        | Producer channel pool size; larger values trade broker sockets for throughput.                                                                                                                                                   |
+| `DefaultExchangeType` | `topic`     | Exchange type declared when a message does not specify its own: `direct`, `topic`, `fanout` or `headers`.                                                                                                                        |
+| `PublisherConfirms`   | `true`      | Wait for the broker acknowledgement after every publish. Disabling it raises throughput but allows silently dropped messages.                                                                                                    |
+| `RequeueOnFailure`    | `true`      | Republish a failed delivery up to `MaxRetryAttempts` times. `false` sends the first failure straight to the dead-letter step.                                                                                                    |
+| `MaxRetryAttempts`    | `3`         | Retry cap after a processing failure; `0` disables retries. Negative values are clamped to `0`.                                                                                                                                  |
+| `DeadLetterExchange`  | unset       | Exchange that receives exhausted messages. Declared durable/direct when absent; existing exchanges are used as-is. When unset, exhausted messages are nacked without requeue, so a queue-level DLX applies if one is configured. |
+
 ### 2. Register Services in `Program.cs`
 
 In your application's startup code (e.g., `Program.cs` for a Worker Service), use the `AddLinKitRabbitMQ()` extension method **after** registering the core LinKit services.
@@ -93,4 +107,8 @@ host.Run();
 - Consumer channel operations are serialized, making acknowledgements thread-safe; channel setup failures dispose the channel. Retries republish directly to the failing queue via the default exchange (`""`) while preserving `x-linkit-original-routing-key` so other queues bound to the same exchange do not receive duplicate messages.
 - Producer confirms are event-driven and fully async — no `WaitForConfirmsOrDie` thread blocking. Any `ExchangeDeclare` failure, confirm timeout, or nack throws and safely disposes the channel instead of returning it to the pool.
 - The exchange declaration cache is keyed by (name, type), so the same exchange name declared with different types is not conflated.
+
+## License
+
+MIT. See the [repository license](https://github.com/linhnq0520/LinKit/blob/main/LICENSE).
 

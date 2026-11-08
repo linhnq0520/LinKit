@@ -2,10 +2,10 @@
   <PropertyGroup>
     <TargetFrameworks>net8.0;net9.0;net10.0</TargetFrameworks>
     <PackageId>LinKit.Sagas</PackageId>
-    <Version>2.0.0</Version>
+    <Version>2.0.1</Version>
     <Description>Saga step coordination and compensation abstractions with a replaceable, version-guarded state repository.</Description>
     <PackageTags>linkit;sagas;orchestration;microservices;aot</PackageTags>
-    <PackageReleaseNotes>v2.0.0: ISagaRepository gains optimistic concurrency (Version), idempotent compensation tracking and GetStuckAsync. In-memory repository is rejected in Production unless explicitly allowed. Full documentation &amp; release notes: https://quoclinh.id.vn/docs/linkit</PackageReleaseNotes>
+    <PackageReleaseNotes>v2.0.1: documentation and packaging patch - every public member now carries XML documentation (CS1591 is enforced as a build error) and the README was reviewed for accuracy. Previous release: v2.0.0 - ISagaRepository gains optimistic concurrency (Version), idempotent compensation tracking and GetStuckAsync. In-memory repository is rejected in Production unless explicitly allowed. Full documentation &amp; release notes: https://quoclinh.id.vn/docs/linkit</PackageReleaseNotes>
   </PropertyGroup>
 
   <ItemGroup>

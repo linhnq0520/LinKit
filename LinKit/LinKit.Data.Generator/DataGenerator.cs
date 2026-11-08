@@ -20,12 +20,12 @@ public class DataGenerator : IIncrementalGenerator
 
     private static readonly DiagnosticDescriptor MultiTenantFilterNotEnforced = new(
         id: "LNKDATA001",
-        title: "Multi-tenant filtering is not enforced",
-        messageFormat: "Entity '{0}' uses [MultiTenant], but LinKit.Data does not automatically scope repository queries by tenant. Add explicit tenant predicates; do not rely on this attribute for data isolation.",
+        title: "Multi-tenant column is not mapped",
+        messageFormat: "Entity '{0}' declares tenant column '{1}' through [MultiTenant], but no mapped property uses that name, so LinKit.Data cannot emit a tenant filter. Rename the property or the attribute argument.",
         category: "LinKit.Data",
         defaultSeverity: DiagnosticSeverity.Warning,
         isEnabledByDefault: true,
-        description: "The MultiTenant attribute is metadata only until tenant-aware repository filtering is implemented."
+        description: "Tenant scoping is emitted only when the declared tenant column maps to a property of the entity."
     );
 
     private static readonly DiagnosticDescriptor PrimaryKeyFallback = new(
@@ -209,13 +209,29 @@ public class DataGenerator : IIncrementalGenerator
 
                 foreach (var entity in entities)
                 {
-                    if (entity.TenantColumn is not null && entity.Location is not null)
+                    if (
+                        entity.TenantColumn is not null
+                        && entity.Location is not null
+                        && !entity.Properties.Any(property =>
+                            string.Equals(
+                                property.ColumnName,
+                                entity.TenantColumn,
+                                StringComparison.OrdinalIgnoreCase
+                            )
+                            || string.Equals(
+                                property.PropertyName,
+                                entity.TenantColumn,
+                                StringComparison.OrdinalIgnoreCase
+                            )
+                        )
+                    )
                     {
                         spc.ReportDiagnostic(
                             Diagnostic.Create(
                                 MultiTenantFilterNotEnforced,
                                 entity.Location,
-                                entity.FullName
+                                entity.FullName,
+                                entity.TenantColumn
                             )
                         );
                     }
@@ -617,6 +633,10 @@ public class DataGenerator : IIncrementalGenerator
                     : "TenantId";
         }
 
+        // [TenantKey] on a property is the property-level alternative to [MultiTenant]; the class-level column name wins
+        // when both are present so an explicit [MultiTenant] argument is never silently overridden.
+        string? tenantKeyProperty = null;
+
         var properties = new List<PropertyModel>();
         // Traverse class hierarchy to include inherited properties (walk up base types)
         var seen = new HashSet<string>(StringComparer.Ordinal);
@@ -832,7 +852,7 @@ public class DataGenerator : IIncrementalGenerator
                     }
                 }
 
-                // [ConcurrencyCheck]
+                // [ConcurrencyCheck] and [ConcurrencyToken] are interchangeable spellings of the same concept.
                 if (
                     member
                         .GetAttributes()
@@ -840,10 +860,28 @@ public class DataGenerator : IIncrementalGenerator
                             a.AttributeClass?.Name == "ConcurrencyCheckAttribute"
                             || a.AttributeClass?.ToDisplayString()
                                 == "LinKit.Data.ConcurrencyCheckAttribute"
+                            || a.AttributeClass?.Name == "ConcurrencyTokenAttribute"
+                            || a.AttributeClass?.ToDisplayString()
+                                == "LinKit.Data.ConcurrencyTokenAttribute"
                         )
                 )
                 {
                     isConcurrencyCheck = true;
+                }
+
+                // [TenantKey] marks the tenant property when the class does not declare [MultiTenant].
+                if (
+                    tenantKeyProperty is null
+                    && member
+                        .GetAttributes()
+                        .Any(a =>
+                            a.AttributeClass?.Name == "TenantKeyAttribute"
+                            || a.AttributeClass?.ToDisplayString()
+                                == "LinKit.Data.TenantKeyAttribute"
+                        )
+                )
+                {
+                    tenantKeyProperty = member.Name;
                 }
 
                 // [Comment]
@@ -1051,6 +1089,8 @@ public class DataGenerator : IIncrementalGenerator
             }
             currentSymbol = currentSymbol.BaseType;
         }
+
+        tenantColumn ??= tenantKeyProperty;
 
         if (columnOrders.Count > 0)
         {

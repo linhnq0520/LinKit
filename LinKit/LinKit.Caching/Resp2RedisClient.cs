@@ -18,12 +18,23 @@ namespace LinKit.Caching;
 /// <summary>
 /// Options for <see cref="HybridRedisCacheProvider"/>.
 /// </summary>
+/// <remarks>
+/// Bind this type from configuration (section <see cref="DefaultSection" />) instead of constructing it by hand. Invalid
+/// values are rejected by <see cref="Validate"/> during registration, so a typo in the endpoint fails at startup rather
+/// than silently turning every cache read into a miss.
+/// </remarks>
 public sealed class LinKitRedisOptions
 {
+    /// <summary>Default configuration section name: <c>Redis</c>.</summary>
     public const string DefaultSection = "Redis";
 
+    /// <summary>When <see langword="false"/> the hybrid cache works against its local layer only.</summary>
     public bool Enabled { get; set; } = true;
+
+    /// <summary>Redis host name or IP address.</summary>
     public string Host { get; set; } = "localhost";
+
+    /// <summary>Redis port; the default is 6379.</summary>
     public int Port { get; set; } = 6379;
 
     /// <summary>
@@ -32,7 +43,13 @@ public sealed class LinKitRedisOptions
     /// </summary>
     public string? Username { get; set; }
 
+    /// <summary>
+    /// Password sent with <c>AUTH</c>. Leave empty for servers without authentication; store it in a secret provider
+    /// rather than in <c>appsettings.json</c>.
+    /// </summary>
     public string? Password { get; set; }
+
+    /// <summary>Logical Redis database index selected after connecting.</summary>
     public int Database { get; set; } = 0;
 
     /// <summary>Prefix prepended to every key so several applications can share one Redis database.</summary>
@@ -47,7 +64,10 @@ public sealed class LinKitRedisOptions
     /// </summary>
     public string? TlsHost { get; set; }
 
+    /// <summary>Time-to-live applied when a write does not specify one explicitly.</summary>
     public TimeSpan DefaultTtl { get; set; } = TimeSpan.FromMinutes(60);
+
+    /// <summary>Maximum time allowed to establish the TCP and TLS connection before it is treated as a miss.</summary>
     public TimeSpan ConnectTimeout { get; set; } = TimeSpan.FromSeconds(2);
 
     /// <summary>
@@ -87,6 +107,8 @@ public sealed class LinKitRedisOptions
 /// </summary>
 public sealed class RedisServerException : Exception
 {
+    /// <summary>Creates the exception from the server's error text.</summary>
+    /// <param name="message">The <c>-ERR</c> message returned by Redis.</param>
     public RedisServerException(string message)
         : base(message) { }
 }
@@ -108,6 +130,12 @@ public sealed class Resp2RedisClient : IDisposable
     /// <summary>Hard stop for SCAN loops so a misbehaving server cannot spin forever.</summary>
     private const int MaxScanIterations = 10_000;
 
+    /// <summary>Creates a client from validated options.</summary>
+    /// <param name="options">Connection settings, validated on construction and kept by reference.</param>
+    /// <param name="logger">Optional logger for transient failures; the caller owns its lifetime.</param>
+    /// <exception cref="ArgumentNullException"><paramref name="options"/> is <see langword="null"/>.</exception>
+    /// <exception cref="ArgumentException">An ACL username was supplied without a password, or TLS has no host name.</exception>
+    /// <exception cref="ArgumentOutOfRangeException">Port, database or a timeout is outside its supported range.</exception>
     public Resp2RedisClient(LinKitRedisOptions options, ILogger<Resp2RedisClient>? logger = null)
     {
         ArgumentNullException.ThrowIfNull(options);
@@ -147,6 +175,10 @@ public sealed class Resp2RedisClient : IDisposable
         _logger = logger ?? (ILogger)NullLogger<Resp2RedisClient>.Instance;
     }
 
+    /// <summary>Reads the raw value stored under <paramref name="key"/>.</summary>
+    /// <param name="key">Unprefixed key; the configured key prefix is applied automatically.</param>
+    /// <param name="ct">Token used to abort the command.</param>
+    /// <returns>The stored bytes, or <see langword="null"/> when the key is missing or the call failed transiently.</returns>
     public async Task<byte[]?> GetBytesAsync(string key, CancellationToken ct = default)
     {
         Reply? reply = await ExecuteAsync(
@@ -165,6 +197,12 @@ public sealed class Resp2RedisClient : IDisposable
         return reply is { Kind: ReplyKind.Bulk } ? reply.Value : null;
     }
 
+    /// <summary>Stores a raw value, replacing any previous value.</summary>
+    /// <param name="key">Unprefixed key; the configured key prefix is applied automatically.</param>
+    /// <param name="value">Payload to store.</param>
+    /// <param name="ttl">Absolute time-to-live; falls back to <see cref="LinKitRedisOptions.DefaultTtl"/> when omitted.</param>
+    /// <param name="ct">Token used to abort the command.</param>
+    /// <returns><see langword="true"/> when the server acknowledged the write.</returns>
     public async Task<bool> SetBytesAsync(
         string key,
         byte[] value,
@@ -186,6 +224,10 @@ public sealed class Resp2RedisClient : IDisposable
         return reply is { Kind: ReplyKind.SimpleString } && IsOk(reply.Text);
     }
 
+    /// <summary>Deletes a single key.</summary>
+    /// <param name="key">Unprefixed key; the configured key prefix is applied automatically.</param>
+    /// <param name="ct">Token used to abort the command.</param>
+    /// <returns><see langword="true"/> when a key was removed.</returns>
     public async Task<bool> DeleteKeyAsync(string key, CancellationToken ct = default)
     {
         Reply? reply = await ExecuteAsync(
@@ -908,6 +950,7 @@ public sealed class Resp2RedisClient : IDisposable
         }
     }
 
+    /// <summary>Releases every pooled connection. The client is unusable afterwards.</summary>
     public void Dispose()
     {
         while (_pool.TryTake(out PooledConnection? conn))

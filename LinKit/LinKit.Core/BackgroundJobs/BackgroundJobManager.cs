@@ -5,6 +5,12 @@ using Microsoft.Extensions.Options;
 
 namespace LinKit.Core.BackgroundJobs;
 
+/// <summary>
+/// Hosted service that owns the configured jobs. It reads <see cref="BackgroundJobConfig"/>, starts one
+/// <see cref="JobRunner"/> per active job and reacts to configuration reloads by starting, restarting or stopping
+/// individual jobs without touching the others. Register it with
+/// <see cref="BackgroundJobServiceCollectionExtensions.AddBackgroundJobManager"/>.
+/// </summary>
 public class BackgroundJobManager : IHostedService, IBackgroundJobTrigger
 {
     private readonly IOptionsMonitor<BackgroundJobConfig> _monitor;
@@ -13,6 +19,11 @@ public class BackgroundJobManager : IHostedService, IBackgroundJobTrigger
     private readonly Dictionary<string, JobRunner> _jobs = [];
     private readonly object _lock = new();
 
+    /// <summary>
+    /// Initializes the manager and subscribes to configuration changes.
+    /// </summary>
+    /// <param name="monitor">Source of the job configuration, monitored for reloads.</param>
+    /// <param name="sp">Root provider used to create the scope of every execution.</param>
     public BackgroundJobManager(IOptionsMonitor<BackgroundJobConfig> monitor, IServiceProvider sp)
     {
         _monitor = monitor;
@@ -21,6 +32,11 @@ public class BackgroundJobManager : IHostedService, IBackgroundJobTrigger
         _monitor.OnChange(OnConfigChanged);
     }
 
+    /// <summary>
+    /// Starts a runner for every active job in the current configuration.
+    /// </summary>
+    /// <param name="cancellationToken">Host startup token.</param>
+    /// <returns>A completed task; runners run in the background.</returns>
     public Task StartAsync(CancellationToken cancellationToken)
     {
         _logger?.LogInformation("BackgroundJobManager is starting.");
@@ -28,6 +44,11 @@ public class BackgroundJobManager : IHostedService, IBackgroundJobTrigger
         return Task.CompletedTask;
     }
 
+    /// <summary>
+    /// Stops every runner, waiting up to five seconds for each one to observe cancellation.
+    /// </summary>
+    /// <param name="cancellationToken">Host shutdown token.</param>
+    /// <returns>A completed task.</returns>
     public Task StopAsync(CancellationToken cancellationToken)
     {
         _logger?.LogInformation("BackgroundJobManager is stopping. Stopping all running jobs.");
@@ -42,9 +63,11 @@ public class BackgroundJobManager : IHostedService, IBackgroundJobTrigger
         return Task.CompletedTask;
     }
 
+    /// <inheritdoc />
     public Task TriggerAsync(string jobName, CancellationToken cancellationToken = default) =>
         TriggerAsync(jobName, embeddedData: null, cancellationToken);
 
+    /// <inheritdoc />
     public async Task TriggerAsync(
         string jobName,
         string? embeddedData,

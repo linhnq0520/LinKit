@@ -4,6 +4,9 @@ using Microsoft.Extensions.DependencyInjection.Extensions;
 
 namespace LinKit.Grpc;
 
+/// <summary>
+/// Registration helpers for the gRPC client graph.
+/// </summary>
 public static class ServiceCollectionExtensions
 {
     /// <summary>
@@ -42,6 +45,10 @@ public static class ServiceCollectionExtensions
         return services;
     }
 
+    /// <summary>Replaces the metadata provider used for outgoing calls.</summary>
+    /// <typeparam name="T">Provider implementation; the last registration wins.</typeparam>
+    /// <param name="services">Service collection to configure.</param>
+    /// <returns>The same collection, to allow call chaining.</returns>
     public static IServiceCollection AddGrpcMetadataProvider<
         [DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicConstructors)] T
     >(this IServiceCollection services)
@@ -50,6 +57,10 @@ public static class ServiceCollectionExtensions
         return services.AddSingleton<IMetadataProvider, T>();
     }
 
+    /// <summary>Replaces the interceptor provider used for outgoing calls.</summary>
+    /// <typeparam name="T">Provider implementation; the last registration wins.</typeparam>
+    /// <param name="services">Service collection to configure.</param>
+    /// <returns>The same collection, to allow call chaining.</returns>
     public static IServiceCollection AddGrpcInterceptorProvider<
         [DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicConstructors)] T
     >(this IServiceCollection services)
@@ -58,6 +69,10 @@ public static class ServiceCollectionExtensions
         return services.AddSingleton<IGrpcInterceptorProvider, T>();
     }
 
+    /// <summary>Replaces the channel provider, for example to point clients at a different address per environment.</summary>
+    /// <typeparam name="T">Provider implementation; the last registration wins.</typeparam>
+    /// <param name="services">Service collection to configure.</param>
+    /// <returns>The same collection, to allow call chaining.</returns>
     public static IServiceCollection AddGrpcChannelProvider<
         [DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicConstructors)] T
     >(this IServiceCollection services)

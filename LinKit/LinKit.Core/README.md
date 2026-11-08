@@ -1,9 +1,6 @@
 # LinKit.Core
 
-[![NuGet Version](https://img.shields.io/nuget/v/LinKit.Core.svg)](https://www.nuget.org/packages/LinKit.Core/)
-[![NuGet Downloads](https://img.shields.io/nuget/dt/LinKit.Core.svg)](https://www.nuget.org/packages/LinKit.Core/)
-
-> 📖 **Official Documentation & Release Notes:** [https://quoclinh.id.vn/docs/linkit](https://quoclinh.id.vn/docs/linkit)
+> **Official Documentation & Release Notes:** [https://quoclinh.id.vn/docs/linkit](https://quoclinh.id.vn/docs/linkit)
 
 **LinKit.Core** is the runtime and source-generator package for CQRS, dependency injection, Minimal API endpoints, background jobs, mapping, and messaging contracts. It generates static application wiring for supported patterns. Native AOT and trimming support depend on the exact API path and application dependencies; see [AOT & Trimming](#aot--trimming).
 
@@ -25,19 +22,19 @@ LinKit uses C# source generation to move selected handler discovery and wiring w
 
 ## LinKit Ecosystem
 
-| Package                     | Description                                                          | NuGet                                                              |
-| --------------------------- | -------------------------------------------------------------------- | ------------------------------------------------------------------ |
-| `LinKit.Core`               | **Required.** Core CQRS, Endpoints, DI, Jobs, Mapping & Source Gen.  | [NuGet](https://www.nuget.org/packages/LinKit.Core/)               |
-| `LinKit.Grpc`               | gRPC server/client adapters generated for CQRS requests.             | [NuGet](https://www.nuget.org/packages/LinKit.Grpc/)               |
-| `LinKit.Messaging.RabbitMQ` | RabbitMQ broker implementation for LinKit messaging abstractions.    | [NuGet](https://www.nuget.org/packages/LinKit.Messaging.RabbitMQ/) |
-| `LinKit.Messaging.Kafka`    | Apache Kafka broker implementation for LinKit messaging abstractions.| [NuGet](https://www.nuget.org/packages/LinKit.Messaging.Kafka/)    |
-| `LinKit.Outbox`             | Transactional Outbox & Idempotent Inbox for distributed resilience.  | [NuGet](https://www.nuget.org/packages/LinKit.Outbox/)             |
-| `LinKit.Outbox.Data`        | Durable ADO.NET Outbox/Inbox stores for `LinKit.Data` providers.       | [NuGet](https://www.nuget.org/packages/LinKit.Outbox.Data/)        |
-| `LinKit.Data`               | Source-generated ADO.NET repositories and schema synchronization.      | [NuGet](https://www.nuget.org/packages/LinKit.Data/)               |
-| `LinKit.Caching`            | In-memory cache provider with expiry, capacity management, and single-flight creation. | [NuGet](https://www.nuget.org/packages/LinKit.Caching/) |
-| `LinKit.Resilience`         | Explicit retry, timeout, and circuit-breaker execution pipeline.     | [NuGet](https://www.nuget.org/packages/LinKit.Resilience/)         |
-| `LinKit.Tenancy`            | Async-flow tenant context and explicit message-header helpers.       | [NuGet](https://www.nuget.org/packages/LinKit.Tenancy/)            |
-| `LinKit.Sagas`              | Saga step coordinator and replaceable repository contract.           | [NuGet](https://www.nuget.org/packages/LinKit.Sagas/)              |
+| Package                     | Description                                                                            | NuGet                                                              |
+| --------------------------- | -------------------------------------------------------------------------------------- | ------------------------------------------------------------------ |
+| `LinKit.Core`               | **Required.** Core CQRS, Endpoints, DI, Jobs, Mapping & Source Gen.                    | [NuGet](https://www.nuget.org/packages/LinKit.Core/)               |
+| `LinKit.Grpc`               | gRPC server/client adapters generated for CQRS requests.                               | [NuGet](https://www.nuget.org/packages/LinKit.Grpc/)               |
+| `LinKit.Messaging.RabbitMQ` | RabbitMQ broker implementation for LinKit messaging abstractions.                      | [NuGet](https://www.nuget.org/packages/LinKit.Messaging.RabbitMQ/) |
+| `LinKit.Messaging.Kafka`    | Apache Kafka broker implementation for LinKit messaging abstractions.                  | [NuGet](https://www.nuget.org/packages/LinKit.Messaging.Kafka/)    |
+| `LinKit.Outbox`             | Transactional Outbox & Idempotent Inbox for distributed resilience.                    | [NuGet](https://www.nuget.org/packages/LinKit.Outbox/)             |
+| `LinKit.Outbox.Data`        | Durable ADO.NET Outbox/Inbox stores for `LinKit.Data` providers.                       | [NuGet](https://www.nuget.org/packages/LinKit.Outbox.Data/)        |
+| `LinKit.Data`               | Source-generated ADO.NET repositories and schema synchronization.                      | [NuGet](https://www.nuget.org/packages/LinKit.Data/)               |
+| `LinKit.Caching`            | In-memory cache provider with expiry, capacity management, and single-flight creation. | [NuGet](https://www.nuget.org/packages/LinKit.Caching/)            |
+| `LinKit.Resilience`         | Explicit retry, timeout, and circuit-breaker execution pipeline.                       | [NuGet](https://www.nuget.org/packages/LinKit.Resilience/)         |
+| `LinKit.Tenancy`            | Async-flow tenant context and explicit message-header helpers.                         | [NuGet](https://www.nuget.org/packages/LinKit.Tenancy/)            |
+| `LinKit.Sagas`              | Saga step coordinator and replaceable repository contract.                             | [NuGet](https://www.nuget.org/packages/LinKit.Sagas/)              |
 
 ---
 
@@ -74,26 +71,28 @@ The LinKit CQRS Kit analyzes the compilation and generates a mediator implementa
 
 #### Core Interfaces
 
--   `ICommand`: A "void" operation (returns `Task<Unit>`).
--   `ICommand<TResponse>`: An operation that changes state and returns a value.
--   `IQuery<TResponse>`: A data retrieval operation.
+- `ICommand`: A "void" operation (returns `Task<Unit>`).
+- `ICommand<TResponse>`: An operation that changes state and returns a value.
+- `IQuery<TResponse>`: A data retrieval operation.
 
 ---
 
 #### Step 1: Define Requests & Handlers
 
 **1. Create a Request:**
+
 ```csharp
 public record CreateUserCommand(string Name) : ICommand<int>;
 ```
 
 **2. Create a Handler:**
 Mark your handler with `[CqrsHandler]` for automatic discovery.
+
 ```csharp
 [CqrsHandler]
 public class CreateUserHandler : ICommandHandler<CreateUserCommand, int>
 {
-    public async Task<int> HandleAsync(CreateUserCommand request, CancellationToken ct) 
+    public async Task<int> HandleAsync(CreateUserCommand request, CancellationToken ct)
         => await Task.FromResult(1);
 }
 ```
@@ -102,7 +101,7 @@ public class CreateUserHandler : ICommandHandler<CreateUserCommand, int>
 
 #### Step 2: Multi-Assembly Registration (`[CqrsContext]`)
 
-In real-world applications (Clean Architecture, Modular Monoliths), your requests, handlers, and pipeline behaviors usually reside in different class libraries (e.g., `Application.dll`, `Infrastructure.dll`). Since Source Generators run *per-project*, generating multiple `IMediator` instances across different projects would cause Dependency Injection conflicts.
+In real-world applications (Clean Architecture, Modular Monoliths), your requests, handlers, and pipeline behaviors usually reside in different class libraries (e.g., `Application.dll`, `Infrastructure.dll`). Since Source Generators run _per-project_, generating multiple `IMediator` instances across different projects would cause Dependency Injection conflicts.
 
 LinKit solves this elegantly with `[CqrsContext]`. It acts as a **centralized registry** using **Assembly Marker Types**. You define it once in your Host project (e.g., `WebAPI`), and the generator will automatically dive into the referenced assemblies, discover all handlers **AND pipeline behaviors**, and generate a single, unified, highly-optimized Mediator.
 
@@ -128,34 +127,35 @@ using MyApp.Application;
 using MyApp.Infrastructure;
 
 // The LinKit source generator running in the WebAPI project will read this,
-// scan the entire Application and Infrastructure assemblies, 
+// scan the entire Application and Infrastructure assemblies,
 // and wire up ALL discovered Handlers AND Pipeline Behaviors automatically!
 [CqrsContext(
     typeof(ApplicationAssemblyMarker),
     typeof(InfrastructureAssemblyMarker)
 )]
-public partial class GlobalCqrsRegistry 
-{ 
+public partial class GlobalCqrsRegistry
+{
 }
 ```
 
-*Note: You can still use `[CqrsHandler]` or `[CqrsBehavior]` on individual classes for explicit local discovery in the host project. The generator will seamlessly combine local classes with the context-discovered ones.*
+_Note: You can still use `[CqrsHandler]` or `[CqrsBehavior]` on individual classes for explicit local discovery in the host project. The generator will seamlessly combine local classes with the context-discovered ones._
 
---- 
+---
 
 #### Step 3: Advanced Pipeline Behaviors
 
 LinKit's pipeline is generated at compile-time using a **Clean Name matching engine**. This means a behavior targeting `ICommand` will automatically match both `ICommand` and `ICommand<TResponse>`.
 
-*(Tip: If your behaviors are located in external assemblies, just ensure their assembly marker is included in your `[CqrsContext]` as shown in Step 2. LinKit will find them automatically!)*
+_(Tip: If your behaviors are located in external assemblies, just ensure their assembly marker is included in your `[CqrsContext]` as shown in Step 2. LinKit will find them automatically!)_
 
 ##### A. Global & Contract Behaviors (`[CqrsBehavior]`)
+
 Use this for cross-cutting concerns. You can target a specific marker interface or use `typeof(object)` for a truly global behavior.
 
 ```csharp
 // 1. Truly Global Behavior (Runs for EVERYTHING: Commands and Queries)
 [CqrsBehavior(typeof(IRequest<>), Order = 1)]
-public class LoggingBehavior<TRequest, TResponse> : IPipelineBehavior<TRequest, TResponse> 
+public class LoggingBehavior<TRequest, TResponse> : IPipelineBehavior<TRequest, TResponse>
     where TRequest : IRequest<TResponse>
 { ... }
 
@@ -168,6 +168,7 @@ public class TransactionBehavior<TRequest, TResponse> : IPipelineBehavior<TReque
 ```
 
 ##### B. Specific Behaviors (`[ApplyBehavior]`)
+
 Use this for ad-hoc logic applied directly to a specific request class. These behaviors run **closest to the handler**.
 
 ```csharp
@@ -176,6 +177,7 @@ public record ProcessPaymentCommand(Guid Id) : ICommand<bool>;
 ```
 
 **Execution Order:**
+
 1. Global Behaviors (by `Order`)
 2. Contract Behaviors (by `Order`)
 3. Specific Behaviors (defined in `[ApplyBehavior]`)
@@ -186,14 +188,16 @@ public record ProcessPaymentCommand(Guid Id) : ICommand<bool>;
 #### Step 4: Register and Use
 
 **Registration:**
+
 ```csharp
 // Program.cs
-// This single call registers the generated Mediator, all Handlers, 
+// This single call registers the generated Mediator, all Handlers,
 // and wires up the entire Pipeline.
 builder.Services.AddLinKitCqrs();
 ```
 
 **Usage:**
+
 ```csharp
 public class MyApi(IMediator mediator)
 {
@@ -256,6 +260,7 @@ await mediator.PublishAsync(new UserCreatedNotification(userId), PublishStrategy
 ### Usage Guide
 
 #### 1. Mark Your Services
+
 // Shorthand lifetime attributes (Recommended):
 [AddScoped] // Automatically registers as IUserService (leaf interface) with Scoped lifetime
 public class UserService : IUserService { ... }
@@ -274,6 +279,7 @@ public class LegacyUserService : IUserService { ... }
 public class LegacyDataProvider : IDataProvider { ... }
 
 #### 2. Open Generics Support
+
 To register Open Generic types, set the `IsGeneric` property to `true`.
 
 ```csharp
@@ -282,12 +288,15 @@ public class Repository<T> : IRepository<T> where T : class { ... }
 ```
 
 #### 3. Automatic Interface Discovery
+
 If you do not specify a `ServiceType`, LinKit follows a smart hierarchy to choose the best interface:
+
 1. **Convention:** An interface matching the class name (e.g., `MyService` -> `IMyService`).
 2. **Leaf Interface:** The most specific interface in the inheritance chain (closest parent).
 3. **Self-Registration:** If no interfaces are found, it registers the class itself.
 
 #### 4. Activation in Program.cs
+
 The Source Generator automatically creates an extension method called `AddLinKitDependency()` in `<RootNamespace>.Generated` and emits a global using for that namespace in the current assembly. Call it once in your startup configuration:
 
 ```csharp
@@ -307,43 +316,46 @@ Generated Core APIs now live in the consuming assembly's `<RootNamespace>.Genera
 
 ### `RegisterServiceAttribute` Parameters
 
-| Parameter | Type | Description |
-| :--- | :--- | :--- |
-| `Lifetime` | `int`/`Enum` | `0`: Scoped, `1`: Singleton, `2`: Transient (based on your Enum definition). |
-| `ServiceType` | `Type` | (Optional) Specify a specific interface/base class to register. |
-| `Key` | `string` | (Optional) Registers the service as a **Keyed Service**. |
-| `IsGeneric` | `bool` | (Optional) Set to `true` for Open Generic classes (`Class<T>`). |
+| Parameter     | Type         | Description                                                                  |
+| :------------ | :----------- | :--------------------------------------------------------------------------- |
+| `Lifetime`    | `int`/`Enum` | `0`: Scoped, `1`: Singleton, `2`: Transient (based on your Enum definition). |
+| `ServiceType` | `Type`       | (Optional) Specify a specific interface/base class to register.              |
+| `Key`         | `string`     | (Optional) Registers the service as a **Keyed Service**.                     |
+| `IsGeneric`   | `bool`       | (Optional) Set to `true` for Open Generic classes (`Class<T>`).              |
 
 ### Why LinKit DI?
 
 In standard DI registration, if a class implements multiple inherited interfaces:
+
 ```csharp
 public interface IRepository<T> { }
 public interface IUserRepository : IRepository<User> { }
 public class UserRepository : IUserRepository { }
 ```
+
 LinKit is "context-aware"—it understands that you likely want to inject `IUserRepository` rather than the generic `IRepository<User>`, ensuring your dependencies are specific and clean.
 
 ---
 
 ### Pro-Tips:
-* **Multiple Registrations:** If a class implements multiple independent interfaces (e.g., `IServiceA` and `IServiceB`), you can apply the attribute multiple times (requires `AllowMultiple = true` in attribute definition).
-* **Native AOT:** Source generation can reduce runtime discovery, but the complete application still needs trimming/AOT analysis and publish-time validation.
 
---- 
+- **Multiple Registrations:** If a class implements multiple independent interfaces (e.g., `IServiceA` and `IServiceB`), you can apply the attribute multiple times (requires `AllowMultiple = true` in attribute definition).
+- **Native AOT:** Source generation can reduce runtime discovery, but the complete application still needs trimming/AOT analysis and publish-time validation.
+
+---
 
 ### 3. Endpoints Kit (Minimal APIs)
 
 The Endpoints Kit generates Minimal API mappings for supported, endpoint-decorated CQRS requests, reducing hand-written route and dispatch wiring.
 
--   **Zero Boilerplate:** The request DTO *is* the API definition.
--   **Automatic Binding:** Infers `[FromBody]` for command payloads (POST/PUT/PATCH) and `[AsParameters]` for queries (GET/DELETE).
--   **Flexible Response Handling:** Intelligent result mapping that handles both Reference Types and **Value Types** (like `bool`, `int`). It automatically returns `200 OK` for valid results and `404 Not Found` for nulls without boxing overhead.
--   **Keyed Mediator Support:** Ability to inject specific Mediator instances using .NET 8+ Keyed Services.
--   **Metadata & OpenAPI:** Built-in support for Summary, Description, Tags, and Versions.
--   **Security:** Native support for Policies, Roles, and CORS.
--   **Compile-Time Validation (`LNKEP001`):** A class decorated with an endpoint attribute (`[ApiEndpoint]`, `[HttpGet]`, etc.) that does not implement `ICommand`/`IQuery` is now reported as warning **LNKEP001** instead of being silently skipped.
--   **Safe Generated Metadata:** Generated endpoint code safely escapes all attribute-supplied strings (routes, names, tags, roles, policies, summaries).
+- **Zero Boilerplate:** The request DTO _is_ the API definition.
+- **Automatic Binding:** Infers `[FromBody]` for command payloads (POST/PUT/PATCH) and `[AsParameters]` for queries (GET/DELETE).
+- **Flexible Response Handling:** Intelligent result mapping that handles both Reference Types and **Value Types** (like `bool`, `int`). It automatically returns `200 OK` for valid results and `404 Not Found` for nulls without boxing overhead.
+- **Keyed Mediator Support:** Ability to inject specific Mediator instances using .NET 8+ Keyed Services.
+- **Metadata & OpenAPI:** Built-in support for Summary, Description, Tags, and Versions.
+- **Security:** Native support for Policies, Roles, and CORS.
+- **Compile-Time Validation (`LNKEP001`):** A class decorated with an endpoint attribute (`[ApiEndpoint]`, `[HttpGet]`, etc.) that does not implement `ICommand`/`IQuery` is now reported as warning **LNKEP001** instead of being silently skipped.
+- **Safe Generated Metadata:** Generated endpoint code safely escapes all attribute-supplied strings (routes, names, tags, roles, policies, summaries).
 
 #### Step 1: Define Endpoints
 
@@ -407,7 +419,7 @@ public class EntityAuditEndpointFilter : IEndpointFilter
 
 // Maps to: POST /api/entity-audit/get
 [ApiEndpoint(
-    ApiMethod.Post, 
+    ApiMethod.Post,
     "api/entity-audit/get",
     ResponseType = typeof(IList<EntityAuditResponseModelExtend>), // Custom Swagger schema
     SuccessStatusCode = 200,
@@ -438,8 +450,8 @@ public class ExportCatalogHandler : IQueryHandler<ExportCatalogQuery, FileRespon
     {
         var csvBytes = "Id,Name\n1,Product A"u8.ToArray();
         return Task.FromResult(FileResponse.Bytes(
-            csvBytes, 
-            contentType: "text/csv", 
+            csvBytes,
+            contentType: "text/csv",
             fileDownloadName: "products.csv"
         ));
     }
@@ -480,7 +492,7 @@ Map custom exceptions to HTTP status codes automatically with an optimized, non-
 using LinKit.Core.Endpoints;
 
 [ApiExceptionMapping(StatusCodes.Status404NotFound, Title = "Resource Not Found")]
-public class UserNotFoundException : Exception 
+public class UserNotFoundException : Exception
 {
     public UserNotFoundException(int id) : base($"User {id} was not found.") { }
 }
@@ -503,7 +515,7 @@ In your `Program.cs`, simply call `MapGeneratedEndpoints`. All your CQRS-based e
 ```csharp
 var app = builder.Build();
 
-app.UseGeneratedExceptionHandler(); 
+app.UseGeneratedExceptionHandler();
 app.UseAuthentication();
 app.UseAuthorization();
 
@@ -649,13 +661,13 @@ public class OrderCompletedHandler(IBackgroundJobTrigger jobTrigger)
 
 **Behavior notes:**
 
-| Scenario | What happens |
-| -------- | ------------ |
-| Job is **active** (`IsActive: true`) | Runs through the live `JobRunner`, respects `MaxParallel` with scheduled runs, and does **not** reset the next scheduled delay. |
-| Job exists in config but is **inactive** | Runs once via the same execution pipeline (mapper, mediator, optional history). Useful for admin "run now" on disabled jobs. |
-| Job name **not in config** | Throws `InvalidOperationException`. |
-| `embeddedData` argument | Pass `null` to use `EmbeddedData` from JSON; pass a string to override it for that execution only. |
-| `ExecutionId` | Automatically generated per run. Available on `command.ExecutionId` in your handler and in `JobExecutionHistory` when history logging is enabled. Not configurable in JSON. |
+| Scenario                                 | What happens                                                                                                                                                                |
+| ---------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Job is **active** (`IsActive: true`)     | Runs through the live `JobRunner`, respects `MaxParallel` with scheduled runs, and does **not** reset the next scheduled delay.                                             |
+| Job exists in config but is **inactive** | Runs once via the same execution pipeline (mapper, mediator, optional history). Useful for admin "run now" on disabled jobs.                                                |
+| Job name **not in config**               | Throws `InvalidOperationException`.                                                                                                                                         |
+| `embeddedData` argument                  | Pass `null` to use `EmbeddedData` from JSON; pass a string to override it for that execution only.                                                                          |
+| `ExecutionId`                            | Automatically generated per run. Available on `command.ExecutionId` in your handler and in `JobExecutionHistory` when history logging is enabled. Not configurable in JSON. |
 
 > **Note:** For logic that is not tied to a configured background job, you can still call `IMediator.SendAsync` with your command directly. Use `IBackgroundJobTrigger` when you want the same path as scheduled jobs (generated mapper, `EmbeddedData`, `ExecutionId`, and `IJobHistoryLogger` when `IsLogHistory` is enabled).
 
@@ -665,21 +677,21 @@ public class OrderCompletedHandler(IBackgroundJobTrigger jobTrigger)
 
 Below is a detailed description of each property available in the job configuration.
 
-| Property              | Type              | Description                                                                                                                                                                                            |
-| --------------------- | ----------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `Name`                | `string`          | **Required.** The unique identifier for the job. This must exactly match the name provided in the `[BackgroundJob("MyUniqueJobName")]` attribute.                                                       |
-| `IsActive`            | `bool`            | Determines if the job is enabled. If set to `false`, the job will not run. Changes are detected at runtime.                                                                                              |
-| `IsLogHistory`        | `bool`            | Optional. If `true`, the job's execution history (start time, end time, success status, and errors) will be logged. Defaults to `false`.                                                                |
-| `RunOnStart`          | `bool`            | If `true`, the job will execute once immediately upon application start (or when the job is activated via config change), and then follow its regular schedule. Defaults to `false`.                      |
-| `ScheduleType`        | `string`          | **Required.** The scheduling mode. Can be one of four values: `Interval`, `Daily`, `Weekly`, `Monthly`.                                                                                                  |
-| `TimeIntervalSeconds` | `int`             | Used only when `ScheduleType` is `Interval`. Defines the number of seconds to wait between each job execution.                                                                                         |
-| `TimeZoneId`          | `string`          | Optional. Preferred timezone identifier (for example: `SE Asia Standard Time`, `Asia/Ho_Chi_Minh`). If valid, this takes precedence. |
-| `UtcOffsetHours`      | `double`          | Optional fallback when `TimeZoneId` is not set/invalid. Supports values like `7`, `-7`, `5.5`. Valid range is `-14` to `+14`. |
-| `TimeOfDay`           | `string`          | Used for `Daily`, `Weekly`, and `Monthly` schedules. Defines local run time in the resolved timezone (`TimeZoneId` -> `UtcOffsetHours` -> UTC). Format: `"HH:mm:ss"`. |
-| `DayOfWeek`           | `string`          | Used only when `ScheduleType` is `Weekly`. The day of the week to run the job. Examples: `"Monday"`, `"Tuesday"`, etc.                                                                                  |
-| `DayOfMonth`          | `int`             | Used only when `ScheduleType` is `Monthly`. The day of the month to run (1-31). **Special Value:** Use a large number (e.g., `99`) to signify the **last day** of the current month.                   |
-| `MaxParallel`         | `int`             | The maximum number of instances of this job that can run concurrently. Defaults to `1`. Useful for long-running jobs to prevent overlap.                                                              |
-| `EmbeddedData`        | `string` (JSON)   | An optional string value that is passed directly to the EmbeddedData property of your command. This can be a simple string, a JSON object, or any other format you wish to parse in your handler.      |
+| Property              | Type            | Description                                                                                                                                                                                       |
+| --------------------- | --------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `Name`                | `string`        | **Required.** The unique identifier for the job. This must exactly match the name provided in the `[BackgroundJob("MyUniqueJobName")]` attribute.                                                 |
+| `IsActive`            | `bool`          | Determines if the job is enabled. If set to `false`, the job will not run. Changes are detected at runtime.                                                                                       |
+| `IsLogHistory`        | `bool`          | Optional. If `true`, the job's execution history (start time, end time, success status, and errors) will be logged. Defaults to `false`.                                                          |
+| `RunOnStart`          | `bool`          | If `true`, the job will execute once immediately upon application start (or when the job is activated via config change), and then follow its regular schedule. Defaults to `false`.              |
+| `ScheduleType`        | `string`        | **Required.** The scheduling mode. Can be one of four values: `Interval`, `Daily`, `Weekly`, `Monthly`.                                                                                           |
+| `TimeIntervalSeconds` | `int`           | Used only when `ScheduleType` is `Interval`. Defines the number of seconds to wait between each job execution.                                                                                    |
+| `TimeZoneId`          | `string`        | Optional. Preferred timezone identifier (for example: `SE Asia Standard Time`, `Asia/Ho_Chi_Minh`). If valid, this takes precedence.                                                              |
+| `UtcOffsetHours`      | `double`        | Optional fallback when `TimeZoneId` is not set/invalid. Supports values like `7`, `-7`, `5.5`. Valid range is `-14` to `+14`.                                                                     |
+| `TimeOfDay`           | `string`        | Used for `Daily`, `Weekly`, and `Monthly` schedules. Defines local run time in the resolved timezone (`TimeZoneId` -> `UtcOffsetHours` -> UTC). Format: `"HH:mm:ss"`.                             |
+| `DayOfWeek`           | `string`        | Used only when `ScheduleType` is `Weekly`. The day of the week to run the job. Examples: `"Monday"`, `"Tuesday"`, etc.                                                                            |
+| `DayOfMonth`          | `int`           | Used only when `ScheduleType` is `Monthly`. The day of the month to run (1-31). **Special Value:** Use a large number (e.g., `99`) to signify the **last day** of the current month.              |
+| `MaxParallel`         | `int`           | The maximum number of instances of this job that can run concurrently. Defaults to `1`. Useful for long-running jobs to prevent overlap.                                                          |
+| `EmbeddedData`        | `string` (JSON) | An optional string value that is passed directly to the EmbeddedData property of your command. This can be a simple string, a JSON object, or any other format you wish to parse in your handler. |
 
 > **Note:** `ExecutionId` is **not** a configuration property. LinKit generates a new 32-character identifier for every execution, sets it on `BackgroundJobCommand.ExecutionId` before invoking your handler, and exposes the same value via `JobExecutionContextAccessor.CurrentExecutionId` for the duration of the run.
 
@@ -695,7 +707,14 @@ Out of the box, LinKit logs histories to a highly optimized, memory-safe JSON-Li
 Each line includes an `ExecutionId` you can use to correlate a history record with logs and handler output:
 
 ```json
-{"ExecutionId":"a1b2c3d4e5f6478990abcdef12345678","JobName":"SendDailyNewsletter","StartTime":"2026-06-29T08:00:00Z","EndTime":"2026-06-29T08:00:02Z","IsSuccess":true,"EmbeddedData":""}
+{
+  "ExecutionId": "a1b2c3d4e5f6478990abcdef12345678",
+  "JobName": "SendDailyNewsletter",
+  "StartTime": "2026-06-29T08:00:00Z",
+  "EndTime": "2026-06-29T08:00:02Z",
+  "IsSuccess": true,
+  "EmbeddedData": ""
+}
 ```
 
 **2. Custom Database Logging**
@@ -730,6 +749,7 @@ builder.Services.AddScoped<IJobHistoryLogger, MyDbJobHistoryLogger>();
 // 3. Register the Background Jobs
 builder.AddBackgroundJobs("BackgroundJobsConfig.json");
 ```
+
 ---
 
 ### 5. Mapping Kit
@@ -777,19 +797,19 @@ Use the `CreateMap<TSource, TDestination>()` method and chain `.ForMember()` cal
 builder.CreateMap<User, UserDto>()
     // 1. Map from a differently named property (type-safe)
     .ForMember(dest => dest.FullName, opt => opt.MapFrom(src => src.UserName))
-    
+
     // 2. Ignore a property
     .ForMember(dest => dest.PasswordHash, opt => opt.Ignore())
-    
+
     // 3. Perform complex transformations
     .ForMember(dest => dest.Initials, opt => opt.MapFrom(src => $"{src.FirstName[0]}{src.LastName[0]}"))
-    
+
     // 4. Use a custom converter method (e.g., from a static helper class)
     .ForMember(
-        dest => dest.AddressString, 
+        dest => dest.AddressString,
         opt => opt.ConvertWith(
-            typeof(AddressFormatter), 
-            nameof(AddressFormatter.Format), 
+            typeof(AddressFormatter),
+            nameof(AddressFormatter.Format),
             src => src.Address
         )
     );
@@ -857,22 +877,22 @@ builder.Services.AddLinKitRabbitMQ(configuration);
 
 The optional `LinKit.Grpc` package generates adapters between CQRS requests and protobuf-generated gRPC service/client types. It does not generate `.proto` contracts or remove the need to validate RPC mappings and runtime dependencies.
 
--   **Zero Boilerplate:** No need to manually write gRPC service classes. Just decorate your CQRS requests.
--   **Automatic Mapping:** Intelligently maps properties between your Protobuf-generated classes and your C# CQRS request/response DTOs.
--   **Built-in Error Handling:** Automatically translates common exceptions (like `ValidationException`) into appropriate gRPC status codes.
--   **Seamless Integration:** Works perfectly with the local `IMediator` to execute your existing handlers.
+- **Zero Boilerplate:** No need to manually write gRPC service classes. Just decorate your CQRS requests.
+- **Automatic Mapping:** Intelligently maps properties between your Protobuf-generated classes and your C# CQRS request/response DTOs.
+- **Built-in Error Handling:** Automatically translates common exceptions (like `ValidationException`) into appropriate gRPC status codes.
+- **Seamless Integration:** Works perfectly with the local `IMediator` to execute your existing handlers.
 
 #### How It Works
 
 The gRPC Kit consists of two parts: a **Server Generator** and a **Client Generator**.
 
 1.  **Server-Side:** You decorate a CQRS request class with the `[GrpcEndpoint]` attribute. You specify which gRPC service (from your `.proto` file) and method this request corresponds to. The source generator then creates a complete gRPC service class implementation (`LinKit...Service`) that:
-    *   Inherits from your Protobuf-generated service base class (e.g., `UserServiceBase`).
-    *   Overrides the specified method.
-    *   Receives the gRPC request, maps it to your CQRS request.
-    *   Calls the local `IMediator` to execute the corresponding handler.
-    *   Maps the CQRS response back to the gRPC response.
-    *   Handles exceptions gracefully.
+    - Inherits from your Protobuf-generated service base class (e.g., `UserServiceBase`).
+    - Overrides the specified method.
+    - Receives the gRPC request, maps it to your CQRS request.
+    - Calls the local `IMediator` to execute the corresponding handler.
+    - Maps the CQRS response back to the gRPC response.
+    - Handles exceptions gracefully.
 
 2.  **Client-Side:** (See next section for details) You decorate the same CQRS request with `[GrpcClient]`. This generates an `IGrpcMediator` implementation that allows you to send the CQRS request from a client application, which then makes the gRPC call transparently.
 
@@ -885,6 +905,7 @@ The gRPC Kit consists of two parts: a **Server Generator** and a **Client Genera
 First, define your gRPC service and messages as you normally would.
 
 **Example `users.proto`:**
+
 ```protobuf
 syntax = "proto3";
 
@@ -926,16 +947,18 @@ message CreateUserResponse {
 Create your CQRS queries, commands, and handlers as usual. Ensure the properties match the fields in your `.proto` messages for automatic mapping.
 
 **The Query:**
+
 ```csharp
 // Features/Users/GetUserQuery.cs
-public class GetUserQuery : IQuery<UserDto> 
+public class GetUserQuery : IQuery<UserDto>
 {
     // Property "UserId" will be mapped from "user_id" in the proto
-    public int UserId { get; set; } 
+    public int UserId { get; set; }
 }
 ```
 
 **The Command:**
+
 ```csharp
 // Features/Users/CreateUserCommand.cs
 // This command returns the new user's ID
@@ -947,6 +970,7 @@ public class CreateUserCommand : ICommand<int>
 ```
 
 **The DTO:**
+
 ```csharp
 // Dtos/UserDto.cs
 public class UserDto
@@ -957,27 +981,30 @@ public class UserDto
 }
 ```
 
-*(You would also have `GetUserHandler` and `CreateUserHandler` marked with `[CqrsHandler]`)*
+_(You would also have `GetUserHandler` and `CreateUserHandler` marked with `[CqrsHandler]`)_
 
 **Step 3: Decorate CQRS Requests with `[GrpcEndpoint]`**
 
 This is the key step. Add the `[GrpcEndpoint]` attribute to your CQRS request classes to link them to the gRPC methods defined in your `.proto` file.
 
 **Linking the Query:**
+
 ```csharp
 using LinKit.Grpc;
 using MyCompany.Grpc.Contracts; // Namespace from your .proto file
 
 [GrpcEndpoint(typeof(UserService.UserServiceBase), "GetUserById")]
-public class GetUserQuery : IQuery<UserDto> 
+public class GetUserQuery : IQuery<UserDto>
 {
-    public int UserId { get; set; } 
+    public int UserId { get; set; }
 }
 ```
-*   `typeof(UserService.UserServiceBase)`: The gRPC service base class generated by `protoc`.
-*   `"GetUserById"`: The exact name of the RPC method in your service.
+
+- `typeof(UserService.UserServiceBase)`: The gRPC service base class generated by `protoc`.
+- `"GetUserById"`: The exact name of the RPC method in your service.
 
 **Linking the Command:**
+
 ```csharp
 using LinKit.Grpc;
 using MyCompany.Grpc.Contracts;
@@ -1013,6 +1040,7 @@ app.Run();
 ```
 
 **That's it!** You now have a fully functional gRPC service. When a client calls the `GetUserById` method, the generated `LinKitUserService` will:
+
 1.  Instantiate a `GetUserQuery`.
 2.  Map `GetUserByIdRequest.UserId` to `GetUserQuery.UserId`.
 3.  Call `_mediator.QueryAsync(theQuery)`.
@@ -1025,15 +1053,16 @@ app.Run();
 LinKit automatically maps properties between your CQRS objects and Protobuf messages. It follows a simple, case-insensitive name matching rule. For Protobuf's `snake_case` convention, LinKit will correctly map `user_id` to a C# property named `UserId`.
 
 This includes:
--   **Request Mapping:** `GrpcRequest` -> `CqrsRequest`
--   **Response Mapping:** `CqrsResponse` -> `GrpcResponse`
--   **Nested Lists:** It can even map collections, like a `List<ProductDto>` in C# to a `repeated ProductMessage` in Protobuf, as long as the item types have matching properties.
+
+- **Request Mapping:** `GrpcRequest` -> `CqrsRequest`
+- **Response Mapping:** `CqrsResponse` -> `GrpcResponse`
+- **Nested Lists:** It can even map collections, like a `List<ProductDto>` in C# to a `repeated ProductMessage` in Protobuf, as long as the item types have matching properties.
 
 ---
 
 #### Client-Side Usage
 
-*(This section can be updated with the new `IGrpcMediator` logic once you've finalized it)*
+_(This section can be updated with the new `IGrpcMediator` logic once you've finalized it)_
 
 To call the gRPC service from another .NET application, you use the **Client-Side** generator.
 
@@ -1047,13 +1076,14 @@ using LinKit.Grpc;
 using MyCompany.Grpc.Contracts;
 
 [GrpcClient(typeof(UserService.UserClient), "GetUserByIdAsync")]
-public class GetUserQuery : IQuery<UserDto> 
+public class GetUserQuery : IQuery<UserDto>
 {
-    public int UserId { get; set; } 
+    public int UserId { get; set; }
 }
 ```
-*   `typeof(UserService.UserClient)`: The gRPC **client** class generated by `protoc`.
-*   `"GetUserByIdAsync"`: The name of the asynchronous client method.
+
+- `typeof(UserService.UserClient)`: The gRPC **client** class generated by `protoc`.
+- `"GetUserByIdAsync"`: The name of the asynchronous client method.
 
 **Step 2: Register the gRPC Client Kit**
 
@@ -1090,12 +1120,13 @@ public class MyFrontendService
     public async Task<UserDto> GetUserFromRemoteService(int id)
     {
         var query = new GetUserQuery { UserId = id };
-        
+
         // This looks like a local call, but it's making a gRPC request!
         return await _grpcMediator.QueryAsync(query);
     }
 }
 ```
+
 ---
 
 ## AOT & Trimming
@@ -1126,4 +1157,9 @@ Some paths still contain reflection/dynamic fallbacks, including Data LINQ closu
 
 Contributions, issues, and feature requests are welcome!
 
+## License
+
+MIT. See the [repository license](https://github.com/linhnq0520/LinKit/blob/main/LICENSE).
+
 ---
+

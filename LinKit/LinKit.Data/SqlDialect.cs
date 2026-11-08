@@ -6,29 +6,52 @@ using System.Linq;
 
 namespace LinKit.Data;
 
+/// <summary>Database engine the session renders SQL for.</summary>
 public enum DatabaseKind
 {
+    /// <summary>SQLite, which also backs the in-memory test databases.</summary>
     Sqlite = 0,
+
+    /// <summary>PostgreSQL.</summary>
     PostgreSql = 1,
+
+    /// <summary>Microsoft SQL Server.</summary>
     SqlServer = 2,
+
+    /// <summary>MySQL and compatible servers such as MariaDB.</summary>
     MySql = 3,
+
+    /// <summary>Oracle Database.</summary>
     Oracle = 4,
 }
 
+/// <summary>
+/// Renders the provider-specific parts of the SQL that <see cref="DataSession"/> executes: quoting, parameter
+/// naming, pagination, store types and parameter binding.
+/// </summary>
 public sealed class SqlDialect
 {
+    /// <summary>Database engine this instance renders for.</summary>
     public DatabaseKind Kind { get; }
 
+    /// <summary>Creates a dialect for the given engine.</summary>
+    /// <param name="kind">Database engine.</param>
+    /// <exception cref="ArgumentOutOfRangeException"><paramref name="kind"/> is not a defined value.</exception>
     public SqlDialect(DatabaseKind kind)
     {
         Kind = Enum.IsDefined(kind) ? kind : throw new ArgumentOutOfRangeException(nameof(kind));
     }
 
+    /// <summary>Creates a dialect from the public <see cref="DatabaseDialect"/> enumeration.</summary>
+    /// <param name="dialect">Database dialect to map.</param>
     public SqlDialect(DatabaseDialect dialect)
         : this((DatabaseKind)dialect) { }
 
+    /// <summary>Whether the engine supports transactional DDL, so schema changes can be rolled back.</summary>
     public bool TransactionalDdl =>
         Kind is DatabaseKind.Sqlite or DatabaseKind.PostgreSql or DatabaseKind.SqlServer;
+
+    /// <summary>Maximum number of parameters a single command may carry on this engine.</summary>
     public int MaxParameters =>
         Kind switch
         {
@@ -37,6 +60,8 @@ public sealed class SqlDialect
             DatabaseKind.Oracle => 65535,
             _ => 32000,
         };
+
+    /// <summary>Maximum number of values an <c>IN (...)</c> list may carry; unlimited except on Oracle.</summary>
     public int MaxInItems => Kind == DatabaseKind.Oracle ? 1000 : int.MaxValue;
 
     /// <summary>Hard ceiling on the number of <c>VALUES</c> rows a provider accepts in one statement.</summary>
@@ -62,8 +87,15 @@ public sealed class SqlDialect
     /// <summary>True when the provider accepts <c>UPDATE ... INNER JOIN (SELECT ... UNION ALL ...) v</c>.</summary>
     public bool SupportsUpdateJoinValues => Kind == DatabaseKind.MySql;
 
+    /// <summary>Renders the placeholder of the argument at <paramref name="index"/>.</summary>
+    /// <param name="index">Zero-based argument position.</param>
+    /// <returns>The placeholder text, for example <c>@p0</c>.</returns>
     public string Parameter(int index) => (Kind == DatabaseKind.Oracle ? ":p" : "@p") + index;
 
+    /// <summary>Quotes an identifier with the delimiters of this engine and escapes embedded delimiters.</summary>
+    /// <param name="identifier">Raw identifier.</param>
+    /// <returns>The quoted identifier.</returns>
+    /// <exception cref="ArgumentException"><paramref name="identifier"/> is <see langword="null"/>, empty or blank.</exception>
     public string Quote(string identifier)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(identifier);
@@ -75,12 +107,28 @@ public sealed class SqlDialect
         };
     }
 
+    /// <summary>Renders the qualified table name, including the schema when the model declares one.</summary>
+    /// <param name="table">Table model to render.</param>
+    /// <returns>The quoted, optionally schema-qualified table name.</returns>
     public string Table(TableModel table) =>
         table.Schema is null ? Quote(table.Name) : Quote(table.Schema) + "." + Quote(table.Name);
 
+    /// <summary>Literal that represents a true boolean on this engine.</summary>
     public string True => Kind == DatabaseKind.PostgreSql ? "TRUE" : "1";
+
+    /// <summary>Literal that represents a false boolean on this engine.</summary>
     public string False => Kind == DatabaseKind.PostgreSql ? "FALSE" : "0";
 
+    /// <summary>Appends the offset and limit clause appropriate for this engine.</summary>
+    /// <param name="sql">Query to paginate, without ordering or pagination.</param>
+    /// <param name="order">Ordering clause without the <c>ORDER BY</c> keyword; required by the engines that reject
+    /// pagination without ordering.</param>
+    /// <param name="skip">Rows to skip, or <see langword="null"/> for none.</param>
+    /// <param name="take">Rows to return, or <see langword="null"/> for all.</param>
+    /// <param name="parameter">Renders an inline value as a bound parameter name; when omitted the values are written
+    /// as literals.</param>
+    /// <returns>The paginated statement.</returns>
+    /// <exception cref="ArgumentOutOfRangeException"><paramref name="skip"/> or <paramref name="take"/> is negative.</exception>
     public string Paginate(
         string sql,
         string? order,
@@ -118,6 +166,10 @@ public sealed class SqlDialect
         };
     }
 
+    /// <summary>Maps a column model to the store type of this engine.</summary>
+    /// <param name="column">Column to map.</param>
+    /// <returns>The provider type name used in DDL.</returns>
+    /// <exception cref="NotSupportedException">The column type has no store mapping.</exception>
     public string StoreType(ColumnModel column)
     {
         var length = column.Length > 0 ? column.Length : 255;
@@ -189,6 +241,9 @@ public sealed class SqlDialect
         };
     }
 
+    /// <summary>Renders one column definition of a <c>CREATE TABLE</c> statement.</summary>
+    /// <param name="column">Column to render.</param>
+    /// <returns>Quoted name, store type, identity, key and nullability clauses.</returns>
     public string ColumnDefinition(ColumnModel column)
     {
         var sql = Quote(column.Name) + " " + StoreType(column);
@@ -209,9 +264,24 @@ public sealed class SqlDialect
         return sql;
     }
 
+    /// <summary>Renders a <c>CREATE TABLE</c> statement for the model.</summary>
+    /// <param name="table">Table to create.</param>
+    /// <returns>The DDL statement.</returns>
     public string CreateTable(TableModel table) =>
         $"CREATE TABLE {Table(table)} ({string.Join(", ", table.Columns.Select(ColumnDefinition))})";
 
+    /// <summary>Adds a parameter that carries <paramref name="value"/>, adapting the value to what this engine accepts.</summary>
+    /// <param name="command">Command to extend.</param>
+    /// <param name="index">Zero-based argument position; it determines the placeholder name.</param>
+    /// <param name="value">Value to bind.</param>
+    /// <param name="column">Column the value belongs to, when known; it drives the provider type, size and precision.</param>
+    /// <returns>The created parameter.</returns>
+    /// <remarks>
+    /// Values that this engine cannot represent natively are converted: GUIDs become text on SQLite, MySQL and Oracle,
+    /// booleans become <c>0/1</c> on Oracle, and <see cref="DateOnly"/>, <see cref="TimeOnly"/> and
+    /// <see cref="DateTimeOffset"/> become ISO text where the engine has no matching type.
+    /// </remarks>
+    /// <exception cref="ArgumentException">A string is longer than the declared column length.</exception>
     public DbParameter Bind(DbCommand command, int index, object? value, ColumnModel? column = null)
     {
         if (

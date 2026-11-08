@@ -7,18 +7,49 @@ using System.Threading.Tasks;
 
 namespace LinKit.Outbox;
 
+/// <summary>
+/// Persistence port for the transactional outbox. A store is written inside the same transaction as the business
+/// changes (see <see cref="OutboxMessage.Create{TMessage}"/>) and drained asynchronously by
+/// <see cref="OutboxPublisherService"/>.
+/// </summary>
+/// <remarks>
+/// Implementations must be safe for concurrent callers and must honour the claim/lease contract of
+/// <see cref="ClaimPendingAsync"/> so that several application instances can share one outbox table.
+/// </remarks>
 public interface IOutboxStore
 {
+    /// <summary>
+    /// Persists a batch of messages that are not yet delivered. Implementations should write the whole batch
+    /// atomically (one transaction) where the underlying database allows it.
+    /// </summary>
+    /// <param name="messages">Messages to persist; each one keeps its own id and headers.</param>
+    /// <param name="cancellationToken">Token used to abort the write.</param>
     Task SaveAsync(
         IEnumerable<IOutboxMessage> messages,
         CancellationToken cancellationToken = default
     );
+
+    /// <summary>Persists a single message; shorthand for <see cref="SaveAsync"/>.</summary>
+    /// <param name="message">Message to persist.</param>
+    /// <param name="cancellationToken">Token used to abort the write.</param>
     Task SaveMessageAsync(IOutboxMessage message, CancellationToken cancellationToken = default) =>
         SaveAsync(new[] { message }, cancellationToken);
+
+    /// <summary>
+    /// Returns messages that are ready for delivery, oldest first. Rows whose retry schedule or lease is still in
+    /// the future must be excluded.
+    /// </summary>
+    /// <param name="batchSize">Maximum number of messages to return.</param>
+    /// <param name="cancellationToken">Token used to abort the read.</param>
+    /// <returns>The pending messages, ordered by <see cref="IOutboxMessage.CreatedAtUtc"/>.</returns>
     Task<IReadOnlyList<IOutboxMessage>> GetPendingAsync(
         int batchSize = 100,
         CancellationToken cancellationToken = default
     );
+
+    /// <summary>Marks a message as successfully handed to the broker.</summary>
+    /// <param name="messageId">Identifier of the dispatched message.</param>
+    /// <param name="cancellationToken">Token used to abort the update.</param>
     Task MarkProcessedAsync(Guid messageId, CancellationToken cancellationToken = default);
 
     /// <summary>
@@ -56,15 +87,29 @@ public interface IOutboxStore
     ) => Task.FromResult<IReadOnlyList<IOutboxMessage>>(Array.Empty<IOutboxMessage>());
 }
 
+/// <summary>
+/// Volatile outbox store used for development, tests and samples. Messages live in process memory, so they are lost
+/// on restart and are not shared between instances.
+/// </summary>
+/// <remarks>
+/// The lease and retry semantics match a durable store, which makes this implementation a faithful stand-in for
+/// exercising <see cref="OutboxPublisherService"/> without a database.
+/// </remarks>
 public class InMemoryOutboxStore : IOutboxStore
 {
     private readonly ConcurrentDictionary<Guid, OutboxMessage> _messages = new();
     private readonly OutboxOptions _options;
     private readonly TimeProvider _time;
 
+    /// <summary>Creates a store with default <see cref="OutboxOptions"/> and the system clock.</summary>
     public InMemoryOutboxStore()
         : this(new OutboxOptions(), null) { }
 
+    /// <summary>Creates a store with explicit options and an optional clock.</summary>
+    /// <param name="options">Retry budget and timings applied when a message fails.</param>
+    /// <param name="timeProvider">Clock used for leases, schedules and timestamps; defaults to <see cref="TimeProvider.System"/>.</param>
+    /// <exception cref="ArgumentNullException"><paramref name="options"/> is <see langword="null"/>.</exception>
+    /// <exception cref="ArgumentOutOfRangeException">The supplied options fail <see cref="OutboxOptions.Validate"/>.</exception>
     public InMemoryOutboxStore(OutboxOptions options, TimeProvider? timeProvider = null)
     {
         _options = options ?? throw new ArgumentNullException(nameof(options));
@@ -72,6 +117,7 @@ public class InMemoryOutboxStore : IOutboxStore
         _time = timeProvider ?? TimeProvider.System;
     }
 
+    /// <inheritdoc/>
     public Task SaveAsync(
         IEnumerable<IOutboxMessage> messages,
         CancellationToken cancellationToken = default
@@ -98,6 +144,7 @@ public class InMemoryOutboxStore : IOutboxStore
         return Task.CompletedTask;
     }
 
+    /// <inheritdoc/>
     public Task<IReadOnlyList<IOutboxMessage>> GetPendingAsync(
         int batchSize = 100,
         CancellationToken cancellationToken = default
@@ -120,6 +167,7 @@ public class InMemoryOutboxStore : IOutboxStore
         && (message.NextAttemptAtUtc == null || message.NextAttemptAtUtc <= now)
         && (message.LockedUntilUtc == null || message.LockedUntilUtc <= now);
 
+    /// <inheritdoc/>
     public Task<IReadOnlyList<IOutboxMessage>> ClaimPendingAsync(
         int batchSize,
         TimeSpan lease,
@@ -152,6 +200,7 @@ public class InMemoryOutboxStore : IOutboxStore
             .Cast<IOutboxMessage>()
             .ToList();
 
+    /// <inheritdoc/>
     public Task<IReadOnlyList<IOutboxMessage>> GetDeadLetteredAsync(
         int batchSize = 100,
         CancellationToken cancellationToken = default
@@ -161,6 +210,7 @@ public class InMemoryOutboxStore : IOutboxStore
         return Task.FromResult<IReadOnlyList<IOutboxMessage>>(dead);
     }
 
+    /// <inheritdoc/>
     public Task MarkFailedAsync(
         Guid messageId,
         string error,
@@ -185,6 +235,7 @@ public class InMemoryOutboxStore : IOutboxStore
         return Task.CompletedTask;
     }
 
+    /// <inheritdoc/>
     public Task MarkProcessedAsync(Guid messageId, CancellationToken cancellationToken = default)
     {
         if (_messages.TryGetValue(messageId, out var message))

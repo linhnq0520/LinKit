@@ -18,6 +18,8 @@ public sealed class AddTransientAttribute : Attribute
     /// <summary>True to register an open generic type (e.g. IRepository&lt;&gt;).</summary>
     public bool IsGeneric { get; set; }
 
+    /// <summary>Initializes the attribute.</summary>
+    /// <param name="serviceType">Service type to register against; when omitted the generated code infers it.</param>
     public AddTransientAttribute(Type? serviceType = null) => ServiceType = serviceType;
 }
 
@@ -37,6 +39,8 @@ public sealed class AddScopedAttribute : Attribute
     /// <summary>True to register an open generic type (e.g. IRepository&lt;&gt;).</summary>
     public bool IsGeneric { get; set; }
 
+    /// <summary>Initializes the attribute.</summary>
+    /// <param name="serviceType">Service type to register against; when omitted the generated code infers it.</param>
     public AddScopedAttribute(Type? serviceType = null) => ServiceType = serviceType;
 }
 
@@ -56,5 +60,7 @@ public sealed class AddSingletonAttribute : Attribute
     /// <summary>True to register an open generic type (e.g. IRepository&lt;&gt;).</summary>
     public bool IsGeneric { get; set; }
 
+    /// <summary>Initializes the attribute.</summary>
+    /// <param name="serviceType">Service type to register against; when omitted the generated code infers it.</param>
     public AddSingletonAttribute(Type? serviceType = null) => ServiceType = serviceType;
 }

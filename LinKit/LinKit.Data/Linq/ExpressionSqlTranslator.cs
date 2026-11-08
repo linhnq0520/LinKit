@@ -12,10 +12,20 @@ namespace LinKit.Data.Linq;
 /// </summary>
 public sealed class TranslatedSqlQuery
 {
+    /// <summary>Rendered <c>WHERE</c> clause without the keyword, or <see langword="null"/> when the expression has no filter.</summary>
     public string? WhereSql { get; init; }
-    public Dictionary<string, object?> Parameters { get; init; } = new(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>Named parameters referenced by <see cref="WhereSql"/>.</summary>
+    public Dictionary<string, object?> Parameters { get; init; } =
+        new(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>Ordering terms in priority order; the column is already quoted for the dialect.</summary>
     public List<(string Column, bool IsDescending)> OrderBys { get; init; } = new();
+
+    /// <summary>Requested row offset, or <see langword="null"/> when the query is not paginated.</summary>
     public int? Skip { get; init; }
+
+    /// <summary>Requested row limit, or <see langword="null"/> when the query is not paginated.</summary>
     public int? Take { get; init; }
 }
 
@@ -28,18 +38,30 @@ public sealed class ExpressionSqlTranslator
     private readonly IReadOnlyDictionary<string, string> _propertyToColumn;
     private readonly int _parameterOffset;
 
+    /// <summary>Creates a translator.</summary>
+    /// <param name="dialect">Dialect used to quote identifiers and render literals.</param>
+    /// <param name="propertyToColumn">Maps CLR property names to physical column names.</param>
+    /// <param name="parameterOffset">Initial parameter number, used to keep names unique across composed statements.</param>
     public ExpressionSqlTranslator(
         DatabaseDialect dialect,
         IReadOnlyDictionary<string, string> propertyToColumn,
-        int parameterOffset = 0)
+        int parameterOffset = 0
+    )
     {
         _dialect = dialect;
         _propertyToColumn = propertyToColumn;
         _parameterOffset = parameterOffset;
     }
 
+    /// <summary>Translates a full query expression into its <c>WHERE</c>, ordering and pagination parts.</summary>
+    /// <param name="expression">Expression tree of the query.</param>
+    /// <returns>The translated parts.</returns>
     public TranslatedSqlQuery Translate(Expression expression) => Translate(expression, null);
 
+    /// <summary>Translates a predicate lambda into a <c>WHERE</c> clause.</summary>
+    /// <param name="predicate">Predicate with exactly one parameter.</param>
+    /// <returns>The rendered clause and its parameters.</returns>
+    /// <exception cref="NotSupportedException">The predicate uses a construct the translator does not support.</exception>
     public TranslatedSqlQuery TranslatePredicate(LambdaExpression predicate)
     {
         ValidateSingleParameter(predicate, nameof(predicate));
@@ -48,23 +70,34 @@ public sealed class ExpressionSqlTranslator
         return new TranslatedSqlQuery
         {
             WhereSql = renderer.Render(node),
-            Parameters = renderer.Parameters
+            Parameters = renderer.Parameters,
         };
     }
 
+    /// <summary>Translates a key selector into an <c>ORDER BY</c> term.</summary>
+    /// <param name="keySelector">Selector naming a single mapped property.</param>
+    /// <param name="descending">Whether the term orders descending.</param>
+    /// <returns>The rendered ordering term.</returns>
+    /// <exception cref="NotSupportedException">The selector is not a single mapped property.</exception>
     public string TranslateOrderBy(LambdaExpression keySelector, bool descending = false)
     {
         ValidateSingleParameter(keySelector, nameof(keySelector));
         var propertyName = ResolveEntityPropertyName(keySelector.Body);
         if (!_propertyToColumn.TryGetValue(propertyName, out var columnName))
         {
-            throw new NotSupportedException($"Property '{propertyName}' is not mapped to a database column.");
+            throw new NotSupportedException(
+                $"Property '{propertyName}' is not mapped to a database column."
+            );
         }
 
         var renderer = new SqlExpressionRenderer(_dialect);
         return renderer.Render(new SqlOrderByNode(new SqlColumnNode(columnName), descending));
     }
 
+    /// <summary>Translates a full query expression, optionally adding an extra filter.</summary>
+    /// <param name="expression">Expression tree of the query.</param>
+    /// <param name="additionalWhere">Extra predicate combined with <c>AND</c>, for example the tenant filter.</param>
+    /// <returns>The translated parts.</returns>
     public TranslatedSqlQuery Translate(Expression expression, Expression? additionalWhere)
     {
         var wheres = new List<SqlExpressionNode>();
@@ -90,14 +123,18 @@ public sealed class ExpressionSqlTranslator
                     break;
                 case "OrderBy":
                     orderBys.Clear();
-                    orderBys.Add((ResolveOrderColumn(UnquoteLambda(call.Arguments[1]).Body), false));
+                    orderBys.Add(
+                        (ResolveOrderColumn(UnquoteLambda(call.Arguments[1]).Body), false)
+                    );
                     break;
                 case "OrderByDescending":
                     orderBys.Clear();
                     orderBys.Add((ResolveOrderColumn(UnquoteLambda(call.Arguments[1]).Body), true));
                     break;
                 case "ThenBy":
-                    orderBys.Add((ResolveOrderColumn(UnquoteLambda(call.Arguments[1]).Body), false));
+                    orderBys.Add(
+                        (ResolveOrderColumn(UnquoteLambda(call.Arguments[1]).Body), false)
+                    );
                     break;
                 case "ThenByDescending":
                     orderBys.Add((ResolveOrderColumn(UnquoteLambda(call.Arguments[1]).Body), true));
@@ -106,7 +143,8 @@ public sealed class ExpressionSqlTranslator
                 {
                     var count = Math.Max(0, Convert.ToInt32(ExtractValue(call.Arguments[1])));
                     skip = (int)Math.Min(int.MaxValue, (long)(skip ?? 0) + count);
-                    if (take.HasValue) take = Math.Max(0, take.Value - count);
+                    if (take.HasValue)
+                        take = Math.Max(0, take.Value - count);
                     break;
                 }
                 case "Take":
@@ -118,7 +156,9 @@ public sealed class ExpressionSqlTranslator
                 case "Select":
                     break;
                 default:
-                    throw new NotSupportedException($"LINQ operator '{call.Method.Name}' is not supported.");
+                    throw new NotSupportedException(
+                        $"LINQ operator '{call.Method.Name}' is not supported."
+                    );
             }
         }
 
@@ -130,12 +170,15 @@ public sealed class ExpressionSqlTranslator
         SqlExpressionNode? whereNode = null;
         foreach (var where in wheres)
         {
-            whereNode = whereNode is null
-                ? where
-                : new SqlLogicalNode(whereNode, "AND", where);
+            whereNode = whereNode is null ? where : new SqlLogicalNode(whereNode, "AND", where);
         }
 
-        var translated = new TranslatedSqlQuery { OrderBys = orderBys, Skip = skip, Take = take };
+        var translated = new TranslatedSqlQuery
+        {
+            OrderBys = orderBys,
+            Skip = skip,
+            Take = take,
+        };
         if (whereNode is not null)
         {
             var renderer = new SqlExpressionRenderer(_dialect, _parameterOffset);
@@ -145,7 +188,7 @@ public sealed class ExpressionSqlTranslator
                 Parameters = renderer.Parameters,
                 OrderBys = orderBys,
                 Skip = skip,
-                Take = take
+                Take = take,
             };
         }
 
@@ -159,34 +202,76 @@ public sealed class ExpressionSqlTranslator
         {
             return binary.NodeType switch
             {
-                ExpressionType.AndAlso => new SqlLogicalNode(ParsePredicate(binary.Left), "AND", ParsePredicate(binary.Right)),
-                ExpressionType.OrElse => new SqlLogicalNode(ParsePredicate(binary.Left), "OR", ParsePredicate(binary.Right)),
+                ExpressionType.AndAlso => new SqlLogicalNode(
+                    ParsePredicate(binary.Left),
+                    "AND",
+                    ParsePredicate(binary.Right)
+                ),
+                ExpressionType.OrElse => new SqlLogicalNode(
+                    ParsePredicate(binary.Left),
+                    "OR",
+                    ParsePredicate(binary.Right)
+                ),
                 ExpressionType.Equal => ParseEquality(binary.Left, binary.Right, isNotEqual: false),
-                ExpressionType.NotEqual => ParseEquality(binary.Left, binary.Right, isNotEqual: true),
-                ExpressionType.GreaterThan => new SqlBinaryNode(ParseValue(binary.Left), ">", ParseValue(binary.Right)),
-                ExpressionType.GreaterThanOrEqual => new SqlBinaryNode(ParseValue(binary.Left), ">=", ParseValue(binary.Right)),
-                ExpressionType.LessThan => new SqlBinaryNode(ParseValue(binary.Left), "<", ParseValue(binary.Right)),
-                ExpressionType.LessThanOrEqual => new SqlBinaryNode(ParseValue(binary.Left), "<=", ParseValue(binary.Right)),
-                _ => throw UnsupportedExpression(expression)
+                ExpressionType.NotEqual => ParseEquality(
+                    binary.Left,
+                    binary.Right,
+                    isNotEqual: true
+                ),
+                ExpressionType.GreaterThan => new SqlBinaryNode(
+                    ParseValue(binary.Left),
+                    ">",
+                    ParseValue(binary.Right)
+                ),
+                ExpressionType.GreaterThanOrEqual => new SqlBinaryNode(
+                    ParseValue(binary.Left),
+                    ">=",
+                    ParseValue(binary.Right)
+                ),
+                ExpressionType.LessThan => new SqlBinaryNode(
+                    ParseValue(binary.Left),
+                    "<",
+                    ParseValue(binary.Right)
+                ),
+                ExpressionType.LessThanOrEqual => new SqlBinaryNode(
+                    ParseValue(binary.Left),
+                    "<=",
+                    ParseValue(binary.Right)
+                ),
+                _ => throw UnsupportedExpression(expression),
             };
         }
 
         if (expression is UnaryExpression unary && unary.NodeType == ExpressionType.Not)
         {
             var operand = StripConvert(unary.Operand);
-            if (operand is MemberExpression member && IsEntityMember(member) && IsBoolean(member.Type))
+            if (
+                operand is MemberExpression member
+                && IsEntityMember(member)
+                && IsBoolean(member.Type)
+            )
             {
-                return new SqlBinaryNode(ParseEntityMember(member), "=", new SqlParameterNode(false));
+                return new SqlBinaryNode(
+                    ParseEntityMember(member),
+                    "=",
+                    new SqlParameterNode(false)
+                );
             }
 
             return new SqlNotNode(ParsePredicate(operand));
         }
 
-        if (expression is MemberExpression booleanMember &&
-            IsEntityMember(booleanMember) &&
-            IsBoolean(booleanMember.Type))
+        if (
+            expression is MemberExpression booleanMember
+            && IsEntityMember(booleanMember)
+            && IsBoolean(booleanMember.Type)
+        )
         {
-            return new SqlBinaryNode(ParseEntityMember(booleanMember), "=", new SqlParameterNode(true));
+            return new SqlBinaryNode(
+                ParseEntityMember(booleanMember),
+                "=",
+                new SqlParameterNode(true)
+            );
         }
 
         if (expression is MethodCallExpression methodCall)
@@ -255,19 +340,37 @@ public sealed class ExpressionSqlTranslator
                     new SqlBinaryNode(leftNode, "<>", rightNode),
                     "OR",
                     new SqlLogicalNode(
-                        new SqlLogicalNode(new SqlNullCheckNode(leftNode, false), "AND", new SqlNullCheckNode(rightNode, true)),
+                        new SqlLogicalNode(
+                            new SqlNullCheckNode(leftNode, false),
+                            "AND",
+                            new SqlNullCheckNode(rightNode, true)
+                        ),
                         "OR",
-                        new SqlLogicalNode(new SqlNullCheckNode(leftNode, true), "AND", new SqlNullCheckNode(rightNode, false))));
+                        new SqlLogicalNode(
+                            new SqlNullCheckNode(leftNode, true),
+                            "AND",
+                            new SqlNullCheckNode(rightNode, false)
+                        )
+                    )
+                );
             }
 
             if (leftNullable)
             {
-                return new SqlLogicalNode(new SqlBinaryNode(leftNode, "<>", rightNode), "OR", new SqlNullCheckNode(leftNode, false));
+                return new SqlLogicalNode(
+                    new SqlBinaryNode(leftNode, "<>", rightNode),
+                    "OR",
+                    new SqlNullCheckNode(leftNode, false)
+                );
             }
 
             if (rightNullable)
             {
-                return new SqlLogicalNode(new SqlBinaryNode(leftNode, "<>", rightNode), "OR", new SqlNullCheckNode(rightNode, false));
+                return new SqlLogicalNode(
+                    new SqlBinaryNode(leftNode, "<>", rightNode),
+                    "OR",
+                    new SqlNullCheckNode(rightNode, false)
+                );
             }
         }
         else if (leftNullable && rightNullable)
@@ -275,7 +378,12 @@ public sealed class ExpressionSqlTranslator
             return new SqlLogicalNode(
                 new SqlBinaryNode(leftNode, "=", rightNode),
                 "OR",
-                new SqlLogicalNode(new SqlNullCheckNode(leftNode, false), "AND", new SqlNullCheckNode(rightNode, false)));
+                new SqlLogicalNode(
+                    new SqlNullCheckNode(leftNode, false),
+                    "AND",
+                    new SqlNullCheckNode(rightNode, false)
+                )
+            );
         }
 
         return new SqlBinaryNode(leftNode, isNotEqual ? "<>" : "=", rightNode);
@@ -289,10 +397,12 @@ public sealed class ExpressionSqlTranslator
             return !member.Type.IsValueType || Nullable.GetUnderlyingType(member.Type) is not null;
         }
 
-        if (expression is MethodCallExpression call &&
-            call.Method.DeclaringType == typeof(string) &&
-            call.Object is not null &&
-            call.Method.Name is "ToLower" or "ToUpper" or "Trim")
+        if (
+            expression is MethodCallExpression call
+            && call.Method.DeclaringType == typeof(string)
+            && call.Object is not null
+            && call.Method.Name is "ToLower" or "ToUpper" or "Trim"
+        )
         {
             return CanBeNull(call.Object);
         }
@@ -303,10 +413,12 @@ public sealed class ExpressionSqlTranslator
 
     private SqlExpressionNode ParseMethodCall(MethodCallExpression call)
     {
-        if (call.Method.DeclaringType == typeof(string) &&
-            call.Object is not null &&
-            call.Arguments.Count == 1 &&
-            call.Method.Name is "Contains" or "StartsWith" or "EndsWith")
+        if (
+            call.Method.DeclaringType == typeof(string)
+            && call.Object is not null
+            && call.Arguments.Count == 1
+            && call.Method.Name is "Contains" or "StartsWith" or "EndsWith"
+        )
         {
             var pattern = ExtractValue(call.Arguments[0])?.ToString() ?? string.Empty;
             pattern = EscapeLikePattern(pattern, _dialect);
@@ -314,7 +426,7 @@ public sealed class ExpressionSqlTranslator
             {
                 "Contains" => $"%{pattern}%",
                 "StartsWith" => $"{pattern}%",
-                _ => $"%{pattern}"
+                _ => $"%{pattern}",
             };
             return new SqlLikeNode(ParseValue(call.Object), new SqlParameterNode(pattern));
         }
@@ -382,7 +494,8 @@ public sealed class ExpressionSqlTranslator
         }
 
         throw new NotSupportedException(
-            $"LINQ method call '{call.Method.DeclaringType?.Name}.{call.Method.Name}' is not supported.");
+            $"LINQ method call '{call.Method.DeclaringType?.Name}.{call.Method.Name}' is not supported."
+        );
     }
 
     private SqlColumnNode ParseEntityMember(MemberExpression member)
@@ -390,7 +503,9 @@ public sealed class ExpressionSqlTranslator
         var propertyName = member.Member.Name;
         if (!_propertyToColumn.TryGetValue(propertyName, out var columnName))
         {
-            throw new NotSupportedException($"Property '{propertyName}' is not mapped to a database column.");
+            throw new NotSupportedException(
+                $"Property '{propertyName}' is not mapped to a database column."
+            );
         }
 
         return new SqlColumnNode(columnName);
@@ -401,7 +516,9 @@ public sealed class ExpressionSqlTranslator
         var propertyName = ResolveEntityPropertyName(expression);
         if (!_propertyToColumn.TryGetValue(propertyName, out var columnName))
         {
-            throw new NotSupportedException($"Property '{propertyName}' is not mapped to a database column.");
+            throw new NotSupportedException(
+                $"Property '{propertyName}' is not mapped to a database column."
+            );
         }
 
         return columnName;
@@ -429,8 +546,7 @@ public sealed class ExpressionSqlTranslator
         return root is ParameterExpression;
     }
 
-    private static bool IsBoolean(Type type) =>
-        type == typeof(bool) || type == typeof(bool?);
+    private static bool IsBoolean(Type type) => type == typeof(bool) || type == typeof(bool?);
 
     private static bool IsNullConstant(Expression expression)
     {
@@ -446,14 +562,15 @@ public sealed class ExpressionSqlTranslator
         }
 
         expression = StripConvert(expression);
-        return expression is MemberExpression member &&
-               !IsEntityMember(member) &&
-               ExtractValue(member) is null;
+        return expression is MemberExpression member
+            && !IsEntityMember(member)
+            && ExtractValue(member) is null;
     }
 
     private static string EscapeLikePattern(string value, DatabaseDialect dialect)
     {
-        var escaped = value.Replace("!", "!!", StringComparison.Ordinal)
+        var escaped = value
+            .Replace("!", "!!", StringComparison.Ordinal)
             .Replace("%", "!%", StringComparison.Ordinal)
             .Replace("_", "!_", StringComparison.Ordinal);
         return dialect == DatabaseDialect.SqlServer
@@ -463,8 +580,13 @@ public sealed class ExpressionSqlTranslator
 
     private static Expression StripConvert(Expression expression)
     {
-        while (expression is UnaryExpression unary &&
-               unary.NodeType is ExpressionType.Convert or ExpressionType.ConvertChecked or ExpressionType.Quote)
+        while (
+            expression is UnaryExpression unary
+            && unary.NodeType
+                is ExpressionType.Convert
+                    or ExpressionType.ConvertChecked
+                    or ExpressionType.Quote
+        )
         {
             expression = unary.Operand;
         }
@@ -484,7 +606,10 @@ public sealed class ExpressionSqlTranslator
         ArgumentNullException.ThrowIfNull(expression, parameterName);
         if (expression.Parameters.Count != 1)
         {
-            throw new ArgumentException("Expression must have exactly one entity parameter.", parameterName);
+            throw new ArgumentException(
+                "Expression must have exactly one entity parameter.",
+                parameterName
+            );
         }
     }
 
@@ -511,7 +636,7 @@ public sealed class ExpressionSqlTranslator
             {
                 FieldInfo field => field.GetValue(container),
                 PropertyInfo property => property.GetValue(container),
-                _ => throw UnsupportedExpression(expression)
+                _ => throw UnsupportedExpression(expression),
             };
         }
 

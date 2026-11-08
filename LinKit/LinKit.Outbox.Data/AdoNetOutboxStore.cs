@@ -6,6 +6,16 @@ using LinKit.Outbox;
 
 namespace LinKit.Outbox.Data;
 
+/// <summary>
+/// ADO.NET outbox store that persists messages in a single table and claims batches per database dialect.
+/// </summary>
+/// <remarks>
+/// The table layout and the claim strategy are both driven by <see cref="DatabaseDialect"/>. PostgreSQL uses
+/// <c>FOR UPDATE SKIP LOCKED</c> with <c>RETURNING</c>, SQL Server uses <c>READPAST</c> with <c>OUTPUT</c>, and MySQL uses
+/// <c>SKIP LOCKED</c> with a follow-up update; SQLite and Oracle fall back to a transactional select-then-lock that assumes a
+/// single writer. <see cref="EnsureSchemaAsync"/> is idempotent and also upgrades tables created before the
+/// <c>Status</c> column existed.
+/// </remarks>
 public sealed class AdoNetOutboxStore : IOutboxStore, IAdoNetSchemaStore
 {
     private static readonly string[] Columns =
@@ -29,6 +39,13 @@ public sealed class AdoNetOutboxStore : IOutboxStore, IAdoNetSchemaStore
     private readonly DatabaseDialect _dialect;
     private readonly TimeProvider _time;
 
+    /// <summary>Creates the store for the dialect of the supplied connection factory.</summary>
+    /// <param name="factory">Connection factory; its dialect selects the SQL syntax.</param>
+    /// <param name="unitOfWork">Unit of work that decides whether writes join an ambient transaction.</param>
+    /// <param name="options">Retry budget and polling settings, validated on construction.</param>
+    /// <param name="timeProvider">Clock used for leases and scheduling; <see cref="TimeProvider.System"/> when omitted.</param>
+    /// <exception cref="ArgumentNullException">An argument is <see langword="null"/>.</exception>
+    /// <exception cref="ArgumentOutOfRangeException">The options are invalid.</exception>
     public AdoNetOutboxStore(
         IDbConnectionFactory factory,
         IUnitOfWork unitOfWork,
@@ -44,6 +61,16 @@ public sealed class AdoNetOutboxStore : IOutboxStore, IAdoNetSchemaStore
         _time = timeProvider ?? TimeProvider.System;
     }
 
+    /// <summary>
+    /// Creates the outbox table and its pending index when they are missing, and adds the <c>Status</c> column to tables
+    /// created by an earlier version.
+    /// </summary>
+    /// <param name="cancellationToken">Token used to cancel the DDL statements.</param>
+    /// <returns>A task that completes when the schema is ready.</returns>
+    /// <remarks>
+    /// MySQL has no <c>CREATE INDEX IF NOT EXISTS</c>, so the index is created only after a lookup in
+    /// <c>information_schema.statistics</c>. Safe to call on every application start.
+    /// </remarks>
     public async Task EnsureSchemaAsync(CancellationToken cancellationToken = default)
     {
         var dateType = AdoNetStoreSupport.GetDateTimeType(_dialect);
@@ -134,6 +161,15 @@ public sealed class AdoNetOutboxStore : IOutboxStore, IAdoNetSchemaStore
         await alter.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
     }
 
+    /// <summary>
+    /// Inserts every supplied message in a single transaction, validating the required fields first.
+    /// </summary>
+    /// <param name="messages">Messages to persist; an empty sequence is a no-op.</param>
+    /// <param name="cancellationToken">Token used to cancel the insert.</param>
+    /// <returns>A task that completes when the batch has been committed.</returns>
+    /// <exception cref="ArgumentNullException">The sequence or one of its items is <see langword="null"/>.</exception>
+    /// <exception cref="ArgumentException">A message has an empty id, type or payload.</exception>
+    /// <exception cref="ArgumentOutOfRangeException">A message has a negative retry count.</exception>
     public async Task SaveAsync(
         IEnumerable<IOutboxMessage> messages,
         CancellationToken cancellationToken = default
@@ -226,6 +262,11 @@ public sealed class AdoNetOutboxStore : IOutboxStore, IAdoNetSchemaStore
             .ConfigureAwait(false);
     }
 
+    /// <summary>Inserts a single message; equivalent to a batch of one.</summary>
+    /// <param name="message">Message to persist.</param>
+    /// <param name="cancellationToken">Token used to cancel the insert.</param>
+    /// <returns>A task that completes when the message has been committed.</returns>
+    /// <exception cref="ArgumentNullException"><paramref name="message"/> is <see langword="null"/>.</exception>
     public Task SaveMessageAsync(
         IOutboxMessage message,
         CancellationToken cancellationToken = default
@@ -235,6 +276,14 @@ public sealed class AdoNetOutboxStore : IOutboxStore, IAdoNetSchemaStore
         return SaveAsync(new[] { message }, cancellationToken);
     }
 
+    /// <summary>Reads claimable messages without locking them, oldest first.</summary>
+    /// <param name="batchSize">Maximum number of rows to return.</param>
+    /// <param name="cancellationToken">Token used to cancel the query.</param>
+    /// <returns>Messages that are pending or whose lease has expired.</returns>
+    /// <exception cref="ArgumentOutOfRangeException"><paramref name="batchSize"/> is not positive.</exception>
+    /// <remarks>
+    /// Diagnostics only: two readers can observe the same row. Use <see cref="ClaimPendingAsync"/> to publish.
+    /// </remarks>
     public async Task<IReadOnlyList<IOutboxMessage>> GetPendingAsync(
         int batchSize = 100,
         CancellationToken cancellationToken = default
@@ -259,6 +308,11 @@ public sealed class AdoNetOutboxStore : IOutboxStore, IAdoNetSchemaStore
         return messages;
     }
 
+    /// <summary>Reads messages whose retry budget is exhausted, oldest first.</summary>
+    /// <param name="batchSize">Maximum number of rows to return.</param>
+    /// <param name="cancellationToken">Token used to cancel the query.</param>
+    /// <returns>Messages in the <see cref="OutboxMessageStatus.DeadLettered"/> state.</returns>
+    /// <exception cref="ArgumentOutOfRangeException"><paramref name="batchSize"/> is not positive.</exception>
     public async Task<IReadOnlyList<IOutboxMessage>> GetDeadLetteredAsync(
         int batchSize = 100,
         CancellationToken cancellationToken = default
@@ -503,6 +557,7 @@ public sealed class AdoNetOutboxStore : IOutboxStore, IAdoNetSchemaStore
         return claimed;
     }
 
+    /// <inheritdoc cref="IOutboxStore.MarkProcessedAsync(Guid, CancellationToken)"/>
     public Task MarkProcessedAsync(Guid messageId, CancellationToken cancellationToken = default) =>
         UpdateStatusAsync(
             messageId,
@@ -512,6 +567,7 @@ public sealed class AdoNetOutboxStore : IOutboxStore, IAdoNetSchemaStore
             cancellationToken
         );
 
+    /// <inheritdoc cref="IOutboxStore.MarkFailedAsync(Guid, string, DateTime?, CancellationToken)"/>
     public Task MarkFailedAsync(
         Guid messageId,
         string error,

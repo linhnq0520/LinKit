@@ -5,6 +5,13 @@ using Grpc.Net.Client;
 
 namespace LinKit.Grpc;
 
+/// <summary>
+/// Default <see cref="IGrpcClientFactory"/> that caches one channel, invoker and client instance per client type.
+/// </summary>
+/// <remarks>
+/// The factory never disposes the injected providers, since the container owns them. Client instances are cached, so a
+/// generated client type is constructed once per factory rather than per call.
+/// </remarks>
 public class DefaultGrpcClientFactory(
     IGrpcChannelProvider channelProvider,
     IGrpcInterceptorProvider interceptorProvider,
@@ -19,6 +26,8 @@ public class DefaultGrpcClientFactory(
     private readonly ConcurrentDictionary<Type, CallInvoker> _invokers = new();
     private readonly ConcurrentDictionary<Type, ClientBase> _clients = new();
 
+    /// <summary>Returns the shared channel for <typeparamref name="TClient"/>, delegating creation to the provider.</summary>
+    /// <typeparam name="TClient">Generated gRPC client type.</typeparam>
     public GrpcChannel GetChannelFor<TClient>()
         where TClient : ClientBase
     {
@@ -34,11 +43,17 @@ public class DefaultGrpcClientFactory(
             .Value;
     }
 
+    /// <inheritdoc/>
     public Interceptor[] GetInterceptorsFor<TClient>() =>
         _interceptorProvider.GetInterceptorsFor<TClient>();
 
+    /// <inheritdoc/>
     public Metadata? GetMetadata() => _metadataProvider?.GetMetadata();
 
+    /// <summary>
+    /// Returns the cached invoker for <typeparamref name="TClient"/>, composing the channel with the interceptors.
+    /// </summary>
+    /// <typeparam name="TClient">Generated gRPC client type.</typeparam>
     public CallInvoker GetCallInvokerFor<TClient>()
         where TClient : ClientBase
     {
@@ -58,6 +73,9 @@ public class DefaultGrpcClientFactory(
         );
     }
 
+    /// <summary>Returns the cached client for <typeparamref name="TClient"/>, creating it through the generated activator.</summary>
+    /// <typeparam name="TClient">Generated gRPC client type.</typeparam>
+    /// <exception cref="InvalidOperationException">No generated activation path exists for <typeparamref name="TClient"/>.</exception>
     public TClient GetClient<TClient>()
         where TClient : ClientBase
     {
@@ -83,6 +101,7 @@ public class DefaultGrpcClientFactory(
             );
     }
 
+    /// <summary>Drops the cached channels, invokers and clients without disposing the injected providers.</summary>
     public void Dispose()
     {
         // Providers are injected (typically owned by the DI container), so the factory must not dispose them.

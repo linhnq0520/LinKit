@@ -10,6 +10,20 @@ using System.Text.Json.Serialization;
 
 namespace LinKit.Data;
 
+/// <summary>
+/// Describes a single column of the physical schema.
+/// </summary>
+/// <param name="Name">Physical column name.</param>
+/// <param name="Type">Provider-independent database type.</param>
+/// <param name="Nullable">Whether the column accepts <c>NULL</c>.</param>
+/// <param name="PrimaryKey">Whether the column is part of the primary key.</param>
+/// <param name="Generated">Whether the database generates the value on insert.</param>
+/// <param name="Version">Whether the column is an optimistic concurrency token.</param>
+/// <param name="Tenant">Whether the column carries the tenant discriminator.</param>
+/// <param name="SoftDelete">Whether the column carries the soft-delete marker.</param>
+/// <param name="Length">Declared length for string or binary columns; zero when unbounded.</param>
+/// <param name="Precision">Declared numeric precision; zero when not applicable.</param>
+/// <param name="Scale">Declared numeric scale; zero when not applicable.</param>
 public sealed record ColumnModel(
     string Name,
     DbType Type,
@@ -24,19 +38,53 @@ public sealed record ColumnModel(
     byte Scale = 0
 );
 
+/// <summary>
+/// Describes a table of the physical schema together with its columns.
+/// </summary>
+/// <param name="Name">Physical table name.</param>
+/// <param name="Schema">Owner or schema the table belongs to; <see langword="null"/> for the provider default.</param>
+/// <param name="Columns">Columns in declaration order.</param>
 public sealed record TableModel(string Name, string? Schema, IReadOnlyList<ColumnModel> Columns)
 {
+    /// <summary>Returns the primary key column.</summary>
+    /// <exception cref="InvalidOperationException">The table has zero or several primary key columns.</exception>
     public ColumnModel Key => Columns.Single(column => column.PrimaryKey);
 }
 
+/// <summary>
+/// Point-in-time snapshot of every table reported by a dialect, used by schema synchronization.
+/// </summary>
+/// <param name="Tables">Tables of the snapshot.</param>
 public sealed record SchemaSnapshot(IReadOnlyList<TableModel> Tables);
 
+/// <summary>
+/// Thrown when a database value cannot be mapped to the requested CLR type, typically because the column type and the
+/// property type disagree.
+/// </summary>
 public sealed class DataMappingException(string message) : Exception(message);
 
+/// <summary>
+/// Thrown when an optimistic concurrency check affects no row, which means another writer changed or removed the row
+/// between the read and the write.
+/// </summary>
 public sealed class DataConcurrencyException(string message) : Exception(message);
 
+/// <summary>
+/// Helpers used by generated mappers to read provider values and to convert them to CLR types.
+/// </summary>
+/// <remarks>
+/// Every typed accessor first tries the provider's strongly typed getter and falls back to <see cref="Convert"/> under
+/// <see cref="CultureInfo.InvariantCulture"/> when the provider reports an incompatible representation.
+/// </remarks>
 public static class DbValues
 {
+    /// <summary>Serializes a value through a source-generated <see cref="JsonSerializerContext"/> so the mapping stays Native AOT safe.</summary>
+    /// <typeparam name="T">Value type.</typeparam>
+    /// <param name="value">Value to serialize; <see langword="null"/> returns <see langword="null"/>.</param>
+    /// <param name="context">Source-generated context that must contain metadata for <typeparamref name="T"/>.</param>
+    /// <returns>The JSON payload, or <see langword="null"/> when <paramref name="value"/> is <see langword="null"/>.</returns>
+    /// <exception cref="ArgumentNullException"><paramref name="value"/> is not <see langword="null"/> and <paramref name="context"/> is.</exception>
+    /// <exception cref="InvalidOperationException">The context has no metadata for <typeparamref name="T"/>.</exception>
     public static object? SerializeJson<T>(T value, JsonSerializerContext? context)
     {
         if (value is null)
@@ -50,6 +98,16 @@ public static class DbValues
         return JsonSerializer.Serialize(value, typeInfo);
     }
 
+    /// <summary>Reads a column and converts it to <typeparamref name="T"/>.</summary>
+    /// <typeparam name="T">Requested type.</typeparam>
+    /// <param name="reader">Reader positioned on the row to read.</param>
+    /// <param name="ordinal">Zero-based column ordinal.</param>
+    /// <returns>The column value.</returns>
+    /// <exception cref="DataMappingException">The column is <c>NULL</c> and <typeparamref name="T"/> cannot hold <see langword="null"/>.</exception>
+    /// <remarks>
+    /// Non-nullable value types are read through a non-boxing reinterpretation of the typed accessor; <see cref="Nullable{T}"/>
+    /// takes the boxing path because its layout differs, and any other type falls back to <see cref="ConvertTo{T}"/>.
+    /// </remarks>
     public static T Read<T>(DbDataReader reader, int ordinal)
     {
         if (reader.IsDBNull(ordinal))
@@ -171,6 +229,7 @@ public static class DbValues
         }
     }
 
+    /// <summary>Reads a non-null Int64 with the provider's typed accessor.</summary>
     public static long ReadInt64(DbDataReader reader, int ordinal)
     {
         try
@@ -183,6 +242,7 @@ public static class DbValues
         }
     }
 
+    /// <summary>Reads a non-null Int16 with the provider's typed accessor.</summary>
     public static short ReadInt16(DbDataReader reader, int ordinal)
     {
         try
@@ -195,6 +255,7 @@ public static class DbValues
         }
     }
 
+    /// <summary>Reads a non-null unsigned byte with the provider's typed accessor.</summary>
     public static byte ReadByte(DbDataReader reader, int ordinal)
     {
         try
@@ -207,6 +268,7 @@ public static class DbValues
         }
     }
 
+    /// <summary>Reads a non-null signed byte.</summary>
     public static sbyte ReadSByte(DbDataReader reader, int ordinal)
     {
         try
@@ -219,6 +281,7 @@ public static class DbValues
         }
     }
 
+    /// <summary>Reads a non-null unsigned 16-bit integer.</summary>
     public static ushort ReadUInt16(DbDataReader reader, int ordinal)
     {
         try
@@ -231,6 +294,7 @@ public static class DbValues
         }
     }
 
+    /// <summary>Reads a non-null unsigned 32-bit integer.</summary>
     public static uint ReadUInt32(DbDataReader reader, int ordinal)
     {
         try
@@ -243,6 +307,7 @@ public static class DbValues
         }
     }
 
+    /// <summary>Reads a non-null unsigned 64-bit integer.</summary>
     public static ulong ReadUInt64(DbDataReader reader, int ordinal)
     {
         try
@@ -255,6 +320,7 @@ public static class DbValues
         }
     }
 
+    /// <summary>Reads a non-null decimal with the provider's typed accessor.</summary>
     public static decimal ReadDecimal(DbDataReader reader, int ordinal)
     {
         try
@@ -267,6 +333,7 @@ public static class DbValues
         }
     }
 
+    /// <summary>Reads a non-null double with the provider's typed accessor.</summary>
     public static double ReadDouble(DbDataReader reader, int ordinal)
     {
         try
@@ -279,6 +346,7 @@ public static class DbValues
         }
     }
 
+    /// <summary>Reads a non-null single-precision number with the provider's typed accessor.</summary>
     public static float ReadSingle(DbDataReader reader, int ordinal)
     {
         try
@@ -291,6 +359,7 @@ public static class DbValues
         }
     }
 
+    /// <summary>Reads a non-null boolean, accepting text and numeric representations such as the ones SQLite returns.</summary>
     public static bool ReadBoolean(DbDataReader reader, int ordinal)
     {
         try
@@ -306,6 +375,7 @@ public static class DbValues
         }
     }
 
+    /// <summary>Reads a non-null character from a single-character column, returning <c>\0</c> for an empty string.</summary>
     public static char ReadChar(DbDataReader reader, int ordinal)
     {
         try
@@ -319,6 +389,7 @@ public static class DbValues
         }
     }
 
+    /// <summary>Reads a non-null GUID from a native GUID column, a 16-byte binary column or a textual representation.</summary>
     public static Guid ReadGuid(DbDataReader reader, int ordinal)
     {
         try
@@ -334,6 +405,7 @@ public static class DbValues
         }
     }
 
+    /// <summary>Reads a non-null timestamp, accepting ticks and textual representations as a fallback.</summary>
     public static DateTime ReadDateTime(DbDataReader reader, int ordinal)
     {
         try
@@ -352,6 +424,7 @@ public static class DbValues
         }
     }
 
+    /// <summary>Reads a non-null offset timestamp, accepting <see cref="DateTime"/> and textual representations as a fallback.</summary>
     public static DateTimeOffset ReadDateTimeOffset(DbDataReader reader, int ordinal)
     {
         try
@@ -370,6 +443,7 @@ public static class DbValues
         }
     }
 
+    /// <summary>Reads a non-null date, accepting <see cref="DateTime"/> and textual representations as a fallback.</summary>
     public static DateOnly ReadDateOnly(DbDataReader reader, int ordinal)
     {
         try
@@ -388,6 +462,7 @@ public static class DbValues
         }
     }
 
+    /// <summary>Reads a non-null time of day, accepting span, timestamp and textual representations as a fallback.</summary>
     public static TimeOnly ReadTimeOnly(DbDataReader reader, int ordinal)
     {
         try
@@ -412,6 +487,7 @@ public static class DbValues
         }
     }
 
+    /// <summary>Reads a non-null duration, accepting ticks, <see cref="TimeOnly"/> and textual representations as a fallback.</summary>
     public static TimeSpan ReadTimeSpan(DbDataReader reader, int ordinal)
     {
         try
@@ -433,6 +509,8 @@ public static class DbValues
         }
     }
 
+    /// <summary>Reads a non-null binary value from a binary column or from a Base64 string.</summary>
+    /// <exception cref="DataMappingException">The provider returned a type that cannot be read as binary.</exception>
     public static byte[] ReadBytes(DbDataReader reader, int ordinal)
     {
         var value = reader.GetValue(ordinal);
@@ -446,6 +524,8 @@ public static class DbValues
         };
     }
 
+    /// <summary>Reads a non-null enum from its stored name or numeric value.</summary>
+    /// <typeparam name="T">Enum type.</typeparam>
     public static T ReadEnum<T>(DbDataReader reader, int ordinal)
         where T : struct, Enum
     {

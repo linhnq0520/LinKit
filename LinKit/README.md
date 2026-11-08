@@ -10,20 +10,20 @@ Runtime libraries target .NET 8, .NET 9, and .NET 10 unless a package/project st
 
 ## Choose packages
 
-| Package | Purpose | Guide |
-|---|---|---|
-| `LinKit.Core` | CQRS contracts/mediator, generated DI/endpoints/jobs/mapping, messaging contracts. | [Core README](./LinKit.Core/README.md) |
-| `LinKit.Data` | ADO.NET repositories, schema synchronization, migrations, LINQ/fluent query APIs. | [Data README](./LinKit.Data/README.md) |
-| `LinKit.Grpc` | Generated gRPC CQRS server/client adapters. | [gRPC README](./LinKit.Grpc/README.md) |
-| `LinKit.Json` | Fast, allocation-conscious JSON path navigation and typed value accessors. | [Json README](./LinKit.Json/README.md) |
-| `LinKit.Messaging.Kafka` | Kafka broker integration for LinKit messaging. | [Kafka README](./LinKit.Messaging.Kafka/README.md) |
-| `LinKit.Messaging.RabbitMQ` | RabbitMQ broker integration for LinKit messaging. | [RabbitMQ README](./LinKit.Messaging.RabbitMQ/README.md) |
-| `LinKit.Outbox` | Outbox/Inbox contracts, in-memory stores, publisher and retry options. | [Outbox README](./LinKit.Outbox/README.md) |
-| `LinKit.Outbox.Data` | Durable provider-neutral ADO.NET stores. | [Outbox.Data README](./LinKit.Outbox.Data/README.md) |
-| `LinKit.Caching` | In-memory and Native AOT hybrid Redis cache provider. | [Caching README](./LinKit.Caching/README.md) |
-| `LinKit.Resilience` | Explicit retry, timeout, and circuit-breaker pipeline. | [Resilience README](./LinKit.Resilience/README.md) |
-| `LinKit.Tenancy` | Async-flow tenant context and explicit message-header helpers. | [Tenancy README](./LinKit.Tenancy/README.md) |
-| `LinKit.Sagas` | Saga step coordination and repository abstraction. | [Sagas README](./LinKit.Sagas/README.md) |
+| Package                     | Purpose                                                                            | Guide                                                    |
+| --------------------------- | ---------------------------------------------------------------------------------- | -------------------------------------------------------- |
+| `LinKit.Core`               | CQRS contracts/mediator, generated DI/endpoints/jobs/mapping, messaging contracts. | [Core README](./LinKit.Core/README.md)                   |
+| `LinKit.Data`               | ADO.NET repositories, schema synchronization, migrations, LINQ/fluent query APIs.  | [Data README](./LinKit.Data/README.md)                   |
+| `LinKit.Grpc`               | Generated gRPC CQRS server/client adapters.                                        | [gRPC README](./LinKit.Grpc/README.md)                   |
+| `LinKit.Json`               | Fast, allocation-conscious JSON path navigation and typed value accessors.         | [Json README](./LinKit.Json/README.md)                   |
+| `LinKit.Messaging.Kafka`    | Kafka broker integration for LinKit messaging.                                     | [Kafka README](./LinKit.Messaging.Kafka/README.md)       |
+| `LinKit.Messaging.RabbitMQ` | RabbitMQ broker integration for LinKit messaging.                                  | [RabbitMQ README](./LinKit.Messaging.RabbitMQ/README.md) |
+| `LinKit.Outbox`             | Outbox/Inbox contracts, in-memory stores, publisher and retry options.             | [Outbox README](./LinKit.Outbox/README.md)               |
+| `LinKit.Outbox.Data`        | Durable provider-neutral ADO.NET stores.                                           | [Outbox.Data README](./LinKit.Outbox.Data/README.md)     |
+| `LinKit.Caching`            | In-memory and Native AOT hybrid Redis cache provider.                              | [Caching README](./LinKit.Caching/README.md)             |
+| `LinKit.Resilience`         | Explicit retry, timeout, and circuit-breaker pipeline.                             | [Resilience README](./LinKit.Resilience/README.md)       |
+| `LinKit.Tenancy`            | Async-flow tenant context and explicit message-header helpers.                     | [Tenancy README](./LinKit.Tenancy/README.md)             |
+| `LinKit.Sagas`              | Saga step coordination and repository abstraction.                                 | [Sagas README](./LinKit.Sagas/README.md)                 |
 
 Generators for Core, Data, and gRPC are distributed inside their corresponding runtime NuGet packages. Do not add the generator projects as runtime dependencies.
 
@@ -70,16 +70,16 @@ app.Run();
 
 Packages follow independent semantic versions. Current project versions are:
 
-| Package | Version | Package | Version |
-|---|---:|---|---:|
-| `LinKit.Core` | 3.3.0 | `LinKit.Data` | 2.3.2 |
-| `LinKit.Grpc` | 2.1.2 | `LinKit.Json` | 1.1.1 |
-| `LinKit.Messaging.Kafka` | 1.3.1 | `LinKit.Messaging.RabbitMQ` | 1.4.1 |
-| `LinKit.Outbox` | 1.2.1 | `LinKit.Outbox.Data` | 1.2.1 |
-| `LinKit.Caching` | 1.3.1 | `LinKit.Resilience` | 1.2.1 |
-| `LinKit.Tenancy` | 1.2.1 | `LinKit.Sagas` | 1.2.1 |
+| Package                  | Version | Package                     | Version |
+| ------------------------ | ------: | --------------------------- | ------: |
+| `LinKit.Core`            |   4.0.1 | `LinKit.Data`               |   2.6.1 |
+| `LinKit.Grpc`            |   2.3.1 | `LinKit.Json`               |   1.2.1 |
+| `LinKit.Messaging.Kafka` |   1.5.1 | `LinKit.Messaging.RabbitMQ` |   1.6.1 |
+| `LinKit.Outbox`          |   2.1.1 | `LinKit.Outbox.Data`        |   2.0.1 |
+| `LinKit.Caching`         |   1.5.1 | `LinKit.Resilience`         |   1.3.1 |
+| `LinKit.Tenancy`         |   2.0.1 | `LinKit.Sagas`              |   2.0.1 |
 
-These are repository project metadata values. Core 3.0.0, Data 2.0.0, and gRPC 2.0.0 include generated namespace changes; see each package README for migration notes. Other package versions are unchanged.
+These are repository project metadata values. Core 3.0.0, Data 2.0.0, and gRPC 2.0.0 included generated namespace changes, and Core 4.0.0 removed the metadata-only `[CacheAside]`, `[InvalidateCache]`, `[Retry]`, `[CircuitBreaker]` and `[Timeout]` attributes in favour of `ICacheProvider` and `ResiliencePipeline`; see each package README for migration notes.
 
 ## Build and test from source
 
@@ -114,3 +114,4 @@ For module behavior, startup sequences, database semantics, source-generation bo
 ## License
 
 MIT, as declared in the NuGet package metadata. See the [MIT license text](https://opensource.org/license/mit/).
+

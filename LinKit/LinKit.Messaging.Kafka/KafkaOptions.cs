@@ -2,14 +2,37 @@ using Confluent.Kafka;
 
 namespace LinKit.Messaging.Kafka;
 
+/// <summary>
+/// Kafka producer and consumer settings used by the LinKit Kafka transport adapters.
+/// </summary>
+/// <remarks>
+/// Values are validated by <c>AddLinKitKafka</c> through <c>IValidateOptions&lt;KafkaOptions&gt;</c>, so a bad
+/// configuration fails on first resolution instead of degrading silently.
+/// </remarks>
 public class KafkaOptions
 {
+    /// <summary>Comma separated <c>host:port</c> list of brokers used to bootstrap the cluster metadata.</summary>
     public string BootstrapServers { get; set; } = "localhost:9092";
+
+    /// <summary>Consumer group that owns the committed offsets; each group reads the topic independently.</summary>
     public string GroupId { get; set; } = "linkit-consumer-group";
+
+    /// <summary>Time to wait for more records before a batch is sent; higher values trade latency for throughput.</summary>
     public int LingerMs { get; set; } = 5;
+
+    /// <summary>Maximum bytes batched per partition before a send is forced.</summary>
     public int BatchSize { get; set; } = 64 * 1024;
+
+    /// <summary>Compression codec applied to produced batches.</summary>
     public CompressionType CompressionType { get; set; } = CompressionType.None;
+
+    /// <summary>Where to start reading when the group has no committed offset.</summary>
     public AutoOffsetReset AutoOffsetReset { get; set; } = AutoOffsetReset.Earliest;
+
+    /// <summary>
+    /// Whether offsets are committed automatically. The default <see langword="false"/> commits after the handler succeeds
+    /// so a crash replays the record instead of losing it.
+    /// </summary>
     public bool EnableAutoCommit { get; set; } = false;
 
     /// <summary>Handler attempts per record before it is dead-lettered. 0 = retry forever (can block the partition).</summary>

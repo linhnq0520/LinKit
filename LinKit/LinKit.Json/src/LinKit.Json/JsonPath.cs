@@ -41,7 +41,8 @@ public sealed class JsonPath
         {
             throw new ArgumentException(
                 "A single-value query cannot contain a wildcard. Use SelectMany instead.",
-                nameof(path));
+                nameof(path)
+            );
         }
     }
 
@@ -52,13 +53,14 @@ public sealed class JsonPath
         return new Parser(expression).Parse();
     }
 
+    /// <summary>Returns the original path expression.</summary>
     public override string ToString() => Expression;
 
     internal enum SegmentKind
     {
         Property,
         Index,
-        Wildcard
+        Wildcard,
     }
 
     internal readonly record struct Segment(SegmentKind Kind, string? Name = null, int Index = 0);
@@ -155,16 +157,21 @@ public sealed class JsonPath
                 }
 
                 var digits = text.AsSpan(digitsStart, _position - digitsStart);
-                if (digits.Length == 0 ||
-                    (digits.Length > 1 && digits[0] == '0') ||
-                    (text[start] == '-' && digits.Length == 1 && digits[0] == '0') ||
-                    !int.TryParse(
+                if (
+                    digits.Length == 0
+                    || (digits.Length > 1 && digits[0] == '0')
+                    || (text[start] == '-' && digits.Length == 1 && digits[0] == '0')
+                    || !int.TryParse(
                         text.AsSpan(start, _position - start),
                         NumberStyles.AllowLeadingSign,
                         CultureInfo.InvariantCulture,
-                        out var index))
+                        out var index
+                    )
+                )
                 {
-                    throw Error("Expected an Int32 array index without leading zeros, '+' or negative zero.");
+                    throw Error(
+                        "Expected an Int32 array index without leading zeros, '+' or negative zero."
+                    );
                 }
 
                 segment = new Segment(SegmentKind.Index, Index: index);
@@ -209,20 +216,22 @@ public sealed class JsonPath
                 }
 
                 var escape = text[_position++];
-                result.Append(escape switch
-                {
-                    '"' => '"',
-                    '\'' => '\'',
-                    '\\' => '\\',
-                    '/' => '/',
-                    'b' => '\b',
-                    'f' => '\f',
-                    'n' => '\n',
-                    'r' => '\r',
-                    't' => '\t',
-                    'u' => ParseUnicodeEscape(),
-                    _ => throw Error("Invalid escape sequence.")
-                });
+                result.Append(
+                    escape switch
+                    {
+                        '"' => '"',
+                        '\'' => '\'',
+                        '\\' => '\\',
+                        '/' => '/',
+                        'b' => '\b',
+                        'f' => '\f',
+                        'n' => '\n',
+                        'r' => '\r',
+                        't' => '\t',
+                        'u' => ParseUnicodeEscape(),
+                        _ => throw Error("Invalid escape sequence."),
+                    }
+                );
             }
 
             throw Error("Unterminated quoted property name.");
@@ -230,12 +239,15 @@ public sealed class JsonPath
 
         private char ParseUnicodeEscape()
         {
-            if (text.Length - _position < 4 ||
-                !ushort.TryParse(
+            if (
+                text.Length - _position < 4
+                || !ushort.TryParse(
                     text.AsSpan(_position, 4),
                     NumberStyles.AllowHexSpecifier,
                     CultureInfo.InvariantCulture,
-                    out var value))
+                    out var value
+                )
+            )
             {
                 throw Error("Expected four hexadecimal digits after '\\u'.");
             }

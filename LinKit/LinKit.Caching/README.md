@@ -1,7 +1,5 @@
 # LinKit.Caching
 
-[![NuGet](https://img.shields.io/nuget/v/LinKit.Caching.svg)](https://www.nuget.org/packages/LinKit.Caching/)
-
 `LinKit.Caching` provides `ICacheProvider` with a bounded in-memory implementation and a high-performance, 100% Native AOT-compatible two-level (L1 In-Memory + L2 Redis) hybrid cache provider using a lightweight RESP2 socket client.
 
 ## Install

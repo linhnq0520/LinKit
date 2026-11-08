@@ -6,11 +6,11 @@ namespace LinKit.Data;
 
 /// <summary>
 /// Wraps an idempotent database operation with cross-cutting policy (retry, circuit breaker, per-attempt timeout).
-/// <para>
+/// </summary>
+/// <remarks>
 /// LinKit.Data deliberately does not reference LinKit.Resilience, so this interface is the seam: an application
 /// that references both packages composes them with a few lines.
-/// </para>
-/// </summary>
+/// </remarks>
 /// <example>
 /// <code>
 /// public sealed class ResilienceDataExecutor(ResilienceOptions options) : IDataOperationExecutor
@@ -22,6 +22,11 @@ namespace LinKit.Data;
 /// </example>
 public interface IDataOperationExecutor
 {
+    /// <summary>Runs an idempotent operation under the configured policy.</summary>
+    /// <typeparam name="T">Result type.</typeparam>
+    /// <param name="operation">Work to run; it may be invoked more than once, so it must be safe to repeat.</param>
+    /// <param name="cancellationToken">Token used to cancel the operation and the waits between attempts.</param>
+    /// <returns>The value produced by the successful attempt.</returns>
     Task<T> ExecuteAsync<T>(
         Func<CancellationToken, Task<T>> operation,
         CancellationToken cancellationToken
@@ -41,6 +46,15 @@ public sealed class TransientFailureExecutor : IDataOperationExecutor
     private readonly TimeProvider _time;
     private readonly Func<int, TimeSpan>? _delayFactory;
 
+    /// <summary>Creates a retry executor.</summary>
+    /// <param name="isTransient">Predicate that decides whether an exception is worth retrying.</param>
+    /// <param name="maxRetries">Maximum number of additional attempts; zero disables retrying.</param>
+    /// <param name="baseDelay">Delay before the first retry, doubled on each following attempt; defaults to 100 ms.</param>
+    /// <param name="maxDelay">Upper bound for a single delay; defaults to 10 seconds.</param>
+    /// <param name="timeProvider">Clock used for the delays, so tests can run without waiting.</param>
+    /// <param name="delayFactory">Overrides the exponential backoff with a custom delay per attempt (one-based).</param>
+    /// <exception cref="ArgumentNullException"><paramref name="isTransient"/> is <see langword="null"/>.</exception>
+    /// <exception cref="ArgumentOutOfRangeException"><paramref name="maxRetries"/> is negative.</exception>
     public TransientFailureExecutor(
         Func<Exception, bool> isTransient,
         int maxRetries = 3,
@@ -64,6 +78,14 @@ public sealed class TransientFailureExecutor : IDataOperationExecutor
         _delayFactory = delayFactory;
     }
 
+    /// <summary>Runs the operation, retrying transient failures until the attempts are exhausted.</summary>
+    /// <typeparam name="T">Result type.</typeparam>
+    /// <param name="operation">Work to run; it may be invoked more than once, so it must be safe to repeat.</param>
+    /// <param name="cancellationToken">Token used to cancel the operation and the waits between attempts.</param>
+    /// <returns>The value produced by the successful attempt.</returns>
+    /// <exception cref="ArgumentNullException"><paramref name="operation"/> is <see langword="null"/>.</exception>
+    /// <exception cref="OperationCanceledException"><paramref name="cancellationToken"/> is cancelled.</exception>
+    /// <remarks>The last failure is rethrown when the attempts are exhausted or the failure is not transient.</remarks>
     public async Task<T> ExecuteAsync<T>(
         Func<CancellationToken, Task<T>> operation,
         CancellationToken cancellationToken

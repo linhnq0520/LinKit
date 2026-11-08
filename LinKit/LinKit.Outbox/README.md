@@ -1,7 +1,5 @@
 # LinKit.Outbox
 
-[![NuGet](https://img.shields.io/nuget/v/LinKit.Outbox.svg)](https://www.nuget.org/packages/LinKit.Outbox/)
-
 `LinKit.Outbox` provides Outbox/Inbox contracts, an in-memory implementation, configurable retry/backoff options, and a hosted publisher that sends stored records through LinKit broker abstractions.
 
 > The default in-memory stores are for development and tests only. They lose data when the process exits. For durable ADO.NET persistence, use [`LinKit.Outbox.Data`](https://www.nuget.org/packages/LinKit.Outbox.Data/).
@@ -105,7 +103,7 @@ if (await inbox.TryMarkProcessedAsync(id, consumer, TimeSpan.FromMinutes(10), ct
 }
 ```
 
-**Tradeoff:** a crash *after* claiming but *before* processing leaves the message marked until the expiry elapses (at-most-once for that window). Pass an `expiry` to allow reclaim. The method is implemented atomically in `InMemoryInboxStore` and `AdoNetInboxStore`; the existing `HasBeenProcessedAsync`/`MarkProcessedAsync` are unchanged.
+**Tradeoff:** a crash _after_ claiming but _before_ processing leaves the message marked until the expiry elapses (at-most-once for that window). Pass an `expiry` to allow reclaim. The method is implemented atomically in `InMemoryInboxStore` and `AdoNetInboxStore`; the existing `HasBeenProcessedAsync`/`MarkProcessedAsync` are unchanged.
 
 ## Delivery semantics and retries
 

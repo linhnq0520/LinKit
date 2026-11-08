@@ -2,10 +2,10 @@
   <PropertyGroup>
     <TargetFrameworks>net8.0;net9.0;net10.0</TargetFrameworks>
     <PackageId>LinKit.Outbox</PackageId>
-    <Version>2.1.0</Version>
+    <Version>2.1.1</Version>
     <Description>Transactional Outbox and Inbox abstractions with an explicit message lifecycle and replaceable store implementations for LinKit.</Description>
     <PackageTags>linkit;outbox;inbox;messaging;microservices;multitenancy;aot</PackageTags>
-    <PackageReleaseNotes>v2.1.0: the ambient tenant id is captured into the message headers when an Outbox message is created and restored by the publisher before the broker call, so tenant context survives the transaction boundary. Full documentation &amp; release notes: https://quoclinh.id.vn/docs/linkit</PackageReleaseNotes>
+    <PackageReleaseNotes>v2.1.1: documentation and packaging patch - every public member now carries XML documentation (CS1591 is enforced as a build error) and the README was reviewed for accuracy. Previous release: v2.1.0 - the ambient tenant id is captured into the message headers when an Outbox message is created and restored by the publisher before the broker call, so tenant context survives the transaction boundary. Full documentation &amp; release notes: https://quoclinh.id.vn/docs/linkit</PackageReleaseNotes>
   </PropertyGroup>
 
   <ItemGroup>

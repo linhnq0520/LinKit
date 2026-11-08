@@ -29,6 +29,13 @@ public sealed class RegisterServiceAttribute : Attribute
     /// </summary>
     public bool IsGeneric { get; set; }
 
+    /// <summary>
+    /// Initializes the attribute.
+    /// </summary>
+    /// <param name="lifetime">Service lifetime; defaults to <see cref="Lifetime.Transient"/>.</param>
+    /// <param name="serviceType">Service type to register against; <see langword="null"/> lets the generator infer it.</param>
+    /// <param name="key">Key for keyed registration, or <see langword="null"/> for an unkeyed registration.</param>
+    /// <param name="isGeneric">Whether the registration is for an open generic service type.</param>
     public RegisterServiceAttribute(
         Lifetime lifetime = Lifetime.Transient,
         Type? serviceType = null,

@@ -1,7 +1,5 @@
 # LinKit.Grpc
 
-[![NuGet](https://img.shields.io/nuget/v/LinKit.Grpc.svg)](https://www.nuget.org/packages/LinKit.Grpc/)
-
 `LinKit.Grpc` packages a Roslyn generator and runtime adapters that connect CQRS request types to protobuf-generated gRPC service/client types. You still define and compile `.proto` contracts with the gRPC tooling; LinKit generates adapters and property mapping for supported shapes.
 
 ## Install

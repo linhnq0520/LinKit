@@ -19,8 +19,16 @@ public sealed class GrpcEndpointAttribute : Attribute
     /// E.g., "GetUser"
     /// </summary>
     public string MethodName { get; }
+
+    /// <summary>
+    /// Optional key of the <c>IMediator</c> registration to use. Set this when the application registers several
+    /// keyed mediators and this endpoint must use one specific instance.
+    /// </summary>
     public string? MediatorKeyedService { get; set; }
 
+    /// <summary>Creates the attribute.</summary>
+    /// <param name="serviceBaseType">Generated service base type that declares the RPC method.</param>
+    /// <param name="methodName">Name of the RPC method in the .proto file.</param>
     public GrpcEndpointAttribute(Type serviceBaseType, string methodName)
     {
         ServiceBaseType = serviceBaseType;

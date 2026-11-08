@@ -8,7 +8,12 @@ namespace LinKit.Core.Endpoints;
 [AttributeUsage(AttributeTargets.Class, Inherited = false, AllowMultiple = false)]
 public sealed class HttpGetAttribute : ApiEndpointAttribute
 {
-    public HttpGetAttribute(string route) : base(ApiMethod.Get, route) { }
+    /// <summary>
+    /// Initializes the attribute.
+    /// </summary>
+    /// <param name="route">Route template of the endpoint.</param>
+    public HttpGetAttribute(string route)
+        : base(ApiMethod.Get, route) { }
 }
 
 /// <summary>
@@ -17,7 +22,12 @@ public sealed class HttpGetAttribute : ApiEndpointAttribute
 [AttributeUsage(AttributeTargets.Class, Inherited = false, AllowMultiple = false)]
 public sealed class HttpPostAttribute : ApiEndpointAttribute
 {
-    public HttpPostAttribute(string route) : base(ApiMethod.Post, route) { }
+    /// <summary>
+    /// Initializes the attribute.
+    /// </summary>
+    /// <param name="route">Route template of the endpoint.</param>
+    public HttpPostAttribute(string route)
+        : base(ApiMethod.Post, route) { }
 }
 
 /// <summary>
@@ -26,7 +36,12 @@ public sealed class HttpPostAttribute : ApiEndpointAttribute
 [AttributeUsage(AttributeTargets.Class, Inherited = false, AllowMultiple = false)]
 public sealed class HttpPutAttribute : ApiEndpointAttribute
 {
-    public HttpPutAttribute(string route) : base(ApiMethod.Put, route) { }
+    /// <summary>
+    /// Initializes the attribute.
+    /// </summary>
+    /// <param name="route">Route template of the endpoint.</param>
+    public HttpPutAttribute(string route)
+        : base(ApiMethod.Put, route) { }
 }
 
 /// <summary>
@@ -35,7 +50,12 @@ public sealed class HttpPutAttribute : ApiEndpointAttribute
 [AttributeUsage(AttributeTargets.Class, Inherited = false, AllowMultiple = false)]
 public sealed class HttpDeleteAttribute : ApiEndpointAttribute
 {
-    public HttpDeleteAttribute(string route) : base(ApiMethod.Delete, route) { }
+    /// <summary>
+    /// Initializes the attribute.
+    /// </summary>
+    /// <param name="route">Route template of the endpoint.</param>
+    public HttpDeleteAttribute(string route)
+        : base(ApiMethod.Delete, route) { }
 }
 
 /// <summary>
@@ -44,5 +64,10 @@ public sealed class HttpDeleteAttribute : ApiEndpointAttribute
 [AttributeUsage(AttributeTargets.Class, Inherited = false, AllowMultiple = false)]
 public sealed class HttpPatchAttribute : ApiEndpointAttribute
 {
-    public HttpPatchAttribute(string route) : base(ApiMethod.Patch, route) { }
+    /// <summary>
+    /// Initializes the attribute.
+    /// </summary>
+    /// <param name="route">Route template of the endpoint.</param>
+    public HttpPatchAttribute(string route)
+        : base(ApiMethod.Patch, route) { }
 }

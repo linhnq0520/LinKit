@@ -40,8 +40,12 @@
     <EnableAotAnalyzer>true</EnableAotAnalyzer>
     <EnableSingleFileAnalyzer>true</EnableSingleFileAnalyzer>
     <GenerateDocumentationFile>true</GenerateDocumentationFile>
-    <!-- CS1591: documentation coverage is tracked separately; do not fail the build on it yet. -->
-    <NoWarn>$(NoWarn);CS1591</NoWarn>
+    <!--
+      CS1591 (missing XML comment for publicly visible type or member) is intentionally NOT suppressed and is promoted
+      to an error: the XML documentation ships inside the package and is what consumers read in IntelliSense, so an
+      undocumented public member is treated as an incomplete release rather than a style preference.
+    -->
+    <WarningsAsErrors>$(WarningsAsErrors);CS1591</WarningsAsErrors>
   </PropertyGroup>
 
   <!--

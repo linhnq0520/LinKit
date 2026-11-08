@@ -12,6 +12,16 @@ using Microsoft.Extensions.Logging;
 
 namespace LinKit.Outbox;
 
+/// <summary>
+/// Background worker that drains the outbox and publishes each stored message through
+/// <see cref="IBrokerProducer"/>. Claiming uses a lease so several instances can run the same loop without
+/// double-publishing, and failures are retried with exponential backoff before being dead-lettered.
+/// </summary>
+/// <remarks>
+/// The service creates a new DI scope per poll, which means <see cref="IOutboxStore"/> and
+/// <see cref="IBrokerProducer"/> may be scoped. The ambient tenant captured at save time is restored for the duration
+/// of each dispatch, so interceptors observe the original tenant instead of the publisher's.
+/// </remarks>
 public class OutboxPublisherService : BackgroundService
 {
     private readonly IServiceProvider _serviceProvider;
@@ -19,6 +29,12 @@ public class OutboxPublisherService : BackgroundService
     private readonly OutboxOptions _options;
     private readonly TimeProvider _time;
 
+    /// <summary>Creates the publisher loop.</summary>
+    /// <param name="serviceProvider">Root provider used to create one scope per poll.</param>
+    /// <param name="logger">Logger for dispatch, retry and dead-letter events.</param>
+    /// <param name="options">Polling, batching and retry settings; defaults are used when omitted.</param>
+    /// <param name="timeProvider">Clock used for backoff scheduling; defaults to <see cref="TimeProvider.System"/>.</param>
+    /// <exception cref="ArgumentOutOfRangeException">The supplied options fail <see cref="OutboxOptions.Validate"/>.</exception>
     public OutboxPublisherService(
         IServiceProvider serviceProvider,
         ILogger<OutboxPublisherService> logger,
@@ -58,6 +74,13 @@ public class OutboxPublisherService : BackgroundService
         );
     }
 
+    /// <summary>
+    /// Runs the claim-publish loop until the host stops. Each iteration claims at most
+    /// <see cref="OutboxOptions.BatchSize"/> messages, publishes them in FIFO order and updates their state; a full
+    /// batch is drained back-to-back without waiting.
+    /// </summary>
+    /// <param name="stoppingToken">Signalled when the host is shutting down; in-flight messages are left leased so
+    /// another instance (or the lease timeout) can resume them.</param>
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         _logger.LogInformation("OutboxPublisherService started");
@@ -179,6 +202,9 @@ public class OutboxPublisherService : BackgroundService
     }
 }
 
+/// <summary>
+/// Registration helpers for the transactional outbox and idempotent inbox.
+/// </summary>
 public static class OutboxServiceCollectionExtensions
 {
     private static void AddCommon(IServiceCollection services, Action<OutboxOptions>? configure)
@@ -200,6 +226,10 @@ public static class OutboxServiceCollectionExtensions
     /// Registers in-memory transactional outbox and idempotent inbox stores.
     /// NOTE: In-memory store is intended for development and testing. Production deployments should register a durable store.
     /// </summary>
+    /// <param name="services">Service collection to configure.</param>
+    /// <param name="configure">Optional callback that adjusts <see cref="OutboxOptions"/> before validation.</param>
+    /// <returns>The same collection, to allow call chaining.</returns>
+    /// <exception cref="ArgumentOutOfRangeException">The configured options fail <see cref="OutboxOptions.Validate"/>.</exception>
     public static IServiceCollection AddLinKitOutbox(
         this IServiceCollection services,
         Action<OutboxOptions>? configure = null
@@ -221,6 +251,12 @@ public static class OutboxServiceCollectionExtensions
     /// <summary>
     /// Registers custom durable outbox and inbox stores.
     /// </summary>
+    /// <typeparam name="TOutboxStore">Store implementation resolving to a durable backend.</typeparam>
+    /// <typeparam name="TInboxStore">Inbox ledger implementation resolving to a durable backend.</typeparam>
+    /// <param name="services">Service collection to configure.</param>
+    /// <param name="configure">Optional callback that adjusts <see cref="OutboxOptions"/> before validation.</param>
+    /// <returns>The same collection, to allow call chaining.</returns>
+    /// <exception cref="ArgumentOutOfRangeException">The configured options fail <see cref="OutboxOptions.Validate"/>.</exception>
     public static IServiceCollection AddLinKitOutbox<
         [DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicConstructors)]
             TOutboxStore,

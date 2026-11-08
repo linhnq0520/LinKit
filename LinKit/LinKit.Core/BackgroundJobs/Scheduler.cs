@@ -2,12 +2,26 @@ using System.Collections.Concurrent;
 
 namespace LinKit.Core.BackgroundJobs;
 
+/// <summary>
+/// Computes how long the background-job manager should wait before the next run of a job.
+/// Calculations are time-zone aware: the configured local schedule is converted to UTC, and daylight-saving gaps and
+/// overlaps are resolved deterministically.
+/// </summary>
 public static class Scheduler
 {
     private static readonly TimeSpan DefaultErrorDelay = TimeSpan.FromMinutes(5);
 
     private static readonly ConcurrentDictionary<string, TimeZoneInfo> _tzCache = new();
 
+    /// <summary>
+    /// Returns the delay to wait before the next execution of <paramref name="config"/>.
+    /// </summary>
+    /// <param name="config">Job whose schedule is evaluated.</param>
+    /// <returns>
+    /// A non-negative delay. When the configuration cannot be evaluated (for example an unparsable
+    /// <see cref="JobConfig.TimeOfDay"/>), a five-minute retry delay is returned instead of throwing, so a single bad
+    /// job never stops the manager.
+    /// </returns>
     public static TimeSpan GetNextDelay(JobConfig config)
     {
         try
@@ -89,7 +103,7 @@ public static class Scheduler
             localTime = localTime.AddHours(1);
         }
 
-        // ambiguous time (fall back) → chọn offset sớm hơn
+        // Ambiguous local time (daylight saving fall-back): pick the earlier offset so the job runs in the first pass.
         if (tz.IsAmbiguousTime(localTime))
         {
             var offsets = tz.GetAmbiguousTimeOffsets(localTime);

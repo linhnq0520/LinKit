@@ -17,6 +17,10 @@ public sealed class LinKitQueryProvider<TEntity> : ILinKitAsyncQueryProvider
     private readonly DatabaseDialect _dialect;
     private readonly IReadOnlyDictionary<string, string> _propertyToColumn;
 
+    /// <summary>Creates the provider.</summary>
+    /// <param name="fluentQueryFactory">Creates the fluent query that receives the translated clauses.</param>
+    /// <param name="dialect">Dialect used to quote identifiers.</param>
+    /// <param name="propertyToColumn">Maps CLR property names to physical column names.</param>
     public LinKitQueryProvider(
         Func<IFluentQuery<TEntity>> fluentQueryFactory,
         DatabaseDialect dialect,
@@ -28,11 +32,15 @@ public sealed class LinKitQueryProvider<TEntity> : ILinKitAsyncQueryProvider
         _propertyToColumn = propertyToColumn;
     }
 
+    /// <inheritdoc/>
     public IQueryable CreateQuery(Expression expression)
     {
         return new LinKitQueryable<TEntity>(this, expression);
     }
 
+    /// <inheritdoc/>
+    /// <exception cref="NotSupportedException">The element type differs from <typeparamref name="TEntity"/>.</exception>
+    /// <remarks>Projection to a custom type is rejected; materialise the entity first and project in memory.</remarks>
     public IQueryable<TElement> CreateQuery<TElement>(Expression expression)
     {
         if (typeof(TElement) == typeof(TEntity))
@@ -45,11 +53,14 @@ public sealed class LinKitQueryProvider<TEntity> : ILinKitAsyncQueryProvider
         );
     }
 
+    /// <inheritdoc/>
     public object? Execute(Expression expression)
     {
         return Execute<object?>(expression);
     }
 
+    /// <inheritdoc/>
+    /// <remarks>Blocks on the asynchronous path; prefer <see cref="ExecuteAsync{TResult}"/> from asynchronous code.</remarks>
     public TResult Execute<TResult>(Expression expression)
     {
         // IQueryable<T> is synchronously enumerable, so a synchronous terminal has to block. ASP.NET Core and
@@ -58,6 +69,7 @@ public sealed class LinKitQueryProvider<TEntity> : ILinKitAsyncQueryProvider
         return ExecuteAsync<TResult>(expression, CancellationToken.None).GetAwaiter().GetResult();
     }
 
+    /// <inheritdoc/>
     public async Task<TResult> ExecuteAsync<TResult>(
         Expression expression,
         CancellationToken ct = default
@@ -183,6 +195,7 @@ public sealed class LinKitQueryProvider<TEntity> : ILinKitAsyncQueryProvider
             _ => throw new InvalidOperationException("Sequence contains more than one element."),
         };
 
+    /// <inheritdoc/>
     public async Task<PagedResult<T>> ExecutePagedAsync<T>(
         Expression expression,
         int pageNumber,

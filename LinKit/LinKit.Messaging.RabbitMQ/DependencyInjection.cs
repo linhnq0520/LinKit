@@ -6,8 +6,19 @@ using Microsoft.Extensions.Options;
 
 namespace LinKit.Messaging.RabbitMQ;
 
+/// <summary>
+/// Registration helpers for the RabbitMQ transport adapters.
+/// </summary>
 public static class DependencyInjection
 {
+    /// <summary>
+    /// Registers the RabbitMQ producer and consumer adapters, binding <see cref="RabbitMqOptions"/> from configuration.
+    /// </summary>
+    /// <param name="services">Service collection to configure.</param>
+    /// <param name="configuration">Configuration root that contains the section.</param>
+    /// <param name="sectionName">Section name to bind; defaults to <c>RabbitMQ</c>.</param>
+    /// <returns>The same collection, to allow call chaining.</returns>
+    /// <exception cref="OptionsValidationException">The bound options are invalid; thrown on first resolution.</exception>
     public static IServiceCollection AddLinKitRabbitMQ(
         this IServiceCollection services,
         IConfiguration configuration,
@@ -40,6 +51,13 @@ public static class DependencyInjection
         return services;
     }
 
+    /// <summary>
+    /// Registers the RabbitMQ producer and consumer adapters with options configured in code.
+    /// </summary>
+    /// <param name="services">Service collection to configure.</param>
+    /// <param name="configure">Callback that sets the broker and delivery options.</param>
+    /// <returns>The same collection, to allow call chaining.</returns>
+    /// <exception cref="OptionsValidationException">The configured options are invalid; thrown on first resolution.</exception>
     public static IServiceCollection AddLinKitRabbitMQ(
         this IServiceCollection services,
         Action<RabbitMqOptions> configure

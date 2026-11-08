@@ -20,9 +20,17 @@ public class DefaultGrpcChannelProvider : IGrpcChannelProvider, IDisposable
     private long _useCounter;
     private int _disposed;
 
+    /// <summary>Creates a provider with the default ceiling of <see cref="DefaultMaxChannels"/> channels.</summary>
+    /// <param name="baseAddress">Absolute HTTP(S) endpoint shared by every client type.</param>
+    /// <exception cref="ArgumentException"><paramref name="baseAddress"/> is empty or whitespace.</exception>
     public DefaultGrpcChannelProvider(string baseAddress)
         : this(baseAddress, DefaultMaxChannels) { }
 
+    /// <summary>Creates a provider with an explicit channel ceiling.</summary>
+    /// <param name="baseAddress">Absolute HTTP(S) endpoint shared by every client type.</param>
+    /// <param name="maxChannels">Maximum number of cached channels before the least recently used one is evicted.</param>
+    /// <exception cref="ArgumentException"><paramref name="baseAddress"/> is empty or whitespace.</exception>
+    /// <exception cref="ArgumentOutOfRangeException"><paramref name="maxChannels"/> is not positive.</exception>
     public DefaultGrpcChannelProvider(string baseAddress, int maxChannels)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(baseAddress);
@@ -38,6 +46,9 @@ public class DefaultGrpcChannelProvider : IGrpcChannelProvider, IDisposable
     /// <summary>The channel-count ceiling; beyond it the least recently used channel is evicted.</summary>
     public int MaxChannels => _maxChannels;
 
+    /// <summary>Returns the channel for <typeparamref name="TClient"/>, creating or reviving it as needed.</summary>
+    /// <typeparam name="TClient">Generated gRPC client type.</typeparam>
+    /// <exception cref="ObjectDisposedException">The provider has already been disposed.</exception>
     public GrpcChannel GetChannelFor<TClient>()
         where TClient : ClientBase
     {
@@ -81,6 +92,7 @@ public class DefaultGrpcChannelProvider : IGrpcChannelProvider, IDisposable
         }
     }
 
+    /// <summary>Disposes every cached channel; the provider is unusable afterwards.</summary>
     public void Dispose()
     {
         if (Interlocked.Exchange(ref _disposed, 1) != 0)

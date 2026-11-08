@@ -1,8 +1,5 @@
 # LinKit.Messaging.Kafka
 
-[![NuGet Version](https://img.shields.io/nuget/v/LinKit.Messaging.Kafka.svg)](https://www.nuget.org/packages/LinKit.Messaging.Kafka/)
-[![NuGet Downloads](https://img.shields.io/nuget/dt/LinKit.Messaging.Kafka.svg)](https://www.nuget.org/packages/LinKit.Messaging.Kafka/)
-
 This package provides the Apache Kafka broker adapter for the messaging abstractions in `LinKit.Core`. Core source generation wires supported message declarations and consumers to this broker adapter.
 
 ## Prerequisites
@@ -37,6 +34,20 @@ Add a configuration section for your Kafka connection. The default section name 
 `GroupId` is required for consumer groups. `MaxProcessingAttempts` controls handler retries before publishing a failed record to `<source-topic>.dlq`; `0` retries indefinitely and can block progress on that partition. The destination topic must be provisioned/configured according to your Kafka cluster policy.
 
 `AddLinKitKafka` registers an `IValidateOptions<KafkaOptions>`, so configuration problems surface the first time `IOptions<KafkaOptions>.Value` is resolved (for a hosted consumer, during startup) as an `OptionsValidationException`. Validated: `BootstrapServers` and `GroupId` must not be blank, `BatchSize` must be positive, `LingerMs` and `MaxProcessingAttempts` must not be negative, and `DeadLetterTopicSuffix` must not be null.
+
+#### Configuration reference
+
+| Property                | Default                 | Purpose                                                                                                                           |
+| :---------------------- | :---------------------- | :-------------------------------------------------------------------------------------------------------------------------------- |
+| `BootstrapServers`      | `localhost:9092`        | Comma separated `host:port` list used to bootstrap cluster metadata.                                                              |
+| `GroupId`               | `linkit-consumer-group` | Consumer group that owns the committed offsets; each group reads the topic independently.                                         |
+| `LingerMs`              | `5`                     | Time to wait for more records before a batch is sent; higher values trade latency for throughput.                                 |
+| `BatchSize`             | `65536`                 | Maximum bytes batched per partition before a send is forced.                                                                      |
+| `CompressionType`       | `None`                  | Compression codec applied to produced batches.                                                                                    |
+| `AutoOffsetReset`       | `Earliest`              | Where to start reading when the group has no committed offset.                                                                    |
+| `EnableAutoCommit`      | `false`                 | Retained for configuration compatibility; LinKit disables broker auto-commit so offsets are committed after the handler succeeds. |
+| `MaxProcessingAttempts` | `5`                     | Handler attempts per record before it is dead-lettered; `0` retries forever and can block the partition.                          |
+| `DeadLetterTopicSuffix` | `.dlq`                  | Appended to the source topic name to build the dead-letter topic; use an empty string to disable the suffix.                      |
 
 LinKit commits Kafka offsets only after the generated message handler completes successfully. Failed handler calls are sought back to the failed record and retried with a delay; this is at-least-once delivery, so handlers should be idempotent. `EnableAutoCommit` is retained for configuration compatibility, but LinKit disables broker auto-commit to avoid acknowledging unprocessed records.
 
@@ -80,3 +91,7 @@ host.Run();
 ```
 
 `AddLinKitKafka` registers the `IBrokerProducer` and `IBrokerConnection` implementations. Offset commits occur after successful handler completion; failures seek back and retry. Delivery is at-least-once, so consumers should be idempotent. Publishing to a DLQ and committing the source offset are not one atomic transaction; a crash can duplicate a DLQ record.
+
+## License
+
+MIT. See the [repository license](https://github.com/linhnq0520/LinKit/blob/main/LICENSE).

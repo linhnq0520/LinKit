@@ -255,7 +255,8 @@ using LinKit.Core.Abstractions;"
     }
 }
 
-// Các record class giữ nguyên không đổi
+// Aggregated service metadata. The record shapes are intentionally kept as they are because the equality and
+// collection behaviour is relied upon by the incremental pipeline caching.
 internal record AllServicesInfo
 {
     public IReadOnlyList<CqrsServiceInfo> CqrsServices { get; init; } = [];

@@ -7,9 +7,13 @@ using System.Threading.Tasks;
 
 namespace LinKit.Data;
 
+/// <summary>Join flavor supported by <see cref="Query{TResult}.Join{TEntity}"/>.</summary>
 public enum JoinKind
 {
+    /// <summary>Keeps only rows that have a match on both sides.</summary>
     Inner,
+
+    /// <summary>Keeps every row of the left side, filling unmatched right columns with <c>NULL</c>.</summary>
     Left,
 }
 
@@ -30,27 +34,54 @@ internal sealed record SelectPlan(
     bool Distinct = false
 );
 
+/// <summary>Implemented by generated projections so a query can select a subset of columns.</summary>
+/// <typeparam name="T">Row type produced by the projection.</typeparam>
 public interface IProjection<T>
 {
+    /// <summary>Returns the materialised projection.</summary>
+    /// <returns>The projection itself.</returns>
     Projection<T> Build();
 }
 
+/// <summary>
+/// Column list plus row reader that together describe what a query selects.
+/// </summary>
+/// <typeparam name="T">Row type produced by the projection.</typeparam>
+/// <param name="columns">Expressions rendered as the <c>SELECT</c> list.</param>
+/// <param name="read">Maps the current row of the reader to <typeparamref name="T"/>.</param>
 public sealed class Projection<T>(IReadOnlyList<SqlExpression> columns, Func<DbDataReader, T> read)
     : IProjection<T>
 {
+    /// <summary>Expressions rendered as the <c>SELECT</c> list, in result order.</summary>
     public IReadOnlyList<SqlExpression> Columns { get; } = columns.ToArray();
+
+    /// <summary>Reads one row of the result set.</summary>
     public Func<DbDataReader, T> Read { get; } = read;
 
+    /// <summary>Returns the materialised projection.</summary>
+    /// <returns>The projection itself.</returns>
     public Projection<T> Build() => this;
 }
 
+/// <summary>
+/// Base class of the generated table accessors: schema metadata, SQL alias and the default projection of an entity.
+/// </summary>
+/// <typeparam name="TEntity">Entity type.</typeparam>
 public abstract class Table<TEntity>
     where TEntity : class
 {
+    /// <summary>Physical table and column layout of the entity.</summary>
     public TableModel Model { get; }
+
+    /// <summary>Alias used for this occurrence of the table in the generated SQL.</summary>
     public string Alias { get; }
+
+    /// <summary>Default projection that selects every mapped column.</summary>
     public abstract Projection<TEntity> Projection { get; }
 
+    /// <summary>Creates a table accessor for the given model and alias.</summary>
+    /// <param name="model">Physical table layout.</param>
+    /// <param name="alias">Alias used in the generated SQL; must not be blank.</param>
     protected Table(TableModel model, string alias)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(alias);
@@ -59,6 +90,11 @@ public abstract class Table<TEntity>
     }
 }
 
+/// <summary>
+/// Immutable query builder that renders SQL for one entity or projection and executes it on a
+/// <see cref="DataSession"/>. Every clause returns a new instance, so a query can be safely reused as a base.
+/// </summary>
+/// <typeparam name="TResult">Row type the query produces.</typeparam>
 public sealed class Query<TResult>
 {
     private readonly DataSession _session;
@@ -99,6 +135,10 @@ public sealed class Query<TResult>
             );
     }
 
+    /// <summary>Adds a filter; repeated calls are combined with <c>AND</c>.</summary>
+    /// <param name="predicate">Condition to add.</param>
+    /// <returns>A new query with the filter applied.</returns>
+    /// <exception cref="NotSupportedException">Pagination was already applied.</exception>
     public Query<TResult> Where(Predicate predicate)
     {
         BeforePagination();
@@ -112,6 +152,14 @@ public sealed class Query<TResult>
         );
     }
 
+    /// <summary>Joins another table.</summary>
+    /// <typeparam name="TEntity">Entity type of the joined table.</typeparam>
+    /// <param name="table">Table to join, carrying the alias used in the join condition.</param>
+    /// <param name="on">Join condition; put the tenant and soft-delete predicates of the joined table here so they
+    /// are pushed into <c>ON</c> and keep a left join semantics.</param>
+    /// <param name="kind">Join flavor; defaults to <see cref="JoinKind.Inner"/>.</param>
+    /// <returns>A new query with the join applied.</returns>
+    /// <exception cref="ArgumentOutOfRangeException"><paramref name="kind"/> is not a defined value.</exception>
     public Query<TResult> Join<TEntity>(
         Table<TEntity> table,
         Predicate on,
@@ -130,6 +178,11 @@ public sealed class Query<TResult>
         );
     }
 
+    /// <summary>Replaces the selected columns and the row reader.</summary>
+    /// <typeparam name="T">Row type produced by the projection.</typeparam>
+    /// <param name="projection">Columns to select and the reader that maps them.</param>
+    /// <returns>A new query that produces <typeparamref name="T"/>.</returns>
+    /// <exception cref="ArgumentException">The projection selects no column.</exception>
     public Query<T> Select<T>(Projection<T> projection)
     {
         BeforePagination();
@@ -145,12 +198,19 @@ public sealed class Query<TResult>
         );
     }
 
+    /// <summary>Replaces the ordering.</summary>
+    /// <param name="order">Ordering terms, in priority order.</param>
+    /// <returns>A new query with the ordering applied.</returns>
     public Query<TResult> OrderBy(params Ordering[] order)
     {
         BeforePagination();
         return With(_plan with { Order = order.ToArray() });
     }
 
+    /// <summary>Appends a tie-breaker ordering.</summary>
+    /// <param name="order">Ordering term added after the existing ones.</param>
+    /// <returns>A new query with the extra ordering.</returns>
+    /// <exception cref="InvalidOperationException">No ordering was applied yet.</exception>
     public Query<TResult> ThenBy(Ordering order)
     {
         BeforePagination();
@@ -159,12 +219,19 @@ public sealed class Query<TResult>
         return With(_plan with { Order = [.. _plan.Order, order] });
     }
 
+    /// <summary>Groups by the given expressions.</summary>
+    /// <param name="columns">Grouping key expressions.</param>
+    /// <returns>A new query with the grouping applied.</returns>
     public Query<TResult> GroupBy(params SqlExpression[] columns)
     {
         BeforePagination();
         return With(_plan with { Group = columns.Select(column => column.Node).ToArray() });
     }
 
+    /// <summary>Filters the grouped rows; repeated calls are combined with <c>AND</c>.</summary>
+    /// <param name="predicate">Condition applied to the groups.</param>
+    /// <returns>A new query with the filter applied.</returns>
+    /// <exception cref="InvalidOperationException">No grouping was applied yet.</exception>
     public Query<TResult> Having(Predicate predicate)
     {
         BeforePagination();
@@ -180,12 +247,19 @@ public sealed class Query<TResult>
         );
     }
 
+    /// <summary>Selects distinct rows.</summary>
+    /// <returns>A new query that emits <c>SELECT DISTINCT</c>.</returns>
     public Query<TResult> Distinct()
     {
         BeforePagination();
         return With(_plan with { Distinct = true });
     }
 
+    /// <summary>Skips rows; call it before <see cref="Take"/>.</summary>
+    /// <param name="count">Rows to skip; accumulated across calls.</param>
+    /// <returns>A new query with the offset applied.</returns>
+    /// <exception cref="ArgumentOutOfRangeException"><paramref name="count"/> is negative.</exception>
+    /// <exception cref="NotSupportedException"><see cref="Take"/> was already applied.</exception>
     public Query<TResult> Skip(int count)
     {
         ArgumentOutOfRangeException.ThrowIfNegative(count);
@@ -196,12 +270,18 @@ public sealed class Query<TResult>
         return With(_plan with { Skip = checked((_plan.Skip ?? 0) + count) });
     }
 
+    /// <summary>Limits the number of returned rows.</summary>
+    /// <param name="count">Maximum rows; the smallest requested value wins.</param>
+    /// <returns>A new query with the limit applied.</returns>
+    /// <exception cref="ArgumentOutOfRangeException"><paramref name="count"/> is negative.</exception>
     public Query<TResult> Take(int count)
     {
         ArgumentOutOfRangeException.ThrowIfNegative(count);
         return With(_plan with { Take = Math.Min(_plan.Take ?? int.MaxValue, count) });
     }
 
+    /// <summary>Turns the query into an <c>EXISTS</c> predicate so it can be used inside another query.</summary>
+    /// <returns>A predicate that is true when the query returns at least one row.</returns>
     public Predicate Exists() =>
         new(
             new ExistsNode(
@@ -213,18 +293,30 @@ public sealed class Query<TResult>
             )
         );
 
+    /// <summary>Renders the <c>SELECT</c> statement without executing it.</summary>
+    /// <returns>The command text and its bound arguments.</returns>
     public CommandSpec ToCommand()
     {
         var writer = new SqlWriter(_session.Dialect, _session.TenantId);
         return new(writer.Select(_plan), writer.Arguments);
     }
 
+    /// <summary>Executes the query and materialises every row.</summary>
+    /// <param name="ct">Token used to cancel the command.</param>
+    /// <returns>The materialised rows.</returns>
     public Task<List<TResult>> ToListAsync(CancellationToken ct = default) =>
         _session.QueryAsync(ToCommand(), _read, ct);
 
+    /// <summary>Executes the query and streams the rows without buffering the result set.</summary>
+    /// <param name="ct">Token used to cancel the enumeration.</param>
+    /// <returns>The rows in result order.</returns>
     public IAsyncEnumerable<TResult> StreamAsync(CancellationToken ct = default) =>
         _session.StreamAsync(ToCommand(), _read, ct);
 
+    /// <summary>Renders the set-based <c>UPDATE</c> for the rows this query matches.</summary>
+    /// <param name="assignments">Column assignments to apply.</param>
+    /// <param name="expectedVersion">Original concurrency version, or <see langword="null"/> to skip the check.</param>
+    /// <returns>The command text and its bound arguments.</returns>
     public CommandSpec UpdateCommand(
         IReadOnlyList<Assignment> assignments,
         long? expectedVersion = null
@@ -234,18 +326,30 @@ public sealed class Query<TResult>
         return new(writer.Mutate(_plan, assignments, false, expectedVersion), writer.Arguments);
     }
 
+    /// <summary>Renders the set-based <c>DELETE</c> for the rows this query matches.</summary>
+    /// <param name="expectedVersion">Original concurrency version, or <see langword="null"/> to skip the check.</param>
+    /// <returns>The command text and its bound arguments.</returns>
     public CommandSpec DeleteCommand(long? expectedVersion = null)
     {
         var writer = new SqlWriter(_session.Dialect, _session.TenantId);
         return new(writer.Mutate(_plan, [], true, expectedVersion), writer.Arguments);
     }
 
+    /// <summary>Updates every matching row in one statement.</summary>
+    /// <param name="assignments">Column assignments to apply.</param>
+    /// <param name="expectedVersion">Original concurrency version, or <see langword="null"/> to skip the check.</param>
+    /// <param name="ct">Token used to cancel the command.</param>
+    /// <returns>The number of affected rows.</returns>
     public Task<int> ExecuteUpdateAsync(
         IReadOnlyList<Assignment> assignments,
         long? expectedVersion = null,
         CancellationToken ct = default
     ) => _session.ExecuteAsync(UpdateCommand(assignments, expectedVersion), ct);
 
+    /// <summary>Deletes every matching row in one statement, honoring soft delete when the entity declares it.</summary>
+    /// <param name="expectedVersion">Original concurrency version, or <see langword="null"/> to skip the check.</param>
+    /// <param name="ct">Token used to cancel the command.</param>
+    /// <returns>The number of affected rows.</returns>
     public Task<int> ExecuteDeleteAsync(
         long? expectedVersion = null,
         CancellationToken ct = default
@@ -287,6 +391,10 @@ public sealed class Query<TResult>
     public Task<TResult?> FirstOrDefaultAsync(CancellationToken ct = default) =>
         _session.QueryFirstAsync(Take(1).ToCommand(), _read, ct);
 
+    /// <summary>Returns the first row.</summary>
+    /// <param name="ct">Token used to cancel the command.</param>
+    /// <returns>The first row.</returns>
+    /// <exception cref="InvalidOperationException">The query returned no row.</exception>
     public async Task<TResult> FirstAsync(CancellationToken ct = default)
     {
         var item = await _session
@@ -314,6 +422,10 @@ public sealed class Query<TResult>
         };
     }
 
+    /// <summary>Returns the only row.</summary>
+    /// <param name="ct">Token used to cancel the command.</param>
+    /// <returns>The single row.</returns>
+    /// <exception cref="InvalidOperationException">The query returned no row, or more than one.</exception>
     public async Task<TResult> SingleAsync(CancellationToken ct = default)
     {
         var items = await _session
@@ -365,34 +477,67 @@ public sealed class Query<TResult>
         return value is null ? default : DbValues.ConvertTo<TValue>(value);
     }
 
+    /// <summary>Returns the sum of the expression over the matched rows.</summary>
+    /// <param name="expression">Numeric expression to add up.</param>
+    /// <param name="ct">Token used to cancel the command.</param>
+    /// <returns>The sum, or <see langword="null"/> when no row matches.</returns>
     public Task<decimal?> SumAsync(
         SqlExpression<decimal> expression,
         CancellationToken ct = default
     ) => ScalarAsync(Sql.Sum(expression), ct);
 
+    /// <summary>Returns the average of the expression over the matched rows.</summary>
+    /// <param name="expression">Numeric expression to average.</param>
+    /// <param name="ct">Token used to cancel the command.</param>
+    /// <returns>The average, or <see langword="null"/> when no row matches.</returns>
     public Task<decimal?> AverageAsync(
         SqlExpression<decimal> expression,
         CancellationToken ct = default
     ) => ScalarAsync(Sql.Average(expression), ct);
 
+    /// <summary>Returns the smallest value of the expression over the matched rows.</summary>
+    /// <typeparam name="TValue">Value type of the expression.</typeparam>
+    /// <param name="expression">Expression to aggregate.</param>
+    /// <param name="ct">Token used to cancel the command.</param>
+    /// <returns>The minimum, or <see langword="null"/> when no row matches.</returns>
     public Task<TValue?> MinAsync<TValue>(
         SqlExpression<TValue> expression,
         CancellationToken ct = default
     )
         where TValue : struct => ScalarAsync(Sql.Min(expression), ct);
 
+    /// <summary>Returns the largest value of the expression over the matched rows.</summary>
+    /// <typeparam name="TValue">Value type of the expression.</typeparam>
+    /// <param name="expression">Expression to aggregate.</param>
+    /// <param name="ct">Token used to cancel the command.</param>
+    /// <returns>The maximum, or <see langword="null"/> when no row matches.</returns>
     public Task<TValue?> MaxAsync<TValue>(
         SqlExpression<TValue> expression,
         CancellationToken ct = default
     )
         where TValue : struct => ScalarAsync(Sql.Max(expression), ct);
 
+    /// <summary>Returns the lexicographic minimum of a string expression.</summary>
+    /// <param name="expression">String expression to aggregate.</param>
+    /// <param name="ct">Token used to cancel the command.</param>
+    /// <returns>The minimum, or <see langword="null"/> when no row matches.</returns>
     public Task<string?> MinAsync(ISqlValue<string> expression, CancellationToken ct = default) =>
         ScalarAsync(Sql.Min(expression), ct);
 
+    /// <summary>Returns the lexicographic maximum of a string expression.</summary>
+    /// <param name="expression">String expression to aggregate.</param>
+    /// <param name="ct">Token used to cancel the command.</param>
+    /// <returns>The maximum, or <see langword="null"/> when no row matches.</returns>
     public Task<string?> MaxAsync(ISqlValue<string> expression, CancellationToken ct = default) =>
         ScalarAsync(Sql.Max(expression), ct);
 
+    /// <summary>Runs the count and the page query and returns them together.</summary>
+    /// <param name="pageNumber">One-based page number; values below one are clamped to the first page.</param>
+    /// <param name="pageSize">Rows per page; values below one use 10.</param>
+    /// <param name="ct">Token used to cancel the commands.</param>
+    /// <returns>The page and the total row count.</returns>
+    /// <remarks>An empty result set skips the page query, and the offset is computed in 64-bit space so a very large
+    /// page number clamps to an empty page instead of overflowing.</remarks>
     public async Task<PagedResult<TResult>> ToPagedListAsync(
         int pageNumber,
         int pageSize,

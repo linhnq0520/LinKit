@@ -35,6 +35,11 @@ public sealed class HybridRedisCacheProvider : ICacheProvider, IDisposable
     private readonly ILogger _logger;
     private readonly SingleFlight<string> _flight = new(DefaultFlightMaxLifetime);
 
+    /// <summary>Creates the provider and, when <see cref="LinKitRedisOptions.Enabled"/> is set, its Redis connection pool.</summary>
+    /// <param name="options">Redis settings; defaults are used when omitted.</param>
+    /// <param name="timeProvider">Clock used for expiry checks; defaults to <see cref="TimeProvider.System"/>.</param>
+    /// <param name="loggerFactory">Optional logger factory for transient-failure warnings.</param>
+    /// <exception cref="ArgumentOutOfRangeException">The supplied options are structurally invalid.</exception>
     public HybridRedisCacheProvider(
         LinKitRedisOptions? options = null,
         TimeProvider? timeProvider = null,
@@ -60,6 +65,7 @@ public sealed class HybridRedisCacheProvider : ICacheProvider, IDisposable
 
     private void InvalidateFlight(string key) => _flight.Invalidate(key);
 
+    /// <inheritdoc/>
     public async ValueTask<T?> GetAsync<T>(
         string key,
         CancellationToken cancellationToken = default
@@ -157,6 +163,12 @@ public sealed class HybridRedisCacheProvider : ICacheProvider, IDisposable
         }
     }
 
+    /// <inheritdoc/>
+    /// <remarks>
+    /// Writes L1 first, then L2. When no TTL is supplied, <see cref="LinKitRedisOptions.DefaultTtl"/> is applied to both
+    /// layers. An L2 failure is logged and ignored so a Redis outage degrades to a local-only cache instead of
+    /// failing the caller.
+    /// </remarks>
     public async ValueTask SetAsync<T>(
         string key,
         T value,
@@ -231,6 +243,8 @@ public sealed class HybridRedisCacheProvider : ICacheProvider, IDisposable
         }
     }
 
+    /// <inheritdoc/>
+    /// <remarks>Removes the entry from both layers so a later read cannot resurrect it from L2.</remarks>
     public async ValueTask RemoveAsync(string key, CancellationToken cancellationToken = default)
     {
         InvalidateFlight(key);
@@ -263,6 +277,12 @@ public sealed class HybridRedisCacheProvider : ICacheProvider, IDisposable
         return removed;
     }
 
+    /// <inheritdoc/>
+    /// <remarks>
+    /// Concurrent misses for the same key are single-flighted across both layers: after the flight starts, L2 is
+    /// re-checked so a value written by another process is reused instead of recomputed. A result produced after a
+    /// concurrent invalidation is not cached.
+    /// </remarks>
     public ValueTask<T> GetOrCreateAsync<T>(
         string key,
         Func<CancellationToken, Task<T>> factory,
@@ -363,6 +383,7 @@ public sealed class HybridRedisCacheProvider : ICacheProvider, IDisposable
         return LinKitMessageJson.Deserialize<T>(bytes);
     }
 
+    /// <summary>Disposes the Redis connection pool. The L1 layer holds no unmanaged resources.</summary>
     public void Dispose()
     {
         _redis?.Dispose();

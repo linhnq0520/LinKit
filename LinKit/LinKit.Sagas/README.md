@@ -1,7 +1,5 @@
 # LinKit.Sagas
 
-[![NuGet](https://img.shields.io/nuget/v/LinKit.Sagas.svg)](https://www.nuget.org/packages/LinKit.Sagas/)
-
 `LinKit.Sagas` provides saga state/step contracts, a coordinator for one explicitly supplied step at a time, and a replaceable repository abstraction.
 
 > The default repository is in-memory and volatile. This package does not provide a durable event log, distributed locking, or exactly-once execution.

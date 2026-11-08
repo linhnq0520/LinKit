@@ -9,51 +9,120 @@ using System.Threading.Tasks;
 
 namespace LinKit.Data;
 
+/// <summary>
+/// Source-generated bridge between an entity and its physical table. One instance exists per entity type and is
+/// shared by every repository, so the mapping stays reflection free.
+/// </summary>
+/// <typeparam name="TEntity">Entity type.</typeparam>
+/// <typeparam name="TKey">Primary key type.</typeparam>
 public abstract class EntityMap<TEntity, TKey>
     where TEntity : class
 {
+    /// <summary>Physical table and column layout of the entity.</summary>
     public abstract TableModel Model { get; }
+
+    /// <summary>Materialises an entity from the current row of <paramref name="reader"/>.</summary>
+    /// <param name="reader">Reader positioned on the row to map.</param>
+    /// <returns>The mapped entity.</returns>
     public abstract TEntity Read(DbDataReader reader);
+
+    /// <summary>Returns the column values of the entity in <see cref="Model"/> column order.</summary>
+    /// <param name="entity">Entity to inspect.</param>
+    /// <returns>One value per column, indexed like <see cref="TableModel.Columns"/>.</returns>
     public abstract object?[] Values(TEntity entity);
+
+    /// <summary>Returns the primary key of the entity.</summary>
+    /// <param name="entity">Entity to inspect.</param>
+    /// <returns>The key value.</returns>
     public abstract TKey Key(TEntity entity);
+
+    /// <summary>Assigns a generated primary key back to the entity after an insert.</summary>
+    /// <param name="entity">Entity to update.</param>
+    /// <param name="value">Generated key value.</param>
     public abstract void SetKey(TEntity entity, object value);
+
+    /// <summary>Creates the table expression used by query building.</summary>
+    /// <param name="alias">Alias assigned to the table in the generated SQL.</param>
+    /// <returns>The table expression for the entity.</returns>
     public abstract Table<TEntity> Table(string alias);
 
+    /// <summary>Assigns the concurrency version after a successful write; a no-op for entities without one.</summary>
+    /// <param name="entity">Entity to update.</param>
+    /// <param name="value">New version value.</param>
     public virtual void SetVersion(TEntity entity, long value) { }
 
+    /// <summary>Assigns the tenant after a successful write; a no-op for entities that are not tenant scoped.</summary>
+    /// <param name="entity">Entity to update.</param>
+    /// <param name="value">Tenant identifier.</param>
     public virtual void SetTenant(TEntity entity, string value) { }
 }
 
+/// <summary>
+/// Default repository over a generated <see cref="EntityMap{TEntity, TKey}"/>. Add extra members through a partial
+/// class in the consuming project when the entity needs custom queries.
+/// </summary>
+/// <typeparam name="TEntity">Entity type.</typeparam>
+/// <typeparam name="TKey">Primary key type.</typeparam>
 public class Repository<TEntity, TKey>(DataSession session, EntityMap<TEntity, TKey> map)
     where TEntity : class
 {
+    /// <summary>Session the repository reads and writes through.</summary>
     public DataSession Session { get; } = session;
+
+    /// <summary>Generated mapping used to translate entities to rows and back.</summary>
     public EntityMap<TEntity, TKey> Mapping { get; } = map;
 
+    /// <summary>Starts a query over the entity table.</summary>
+    /// <returns>A query builder bound to <see cref="Session"/>.</returns>
     public Query<TEntity> Query() => Session.From(Mapping.Table("entity"));
 
+    /// <summary>Loads the entity with the given key.</summary>
+    /// <param name="key">Primary key value.</param>
+    /// <param name="ct">Token used to cancel the command.</param>
+    /// <returns>The entity, or <see langword="null"/> when no visible row matches.</returns>
     public Task<TEntity?> FindAsync(TKey key, CancellationToken ct = default) =>
         Query()
             .Where(new Column<TKey>("entity", Mapping.Model.Key).Equal(key))
             .SingleOrDefaultAsync(ct);
 
+    /// <summary>Alias of <see cref="FindAsync"/> kept for readability at call sites.</summary>
+    /// <param name="id">Primary key value.</param>
+    /// <param name="ct">Token used to cancel the command.</param>
+    /// <returns>The entity, or <see langword="null"/> when no visible row matches.</returns>
     public Task<TEntity?> GetByIdAsync(TKey id, CancellationToken ct = default) =>
         FindAsync(id, ct);
 
+    /// <summary>Reads an unfiltered page of rows.</summary>
+    /// <param name="skip">Rows to skip.</param>
+    /// <param name="take">Maximum rows to return.</param>
+    /// <param name="ct">Token used to cancel the command.</param>
+    /// <returns>The materialised rows.</returns>
     public Task<List<TEntity>> ListAsync(
         int skip = 0,
         int take = 100,
         CancellationToken ct = default
     ) => Query().Skip(skip).Take(take).ToListAsync(ct);
 
+    /// <summary>Reads one page together with the total count of the entity table.</summary>
+    /// <param name="pageNumber">One-based page number.</param>
+    /// <param name="pageSize">Rows per page.</param>
+    /// <param name="ct">Token used to cancel the commands.</param>
+    /// <returns>The page and the total row count.</returns>
     public Task<PagedResult<TEntity>> GetPagedAsync(
         int pageNumber,
         int pageSize,
         CancellationToken ct = default
     ) => Query().ToPagedListAsync(pageNumber, pageSize, ct);
 
+    /// <summary>Counts the visible rows.</summary>
+    /// <param name="ct">Token used to cancel the command.</param>
+    /// <returns>The row count.</returns>
     public Task<long> CountAsync(CancellationToken ct = default) => Query().CountAsync(ct);
 
+    /// <summary>Checks whether a visible row with the given key exists.</summary>
+    /// <param name="id">Primary key value.</param>
+    /// <param name="ct">Token used to cancel the command.</param>
+    /// <returns><see langword="true"/> when the row exists.</returns>
     public Task<bool> ExistsAsync(TKey id, CancellationToken ct = default) =>
         Query().Where(new Column<TKey>("entity", Mapping.Model.Key).Equal(id)).AnyAsync(ct);
 
@@ -141,6 +210,10 @@ public class Repository<TEntity, TKey>(DataSession session, EntityMap<TEntity, T
         return DeleteAsync(Mapping.Key(entity), ct);
     }
 
+    /// <summary>Deletes every row matching the predicate in one statement.</summary>
+    /// <param name="predicate">Condition that selects the rows.</param>
+    /// <param name="ct">Token used to cancel the command.</param>
+    /// <returns>The number of affected rows.</returns>
     public Task<int> DeleteWhereAsync(Predicate predicate, CancellationToken ct = default) =>
         Query().Where(predicate).ExecuteDeleteAsync(ct: ct);
 
@@ -180,6 +253,13 @@ public class Repository<TEntity, TKey>(DataSession session, EntityMap<TEntity, T
         return values;
     }
 
+    /// <summary>Builds the INSERT statement for one entity, including key retrieval and the tenant, version and
+    /// soft-delete guards.</summary>
+    /// <param name="entity">Entity to insert.</param>
+    /// <returns>The command to execute.</returns>
+    /// <exception cref="InvalidOperationException">A tenant is required but missing, the entity belongs to another
+    /// tenant, or the entity is soft deleted.</exception>
+    /// <exception cref="ArgumentException">A non-nullable column has no value.</exception>
     public CommandSpec InsertCommand(TEntity entity)
     {
         var values = WriteValues(entity, true);
@@ -238,6 +318,10 @@ public class Repository<TEntity, TKey>(DataSession session, EntityMap<TEntity, T
         return new(sql, writer.Arguments);
     }
 
+    /// <summary>Inserts one entity and writes the generated key, version and tenant back to it.</summary>
+    /// <param name="entity">Entity to insert.</param>
+    /// <param name="ct">Token used to cancel the command.</param>
+    /// <returns>The key of the inserted row.</returns>
     public async Task<TKey> InsertAsync(TEntity entity, CancellationToken ct = default)
     {
         var spec = InsertCommand(entity);
@@ -300,6 +384,12 @@ public class Repository<TEntity, TKey>(DataSession session, EntityMap<TEntity, T
         return string.Join(" AND ", conditions);
     }
 
+    /// <summary>Updates the entity by primary key, bumping its version when the entity has one.</summary>
+    /// <param name="entity">Entity carrying the new values and the original version.</param>
+    /// <param name="ct">Token used to cancel the command.</param>
+    /// <returns>A task that completes when the row is written.</returns>
+    /// <exception cref="DataConcurrencyException">The row was changed or removed by another writer.</exception>
+    /// <exception cref="NotSupportedException">The entity has no writable column.</exception>
     public async Task UpdateAsync(TEntity entity, CancellationToken ct = default)
     {
         var values = WriteValues(entity, false);
@@ -354,6 +444,12 @@ public class Repository<TEntity, TKey>(DataSession session, EntityMap<TEntity, T
             Mapping.SetVersion(entity, checked(version.Value + 1));
     }
 
+    /// <summary>Deletes the row with the given key, honoring optimistic concurrency and soft delete.</summary>
+    /// <param name="key">Primary key value.</param>
+    /// <param name="expectedVersion">Original concurrency version, or <see langword="null"/> to skip the check.</param>
+    /// <param name="ct">Token used to cancel the command.</param>
+    /// <returns>A task that completes when the row is deleted or marked as deleted.</returns>
+    /// <exception cref="DataConcurrencyException">No visible row matched the key and version.</exception>
     public async Task DeleteAsync(TKey key, long? expectedVersion, CancellationToken ct = default)
     {
         var writer = new SqlWriter(Session.Dialect, Session.TenantId);
@@ -378,6 +474,10 @@ public class Repository<TEntity, TKey>(DataSession session, EntityMap<TEntity, T
             );
     }
 
+    /// <summary>Deletes the row with the given key without a concurrency check.</summary>
+    /// <param name="key">Primary key value.</param>
+    /// <param name="ct">Token used to cancel the command.</param>
+    /// <returns>A task that completes when the row is deleted or marked as deleted.</returns>
     public Task DeleteAsync(TKey key, CancellationToken ct = default) => DeleteAsync(key, null, ct);
 
     private static IList<T> Materialize<T>(IEnumerable<T> source) =>
@@ -412,6 +512,10 @@ public class Repository<TEntity, TKey>(DataSession session, EntityMap<TEntity, T
         return name + " IS NULL";
     }
 
+    /// <summary>Inserts all entities using the configured batch size.</summary>
+    /// <param name="entities">Entities to insert.</param>
+    /// <param name="ct">Token used to cancel the commands.</param>
+    /// <returns>A task that completes when every row is written.</returns>
     public Task InsertRangeAsync(IEnumerable<TEntity> entities, CancellationToken ct = default) =>
         InsertRangeAsync(entities, Session.BatchSize, ct);
 
@@ -524,6 +628,10 @@ public class Repository<TEntity, TKey>(DataSession session, EntityMap<TEntity, T
         return new(sql, writer.Arguments);
     }
 
+    /// <summary>Updates all entities using the configured batch size.</summary>
+    /// <param name="entities">Entities carrying the new values and their original versions.</param>
+    /// <param name="ct">Token used to cancel the commands.</param>
+    /// <returns>A task that completes when every row is written.</returns>
     public Task UpdateRangeAsync(IEnumerable<TEntity> entities, CancellationToken ct = default) =>
         UpdateRangeAsync(entities, Session.BatchSize, ct);
 
@@ -724,6 +832,10 @@ public class Repository<TEntity, TKey>(DataSession session, EntityMap<TEntity, T
         return string.Join(", ", parts);
     }
 
+    /// <summary>Deletes all keys using the configured batch size.</summary>
+    /// <param name="ids">Keys of the rows to delete.</param>
+    /// <param name="ct">Token used to cancel the commands.</param>
+    /// <returns>A task that completes when every row is deleted or marked as deleted.</returns>
     public Task DeleteRangeAsync(IEnumerable<TKey> ids, CancellationToken ct = default) =>
         DeleteRangeAsync(ids, Session.BatchSize, ct);
 

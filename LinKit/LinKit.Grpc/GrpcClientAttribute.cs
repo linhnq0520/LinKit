@@ -19,6 +19,9 @@ public sealed class GrpcClientAttribute : Attribute
     /// </summary>
     public string MethodName { get; }
 
+    /// <summary>Creates the attribute.</summary>
+    /// <param name="grpcClientType">Generated gRPC client type that exposes the RPC method.</param>
+    /// <param name="methodName">Name of the unary RPC method to invoke, as declared in the proto service.</param>
     public GrpcClientAttribute(Type grpcClientType, string methodName)
     {
         GrpcClientType = grpcClientType;

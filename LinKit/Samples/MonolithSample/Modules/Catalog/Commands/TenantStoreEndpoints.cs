@@ -6,10 +6,11 @@ using LinKit.Tenancy;
 namespace MonolithSample.Modules.Catalog.Domain;
 
 /// <summary>
-/// Demo Entity áp dụng Multi-Tenancy tự động của LinKit.Data & LinKit.Tenancy.
-/// Khi có attribute [MultiTenant], mọi câu query qua DataSession sẽ tự động chèn WHERE tenant_id = @currentTenant!
+/// Sample entity using the automatic multi-tenancy support of LinKit.Data and LinKit.Tenancy.
+/// Because the type carries [MultiTenant], every query issued through DataSession appends
+/// <c>WHERE tenant_id = @currentTenant</c> automatically, and inserts fill the tenant column.
 /// </summary>
-[Table("catalog_tenant_stores", Comment = "Gian hàng được cô lập theo Tenant")]
+[Table("catalog_tenant_stores", Comment = "Stores isolated per tenant")]
 [MultiTenant("TenantId")]
 public class TenantStoreEntity
 {
@@ -25,8 +26,11 @@ public class TenantStoreEntity
     public bool IsActive { get; set; } = true;
 }
 
-// 1. Command tạo gian hàng
-[HttpPost("api/tenancy/stores", Summary = "Tạo gian hàng mới tự động gán Tenant ID hiện tại")]
+// 1. Command that creates a store and assigns the current tenant automatically.
+[HttpPost(
+    "api/tenancy/stores",
+    Summary = "Create a store and assign the current tenant automatically"
+)]
 public record CreateTenantStoreCommand(string StoreName) : ICommand<int>;
 
 [CqrsHandler]
@@ -53,8 +57,8 @@ public class CreateTenantStoreCommandHandler(
     }
 }
 
-// 2. Query lấy danh sách gian hàng (LinKit tự động lọc đúng tenant)
-[HttpGet("api/tenancy/stores", Summary = "Lấy danh sách gian hàng thuộc Tenant hiện tại")]
+// 2. Query that lists stores; LinKit filters them to the current tenant automatically.
+[HttpGet("api/tenancy/stores", Summary = "List the stores that belong to the current tenant")]
 public record GetMyTenantStoresQuery : IQuery<IReadOnlyList<TenantStoreEntity>>;
 
 [CqrsHandler]
@@ -68,7 +72,7 @@ public class GetMyTenantStoresQueryHandler(CatalogDataContext data, ITenantAcces
     {
         var currentTenantId = tenantAccessor.Current?.TenantId ?? "tenant_default";
 
-        // Lọc theo Tenant ID hiện tại
+        // The tenant filter is applied by the framework; this predicate only narrows to active rows.
         return await data
             .TenantStoreEntity.Query()
             .Where(s => s.TenantId.Equal(currentTenantId) & s.IsActive.Equal(true))

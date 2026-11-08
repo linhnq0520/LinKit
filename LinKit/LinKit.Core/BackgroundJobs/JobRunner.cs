@@ -3,6 +3,13 @@ using Microsoft.Extensions.Logging;
 
 namespace LinKit.Core.BackgroundJobs;
 
+/// <summary>
+/// Runs one job on its schedule: computes the next delay with <see cref="Scheduler"/>, waits, then executes the job in a
+/// fresh dependency injection scope. Concurrency is bounded by <see cref="JobConfig.MaxParallel"/>. Instances are created
+/// and owned by <see cref="BackgroundJobManager"/>.
+/// </summary>
+/// <param name="config">Configuration of the job this runner owns.</param>
+/// <param name="sp">Root provider used to create one scope per execution.</param>
 public class JobRunner(JobConfig config, IServiceProvider sp)
 {
     private readonly IServiceProvider _serviceProvider = sp;
@@ -11,14 +18,26 @@ public class JobRunner(JobConfig config, IServiceProvider sp)
     private Task? _runnerTask;
     private SemaphoreSlim? _parallelLimiter;
 
+    /// <summary>
+    /// Gets the configuration this runner was created with. <see cref="BackgroundJobManager"/> compares it with the new
+    /// configuration to decide whether the runner must be restarted.
+    /// </summary>
     public JobConfig CurrentConfig { get; } = config;
 
+    /// <summary>
+    /// Starts the scheduling loop. Calling it twice without <see cref="Stop"/> creates a second loop, so only the manager
+    /// should call it.
+    /// </summary>
     public void Start()
     {
         _parallelLimiter = new SemaphoreSlim(CurrentConfig.MaxParallel);
         _runnerTask = Task.Run(RunAsync);
     }
 
+    /// <summary>
+    /// Cancels the scheduling loop and waits up to five seconds for the current iteration to finish, then releases the
+    /// concurrency limiter. Safe to call when the runner has already stopped.
+    /// </summary>
     public void Stop()
     {
         _cts.Cancel();
@@ -36,6 +55,14 @@ public class JobRunner(JobConfig config, IServiceProvider sp)
         }
     }
 
+    /// <summary>
+    /// Runs the job immediately, waiting for a free slot when the job already runs <see cref="JobConfig.MaxParallel"/>
+    /// times.
+    /// </summary>
+    /// <param name="embeddedDataOverride">Payload for this run, or <see langword="null"/> to use the configured payload.</param>
+    /// <param name="cancellationToken">Token that cancels the wait and the run.</param>
+    /// <returns>A task that completes when the run finishes.</returns>
+    /// <exception cref="InvalidOperationException">The runner has not been started or has already been stopped.</exception>
     public async Task TriggerNowAsync(
         string? embeddedDataOverride,
         CancellationToken cancellationToken = default

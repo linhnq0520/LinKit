@@ -2,10 +2,10 @@
   <PropertyGroup>
     <TargetFrameworks>net8.0;net9.0;net10.0</TargetFrameworks>
     <PackageId>LinKit.Outbox.Data</PackageId>
-    <Version>2.0.0</Version>
+    <Version>2.0.1</Version>
     <Description>Provider-neutral ADO.NET durable stores for LinKit Outbox and Inbox with dialect-aware atomic claiming.</Description>
     <PackageTags>linkit;outbox;inbox;ado.net;durable;aot</PackageTags>
-    <PackageReleaseNotes>v2.0.0: Dialect-aware atomic claim (FOR UPDATE SKIP LOCKED / READPAST / OUTPUT) so multiple publisher instances no longer double-publish, and dead-lettered messages are excluded from polling. Full documentation &amp; release notes: https://quoclinh.id.vn/docs/linkit</PackageReleaseNotes>
+    <PackageReleaseNotes>v2.0.1: documentation and packaging patch - every public member now carries XML documentation (CS1591 is enforced as a build error) and the README was reviewed for accuracy. Previous release: v2.0.0 - Dialect-aware atomic claim (FOR UPDATE SKIP LOCKED / READPAST / OUTPUT) so multiple publisher instances no longer double-publish, and dead-lettered messages are excluded from polling. Full documentation &amp; release notes: https://quoclinh.id.vn/docs/linkit</PackageReleaseNotes>
   </PropertyGroup>
 
   <ItemGroup>

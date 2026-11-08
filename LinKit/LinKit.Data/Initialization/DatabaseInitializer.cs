@@ -6,22 +6,35 @@ using Microsoft.Extensions.Logging;
 
 namespace LinKit.Data.Initialization;
 
+/// <summary>
+/// Creates the database and, when configured, its application user, so schema synchronization can run against it.
+/// </summary>
+/// <remarks>
+/// SQLite creates the file on connect, so only the file path is prepared there. Server engines use
+/// <see cref="LinKitDataOptions.AdminConnectionString"/> to issue the administrative DDL.
+/// </remarks>
 public class DatabaseInitializer : IDatabaseInitializer
 {
     private readonly IDbConnectionFactory _connectionFactory;
     private readonly LinKitDataOptions _options;
     private readonly ILogger<DatabaseInitializer>? _logger;
 
+    /// <summary>Creates the initializer.</summary>
+    /// <param name="connectionFactory">Factory used to reach the server.</param>
+    /// <param name="options">Options that decide whether the database and its user are provisioned.</param>
+    /// <param name="logger">Optional logger that records the executed steps.</param>
     public DatabaseInitializer(
         IDbConnectionFactory connectionFactory,
         LinKitDataOptions options,
-        ILogger<DatabaseInitializer>? logger = null)
+        ILogger<DatabaseInitializer>? logger = null
+    )
     {
         _connectionFactory = connectionFactory;
         _options = options;
         _logger = logger;
     }
 
+    /// <inheritdoc/>
     public async Task InitializeAsync(CancellationToken ct = default)
     {
         if (!_options.EnsureDatabaseCreated && !_options.UserProvisioning.Enabled)
@@ -48,7 +61,9 @@ public class DatabaseInitializer : IDatabaseInitializer
 
         if (string.IsNullOrWhiteSpace(originalConnStr))
         {
-            _logger?.LogWarning("Connection string is empty or not provided. Skipping database initialization.");
+            _logger?.LogWarning(
+                "Connection string is empty or not provided. Skipping database initialization."
+            );
             return;
         }
 
@@ -57,7 +72,9 @@ public class DatabaseInitializer : IDatabaseInitializer
 
         if (string.IsNullOrWhiteSpace(targetDbName))
         {
-            _logger?.LogDebug("No target database name specified in connection string. Skipping database initialization.");
+            _logger?.LogDebug(
+                "No target database name specified in connection string. Skipping database initialization."
+            );
             return;
         }
 
@@ -81,7 +98,9 @@ public class DatabaseInitializer : IDatabaseInitializer
                 break;
 
             case DatabaseDialect.Oracle:
-                _logger?.LogInformation("Oracle dialect: Database creation is managed via PDB or Schema users.");
+                _logger?.LogInformation(
+                    "Oracle dialect: Database creation is managed via PDB or Schema users."
+                );
                 break;
         }
     }
@@ -121,13 +140,16 @@ public class DatabaseInitializer : IDatabaseInitializer
         DbConnectionStringBuilder builder,
         string? dbKey,
         string targetDbName,
-        CancellationToken ct)
+        CancellationToken ct
+    )
     {
         // Don't attempt to create system databases
-        if (targetDbName.Equals("master", StringComparison.OrdinalIgnoreCase) ||
-            targetDbName.Equals("tempdb", StringComparison.OrdinalIgnoreCase) ||
-            targetDbName.Equals("model", StringComparison.OrdinalIgnoreCase) ||
-            targetDbName.Equals("msdb", StringComparison.OrdinalIgnoreCase))
+        if (
+            targetDbName.Equals("master", StringComparison.OrdinalIgnoreCase)
+            || targetDbName.Equals("tempdb", StringComparison.OrdinalIgnoreCase)
+            || targetDbName.Equals("model", StringComparison.OrdinalIgnoreCase)
+            || targetDbName.Equals("msdb", StringComparison.OrdinalIgnoreCase)
+        )
         {
             return;
         }
@@ -140,7 +162,10 @@ public class DatabaseInitializer : IDatabaseInitializer
         }
         else
         {
-            var masterBuilder = new DbConnectionStringBuilder { ConnectionString = builder.ConnectionString };
+            var masterBuilder = new DbConnectionStringBuilder
+            {
+                ConnectionString = builder.ConnectionString,
+            };
             if (!string.IsNullOrEmpty(dbKey))
             {
                 masterBuilder[dbKey] = "master";
@@ -176,8 +201,12 @@ public class DatabaseInitializer : IDatabaseInitializer
 
                 if (!exists)
                 {
-                    _logger?.LogInformation("Creating SQL Server database '{Database}'...", targetDbName);
-                    var sql = @"
+                    _logger?.LogInformation(
+                        "Creating SQL Server database '{Database}'...",
+                        targetDbName
+                    );
+                    var sql =
+                        @"
 DECLARE @sql NVARCHAR(MAX) = N'CREATE DATABASE ' + QUOTENAME(@dbName);
 EXEC (@sql);";
 
@@ -189,14 +218,20 @@ EXEC (@sql);";
                     cmd.Parameters.Add(param);
 
                     await cmd.ExecuteNonQueryAsync(ct);
-                    _logger?.LogInformation("SQL Server database '{Database}' created successfully.", targetDbName);
+                    _logger?.LogInformation(
+                        "SQL Server database '{Database}' created successfully.",
+                        targetDbName
+                    );
 
                     // Allow brief moment for SQL Server to set database to ONLINE status
                     await Task.Delay(300, ct);
                 }
                 else
                 {
-                    _logger?.LogDebug("SQL Server database '{Database}' already exists.", targetDbName);
+                    _logger?.LogDebug(
+                        "SQL Server database '{Database}' already exists.",
+                        targetDbName
+                    );
                 }
             }
             catch (Exception ex)
@@ -204,20 +239,36 @@ EXEC (@sql);";
                 // Fallback check: if master was inaccessible (e.g. cloud restricted user), test direct connection
                 if (await CanConnectDirectlyAsync(ct))
                 {
-                    _logger?.LogDebug("Direct connection to target database succeeded. Skipping master creation.");
+                    _logger?.LogDebug(
+                        "Direct connection to target database succeeded. Skipping master creation."
+                    );
                     return;
                 }
 
-                _logger?.LogError(ex, "Failed to auto-create SQL Server database '{Database}'.", targetDbName);
+                _logger?.LogError(
+                    ex,
+                    "Failed to auto-create SQL Server database '{Database}'.",
+                    targetDbName
+                );
                 throw new InvalidOperationException(
-                    $"Failed to auto-create SQL Server database '{targetDbName}'. Please ensure connection credentials have appropriate permissions on 'master' or set options.AdminConnectionString. Error: {ex.Message}", ex);
+                    $"Failed to auto-create SQL Server database '{targetDbName}'. Please ensure connection credentials have appropriate permissions on 'master' or set options.AdminConnectionString. Error: {ex.Message}",
+                    ex
+                );
             }
         }
 
         // 2. User Provisioning
-        if (_options.UserProvisioning.Enabled && !string.IsNullOrWhiteSpace(_options.UserProvisioning.Username))
+        if (
+            _options.UserProvisioning.Enabled
+            && !string.IsNullOrWhiteSpace(_options.UserProvisioning.Username)
+        )
         {
-            await ProvisionSqlServerUserAsync(masterConnStr, targetDbName, _options.UserProvisioning, ct);
+            await ProvisionSqlServerUserAsync(
+                masterConnStr,
+                targetDbName,
+                _options.UserProvisioning,
+                ct
+            );
         }
     }
 
@@ -225,9 +276,11 @@ EXEC (@sql);";
         string masterConnStr,
         string targetDbName,
         DatabaseUserProvisioningOptions userOpt,
-        CancellationToken ct)
+        CancellationToken ct
+    )
     {
-        if (string.IsNullOrWhiteSpace(userOpt.Username)) return;
+        if (string.IsNullOrWhiteSpace(userOpt.Username))
+            return;
 
         if (userOpt.Username.Equals("sa", StringComparison.OrdinalIgnoreCase))
         {
@@ -237,7 +290,11 @@ EXEC (@sql);";
 
         try
         {
-            _logger?.LogInformation("Provisioning SQL Server login and user '{Username}' for database '{Database}'...", userOpt.Username, targetDbName);
+            _logger?.LogInformation(
+                "Provisioning SQL Server login and user '{Username}' for database '{Database}'...",
+                userOpt.Username,
+                targetDbName
+            );
 
             // 1. Server Login on master
             await using (var sysConn = _connectionFactory.CreateConnection())
@@ -245,7 +302,8 @@ EXEC (@sql);";
                 sysConn.ConnectionString = masterConnStr;
                 await sysConn.OpenAsync(ct);
 
-                var loginSql = @"
+                var loginSql =
+                    @"
 IF NOT EXISTS (SELECT 1 FROM sys.server_principals WHERE name = @username)
 BEGIN
     DECLARE @sqlLogin NVARCHAR(MAX) = N'CREATE LOGIN ' + QUOTENAME(@username) + N' WITH PASSWORD = ' + QUOTENAME(@password, '''') + N', CHECK_POLICY = OFF;';
@@ -276,7 +334,8 @@ END";
                     await targetConn.OpenAsync(ct);
                 }
 
-                var userSql = @"
+                var userSql =
+                    @"
 IF NOT EXISTS (SELECT 1 FROM sys.database_principals WHERE name = @username)
 BEGIN
     DECLARE @sqlUser NVARCHAR(MAX) = N'CREATE USER ' + QUOTENAME(@username) + N' FOR LOGIN ' + QUOTENAME(@username) + N';';
@@ -295,9 +354,11 @@ END";
 
                 foreach (var role in userOpt.Roles ?? new[] { "db_owner" })
                 {
-                    if (string.IsNullOrWhiteSpace(role)) continue;
+                    if (string.IsNullOrWhiteSpace(role))
+                        continue;
 
-                    var roleSql = @"
+                    var roleSql =
+                        @"
 DECLARE @sqlRole NVARCHAR(MAX) = N'ALTER ROLE ' + QUOTENAME(@role) + N' ADD MEMBER ' + QUOTENAME(@username) + N';';
 EXEC (@sqlRole);";
 
@@ -318,12 +379,19 @@ EXEC (@sqlRole);";
                 }
             }
 
-            _logger?.LogInformation("SQL Server user '{Username}' provisioned successfully with roles: [{Roles}].",
-                userOpt.Username, string.Join(", ", userOpt.Roles ?? Array.Empty<string>()));
+            _logger?.LogInformation(
+                "SQL Server user '{Username}' provisioned successfully with roles: [{Roles}].",
+                userOpt.Username,
+                string.Join(", ", userOpt.Roles ?? Array.Empty<string>())
+            );
         }
         catch (Exception ex)
         {
-            _logger?.LogWarning(ex, "Failed to provision SQL Server login/user '{Username}'.", userOpt.Username);
+            _logger?.LogWarning(
+                ex,
+                "Failed to provision SQL Server login/user '{Username}'.",
+                userOpt.Username
+            );
         }
     }
     #endregion
@@ -333,7 +401,8 @@ EXEC (@sqlRole);";
         DbConnectionStringBuilder builder,
         string? dbKey,
         string targetDbName,
-        CancellationToken ct)
+        CancellationToken ct
+    )
     {
         if (targetDbName.Equals("postgres", StringComparison.OrdinalIgnoreCase))
         {
@@ -347,7 +416,10 @@ EXEC (@sqlRole);";
         }
         else
         {
-            var pgBuilder = new DbConnectionStringBuilder { ConnectionString = builder.ConnectionString };
+            var pgBuilder = new DbConnectionStringBuilder
+            {
+                ConnectionString = builder.ConnectionString,
+            };
             if (!string.IsNullOrEmpty(dbKey))
             {
                 pgBuilder[dbKey] = "postgres";
@@ -382,42 +454,70 @@ EXEC (@sqlRole);";
 
                 if (!exists)
                 {
-                    _logger?.LogInformation("Creating PostgreSQL database '{Database}'...", targetDbName);
+                    _logger?.LogInformation(
+                        "Creating PostgreSQL database '{Database}'...",
+                        targetDbName
+                    );
                     var sanitizedDb = targetDbName.Replace("\"", "\"\"");
                     await using var createCmd = sysConn.CreateCommand();
                     createCmd.CommandText = $"CREATE DATABASE \"{sanitizedDb}\";";
                     await createCmd.ExecuteNonQueryAsync(ct);
-                    _logger?.LogInformation("PostgreSQL database '{Database}' created successfully.", targetDbName);
+                    _logger?.LogInformation(
+                        "PostgreSQL database '{Database}' created successfully.",
+                        targetDbName
+                    );
                     await Task.Delay(300, ct);
                 }
                 else
                 {
-                    _logger?.LogDebug("PostgreSQL database '{Database}' already exists.", targetDbName);
+                    _logger?.LogDebug(
+                        "PostgreSQL database '{Database}' already exists.",
+                        targetDbName
+                    );
                 }
             }
             catch (Exception ex)
             {
                 if (await CanConnectDirectlyAsync(ct).ConfigureAwait(false))
                 {
-                    _logger?.LogDebug("Direct connection to target database succeeded. Skipping system creation.");
+                    _logger?.LogDebug(
+                        "Direct connection to target database succeeded. Skipping system creation."
+                    );
                     return;
                 }
 
                 if (ex is OperationCanceledException && ct.IsCancellationRequested)
                 {
-                    _logger?.LogWarning("Auto-create PostgreSQL database '{Database}' was canceled.", targetDbName);
+                    _logger?.LogWarning(
+                        "Auto-create PostgreSQL database '{Database}' was canceled.",
+                        targetDbName
+                    );
                     return;
                 }
 
-                _logger?.LogError(ex, "Failed to auto-create PostgreSQL database '{Database}'.", targetDbName);
+                _logger?.LogError(
+                    ex,
+                    "Failed to auto-create PostgreSQL database '{Database}'.",
+                    targetDbName
+                );
                 throw new InvalidOperationException(
-                    $"Failed to auto-create PostgreSQL database '{targetDbName}'. Please ensure connection credentials have appropriate permissions on 'postgres' or set options.AdminConnectionString. Error: {ex.Message}", ex);
+                    $"Failed to auto-create PostgreSQL database '{targetDbName}'. Please ensure connection credentials have appropriate permissions on 'postgres' or set options.AdminConnectionString. Error: {ex.Message}",
+                    ex
+                );
             }
         }
 
-        if (_options.UserProvisioning.Enabled && !string.IsNullOrWhiteSpace(_options.UserProvisioning.Username))
+        if (
+            _options.UserProvisioning.Enabled
+            && !string.IsNullOrWhiteSpace(_options.UserProvisioning.Username)
+        )
         {
-            await ProvisionPostgreSqlUserAsync(systemConnStr, targetDbName, _options.UserProvisioning, ct);
+            await ProvisionPostgreSqlUserAsync(
+                systemConnStr,
+                targetDbName,
+                _options.UserProvisioning,
+                ct
+            );
         }
     }
 
@@ -425,9 +525,11 @@ EXEC (@sqlRole);";
         string systemConnStr,
         string targetDbName,
         DatabaseUserProvisioningOptions userOpt,
-        CancellationToken ct)
+        CancellationToken ct
+    )
     {
-        if (string.IsNullOrWhiteSpace(userOpt.Username)) return;
+        if (string.IsNullOrWhiteSpace(userOpt.Username))
+            return;
 
         if (userOpt.Username.Equals("postgres", StringComparison.OrdinalIgnoreCase))
         {
@@ -437,7 +539,11 @@ EXEC (@sqlRole);";
 
         try
         {
-            _logger?.LogInformation("Provisioning PostgreSQL role '{Username}' for database '{Database}'...", userOpt.Username, targetDbName);
+            _logger?.LogInformation(
+                "Provisioning PostgreSQL role '{Username}' for database '{Database}'...",
+                userOpt.Username,
+                targetDbName
+            );
 
             await using var sysConn = _connectionFactory.CreateConnection();
             sysConn.ConnectionString = systemConnStr;
@@ -461,22 +567,31 @@ EXEC (@sqlRole);";
             if (!roleExists)
             {
                 await using var createCmd = sysConn.CreateCommand();
-                createCmd.CommandText = $"CREATE ROLE \"{sanitizedUser}\" WITH LOGIN PASSWORD '{escapedPass}';";
+                createCmd.CommandText =
+                    $"CREATE ROLE \"{sanitizedUser}\" WITH LOGIN PASSWORD '{escapedPass}';";
                 await createCmd.ExecuteNonQueryAsync(ct);
             }
 
             var sanitizedDb = targetDbName.Replace("\"", "\"\"");
             await using (var grantCmd = sysConn.CreateCommand())
             {
-                grantCmd.CommandText = $"GRANT ALL PRIVILEGES ON DATABASE \"{sanitizedDb}\" TO \"{sanitizedUser}\";";
+                grantCmd.CommandText =
+                    $"GRANT ALL PRIVILEGES ON DATABASE \"{sanitizedDb}\" TO \"{sanitizedUser}\";";
                 await grantCmd.ExecuteNonQueryAsync(ct);
             }
 
-            _logger?.LogInformation("PostgreSQL role '{Username}' provisioned successfully.", userOpt.Username);
+            _logger?.LogInformation(
+                "PostgreSQL role '{Username}' provisioned successfully.",
+                userOpt.Username
+            );
         }
         catch (Exception ex)
         {
-            _logger?.LogWarning(ex, "Failed to provision PostgreSQL role '{Username}'.", userOpt.Username);
+            _logger?.LogWarning(
+                ex,
+                "Failed to provision PostgreSQL role '{Username}'.",
+                userOpt.Username
+            );
         }
     }
     #endregion
@@ -486,7 +601,8 @@ EXEC (@sqlRole);";
         DbConnectionStringBuilder builder,
         string? dbKey,
         string targetDbName,
-        CancellationToken ct)
+        CancellationToken ct
+    )
     {
         string systemConnStr;
         if (!string.IsNullOrWhiteSpace(_options.AdminConnectionString))
@@ -495,7 +611,10 @@ EXEC (@sqlRole);";
         }
         else
         {
-            var mySqlBuilder = new DbConnectionStringBuilder { ConnectionString = builder.ConnectionString };
+            var mySqlBuilder = new DbConnectionStringBuilder
+            {
+                ConnectionString = builder.ConnectionString,
+            };
             if (!string.IsNullOrEmpty(dbKey))
             {
                 mySqlBuilder[dbKey] = "mysql";
@@ -526,19 +645,35 @@ EXEC (@sqlRole);";
             {
                 if (await CanConnectDirectlyAsync(ct))
                 {
-                    _logger?.LogDebug("Direct connection to target database succeeded. Skipping system creation.");
+                    _logger?.LogDebug(
+                        "Direct connection to target database succeeded. Skipping system creation."
+                    );
                     return;
                 }
 
-                _logger?.LogError(ex, "Failed to auto-create MySQL database '{Database}'.", targetDbName);
+                _logger?.LogError(
+                    ex,
+                    "Failed to auto-create MySQL database '{Database}'.",
+                    targetDbName
+                );
                 throw new InvalidOperationException(
-                    $"Failed to auto-create MySQL database '{targetDbName}'. Please ensure connection credentials have appropriate permissions or set options.AdminConnectionString. Error: {ex.Message}", ex);
+                    $"Failed to auto-create MySQL database '{targetDbName}'. Please ensure connection credentials have appropriate permissions or set options.AdminConnectionString. Error: {ex.Message}",
+                    ex
+                );
             }
         }
 
-        if (_options.UserProvisioning.Enabled && !string.IsNullOrWhiteSpace(_options.UserProvisioning.Username))
+        if (
+            _options.UserProvisioning.Enabled
+            && !string.IsNullOrWhiteSpace(_options.UserProvisioning.Username)
+        )
         {
-            await ProvisionMySqlUserAsync(systemConnStr, targetDbName, _options.UserProvisioning, ct);
+            await ProvisionMySqlUserAsync(
+                systemConnStr,
+                targetDbName,
+                _options.UserProvisioning,
+                ct
+            );
         }
     }
 
@@ -546,9 +681,11 @@ EXEC (@sqlRole);";
         string systemConnStr,
         string targetDbName,
         DatabaseUserProvisioningOptions userOpt,
-        CancellationToken ct)
+        CancellationToken ct
+    )
     {
-        if (string.IsNullOrWhiteSpace(userOpt.Username)) return;
+        if (string.IsNullOrWhiteSpace(userOpt.Username))
+            return;
 
         if (userOpt.Username.Equals("root", StringComparison.OrdinalIgnoreCase))
         {
@@ -558,7 +695,11 @@ EXEC (@sqlRole);";
 
         try
         {
-            _logger?.LogInformation("Provisioning MySQL user '{Username}' for database '{Database}'...", userOpt.Username, targetDbName);
+            _logger?.LogInformation(
+                "Provisioning MySQL user '{Username}' for database '{Database}'...",
+                userOpt.Username,
+                targetDbName
+            );
 
             await using var sysConn = _connectionFactory.CreateConnection();
             sysConn.ConnectionString = systemConnStr;
@@ -570,26 +711,38 @@ EXEC (@sqlRole);";
 
             await using (var cmd = sysConn.CreateCommand())
             {
-                cmd.CommandText = $"CREATE USER IF NOT EXISTS '{sanitizedUser}'@'%' IDENTIFIED BY '{escapedPass}';";
+                cmd.CommandText =
+                    $"CREATE USER IF NOT EXISTS '{sanitizedUser}'@'%' IDENTIFIED BY '{escapedPass}';";
                 await cmd.ExecuteNonQueryAsync(ct);
             }
 
             await using (var cmd = sysConn.CreateCommand())
             {
-                cmd.CommandText = $"GRANT ALL PRIVILEGES ON `{sanitizedDb}`.* TO '{sanitizedUser}'@'%'; FLUSH PRIVILEGES;";
+                cmd.CommandText =
+                    $"GRANT ALL PRIVILEGES ON `{sanitizedDb}`.* TO '{sanitizedUser}'@'%'; FLUSH PRIVILEGES;";
                 await cmd.ExecuteNonQueryAsync(ct);
             }
 
-            _logger?.LogInformation("MySQL user '{Username}' provisioned successfully.", userOpt.Username);
+            _logger?.LogInformation(
+                "MySQL user '{Username}' provisioned successfully.",
+                userOpt.Username
+            );
         }
         catch (Exception ex)
         {
-            _logger?.LogWarning(ex, "Failed to provision MySQL user '{Username}'.", userOpt.Username);
+            _logger?.LogWarning(
+                ex,
+                "Failed to provision MySQL user '{Username}'.",
+                userOpt.Username
+            );
         }
     }
     #endregion
 
-    private static void AutoFillUserProvisioningFromConnectionString(DbConnectionStringBuilder builder, DatabaseUserProvisioningOptions userOpt)
+    private static void AutoFillUserProvisioningFromConnectionString(
+        DbConnectionStringBuilder builder,
+        DatabaseUserProvisioningOptions userOpt
+    )
     {
         if (string.IsNullOrWhiteSpace(userOpt.Username))
         {
@@ -618,9 +771,19 @@ EXEC (@sqlRole);";
         }
     }
 
-    private static (string? dbKey, string? dbName) ExtractDatabaseName(DbConnectionStringBuilder builder)
+    private static (string? dbKey, string? dbName) ExtractDatabaseName(
+        DbConnectionStringBuilder builder
+    )
     {
-        string[] candidates = { "Database", "Initial Catalog", "database", "initial catalog", "DB", "db" };
+        string[] candidates =
+        {
+            "Database",
+            "Initial Catalog",
+            "database",
+            "initial catalog",
+            "DB",
+            "db",
+        };
         foreach (var key in candidates)
         {
             if (builder.ContainsKey(key))

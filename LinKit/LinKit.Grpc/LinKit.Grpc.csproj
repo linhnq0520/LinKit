@@ -2,10 +2,10 @@
   <PropertyGroup>
     <TargetFrameworks>net8.0;net9.0;net10.0</TargetFrameworks>
     <PackageId>LinKit.Grpc</PackageId>
-    <Version>2.3.0</Version>
+    <Version>2.3.1</Version>
     <Description>Source-generated gRPC server and client adapters for LinKit CQRS requests.</Description>
     <PackageTags>linkit;grpc;source-generator;cqrs;mediator;aot</PackageTags>
-    <PackageReleaseNotes>v2.3.0: AddLinKitGrpc(baseAddress) is the single composition root - it registers the channel provider plus default interceptor provider, metadata provider and client factory, and still lets a later registration override any of them. AddGrpcChannel remains for callers that compose their own graph. Full documentation &amp; release notes: https://quoclinh.id.vn/docs/linkit</PackageReleaseNotes>
+    <PackageReleaseNotes>v2.3.1: documentation and packaging patch - every public member now carries XML documentation (CS1591 is enforced as a build error) and the README was reviewed for accuracy. Previous release: v2.3.0 - AddLinKitGrpc(baseAddress) is the single composition root - it registers the channel provider plus default interceptor provider, metadata provider and client factory, and still lets a later registration override any of them. AddGrpcChannel remains for callers that compose their own graph. Full documentation &amp; release notes: https://quoclinh.id.vn/docs/linkit</PackageReleaseNotes>
   </PropertyGroup>
 
   <ItemGroup>

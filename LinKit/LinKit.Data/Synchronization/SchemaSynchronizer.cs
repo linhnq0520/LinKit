@@ -9,27 +9,44 @@ using Microsoft.Extensions.Logging;
 
 namespace LinKit.Data.Synchronization;
 
+/// <summary>Reconciles the physical schema with the compile-time metadata emitted by the source generator.</summary>
 public interface ISchemaSynchronizer
 {
+    /// <summary>Creates missing tables and adds missing columns and indexes.</summary>
+    /// <param name="ct">Token used to cancel the synchronization.</param>
+    /// <returns>A task that completes when the schema is up to date.</returns>
     Task SynchronizeAsync(CancellationToken ct = default);
 }
 
+/// <summary>
+/// Default schema synchronizer: creates missing tables and adds missing columns and indexes.
+/// </summary>
+/// <remarks>
+/// The synchronizer is additive only. It never drops or retypes a column, so destructive changes belong in a
+/// versioned migration where they can be reviewed and ordered.
+/// </remarks>
 public class SchemaSynchronizer : ISchemaSynchronizer
 {
     private readonly IDbConnectionFactory _connectionFactory;
     private readonly IEnumerable<ITableSchemaProvider> _schemaProviders;
     private readonly ILogger<SchemaSynchronizer>? _logger;
 
+    /// <summary>Creates the synchronizer.</summary>
+    /// <param name="connectionFactory">Factory used to open the synchronization connection.</param>
+    /// <param name="schemaProviders">Generated providers; when a type appears in several providers the last one wins.</param>
+    /// <param name="logger">Optional logger that records the applied changes.</param>
     public SchemaSynchronizer(
         IDbConnectionFactory connectionFactory,
         IEnumerable<ITableSchemaProvider> schemaProviders,
-        ILogger<SchemaSynchronizer>? logger = null)
+        ILogger<SchemaSynchronizer>? logger = null
+    )
     {
         _connectionFactory = connectionFactory;
         _schemaProviders = schemaProviders;
         _logger = logger;
     }
 
+    /// <inheritdoc/>
     public async Task SynchronizeAsync(CancellationToken ct = default)
     {
         var dialect = SqlDialectFactory.GetDialect(_connectionFactory.Dialect);
@@ -50,8 +67,11 @@ public class SchemaSynchronizer : ISchemaSynchronizer
             await conn.OpenAsync(ct);
         }
 
-        _logger?.LogInformation("Starting LinKit.Data Auto-Schema Synchronization ({Dialect}, {Count} entities)...",
-            _connectionFactory.Dialect, tables.Count);
+        _logger?.LogInformation(
+            "Starting LinKit.Data Auto-Schema Synchronization ({Dialect}, {Count} entities)...",
+            _connectionFactory.Dialect,
+            tables.Count
+        );
 
         foreach (var table in tables)
         {
@@ -71,7 +91,11 @@ public class SchemaSynchronizer : ISchemaSynchronizer
                     if (!existingColumns.Contains(col.ColumnName))
                     {
                         var addColSql = dialect.GenerateAddColumnSql(table, col);
-                        _logger?.LogInformation("Adding column '{Column}' to table '{Table}'...", col.ColumnName, table.TableName);
+                        _logger?.LogInformation(
+                            "Adding column '{Column}' to table '{Table}'...",
+                            col.ColumnName,
+                            table.TableName
+                        );
                         await ExecuteNonQueryAsync(conn, addColSql, ct);
                         existingColumns.Add(col.ColumnName);
                     }
@@ -79,7 +103,9 @@ public class SchemaSynchronizer : ISchemaSynchronizer
                     // 4. Create index if marked
                     if (col.IsIndexed)
                     {
-                        var idxName = col.IndexName ?? $"idx_{table.TableName}_{col.PropertyName.ToLowerInvariant()}";
+                        var idxName =
+                            col.IndexName
+                            ?? $"idx_{table.TableName}_{col.PropertyName.ToLowerInvariant()}";
                         if (!existingIndexes.Contains(idxName))
                         {
                             try
@@ -90,7 +116,11 @@ public class SchemaSynchronizer : ISchemaSynchronizer
                             }
                             catch (Exception ex)
                             {
-                                _logger?.LogDebug(ex, "Index '{Index}' creation skipped or already managed by database.", idxName);
+                                _logger?.LogDebug(
+                                    ex,
+                                    "Index '{Index}' creation skipped or already managed by database.",
+                                    idxName
+                                );
                             }
                         }
                     }
@@ -109,14 +139,22 @@ public class SchemaSynchronizer : ISchemaSynchronizer
                         }
                         catch (Exception ex)
                         {
-                            _logger?.LogDebug(ex, "Composite index '{Index}' creation skipped.", idx.IndexName);
+                            _logger?.LogDebug(
+                                ex,
+                                "Composite index '{Index}' creation skipped.",
+                                idx.IndexName
+                            );
                         }
                     }
                 }
             }
             catch (Exception ex)
             {
-                _logger?.LogError(ex, "Failed to synchronize schema for table '{Table}'", table.TableName);
+                _logger?.LogError(
+                    ex,
+                    "Failed to synchronize schema for table '{Table}'",
+                    table.TableName
+                );
                 throw;
             }
         }
@@ -128,7 +166,8 @@ public class SchemaSynchronizer : ISchemaSynchronizer
         DbConnection conn,
         ISqlDialect dialect,
         TableSchemaMetadata table,
-        CancellationToken ct)
+        CancellationToken ct
+    )
     {
         var set = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var sql = dialect.GenerateGetExistingColumnsSql(table);
@@ -156,7 +195,8 @@ public class SchemaSynchronizer : ISchemaSynchronizer
         DbConnection conn,
         ISqlDialect dialect,
         TableSchemaMetadata table,
-        CancellationToken ct)
+        CancellationToken ct
+    )
     {
         var set = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var sql = dialect.GenerateGetExistingIndexesSql(table);
@@ -177,9 +217,14 @@ public class SchemaSynchronizer : ISchemaSynchronizer
         return set;
     }
 
-    private static async Task ExecuteNonQueryAsync(DbConnection conn, string sql, CancellationToken ct)
+    private static async Task ExecuteNonQueryAsync(
+        DbConnection conn,
+        string sql,
+        CancellationToken ct
+    )
     {
-        if (string.IsNullOrWhiteSpace(sql)) return;
+        if (string.IsNullOrWhiteSpace(sql))
+            return;
 
         await using var cmd = conn.CreateCommand();
         cmd.CommandText = sql;

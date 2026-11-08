@@ -1,8 +1,5 @@
 # LinKit.Data
 
-[![NuGet Version](https://img.shields.io/nuget/v/LinKit.Data.svg)](https://www.nuget.org/packages/LinKit.Data/)
-[![NuGet Downloads](https://img.shields.io/nuget/dt/LinKit.Data.svg)](https://www.nuget.org/packages/LinKit.Data/)
-
 **LinKit.Data** is a high-performance, source-generated, Native AOT-first ORM and schema synchronization library for .NET 8, .NET 9, and .NET 10. It eliminates heavy runtime reflection and dynamic compilation by generating strongly typed table metadata, reader mappers, projection models, and SQL AST queries at compile time.
 
 LinKit.Data supports **SQLite**, **PostgreSQL**, **SQL Server**, **MySQL**, and **Oracle**.
@@ -44,15 +41,15 @@ LinKit does not require EF Core or heavy runtime ORMs. It provides additive sche
 
 ### 2. Set-Based (Bulk) Updates and Deletes
 
-Execute SQL `UPDATE` and `DELETE` directly on the database without loading entities into application memory:
+Execute SQL `UPDATE` and `DELETE` directly on the database without loading entities into application memory (`db` is the source-generated `[DataContext]` shown in the usage guide; `db.ProductEntity` is an `IRepository<ProductEntity, int>`):
 
 ```csharp
-// Set-based delete with condition
-int deleted = await session.WorkflowStep
-    .DeleteWhereAsync(s => s.WorkflowId.Equal(workflowId), ct);
+// Set-based delete with a condition
+int deleted = await db.ProductEntity
+    .DeleteWhereAsync(p => p.CategoryId.Equal(categoryId), ct);
 
 // Set-based update with assignments
-int updated = await session.Product.Query()
+int updated = await db.ProductEntity.Query()
     .Where(p => p.CategoryId.Equal(categoryId))
     .ExecuteUpdateAsync(p => [p.Price.Set(29.99m)], ct);
 ```
@@ -63,12 +60,12 @@ int updated = await session.Product.Query()
 - **Collections & Ranges**: `.In(params T[] values)`, `.NotIn(...)`, and `.Between(lower, upper)`. Includes automatic 1000-element chunking with `OR` clauses for Oracle database engine compliance (`ORA-01795`).
 - **Dynamic Conditions**: `.WhereIf(condition, p => ...)` simplifies conditional filtering in search APIs without awkward `if-else` branching:
   ```csharp
-  var paged = await session.WorkflowInfo.Query()
-      .WhereIf(!string.IsNullOrWhiteSpace(req.WorkflowId), t => t.workflow_id.Equal(req.WorkflowId))
-      .WhereIf(fromMs.HasValue, t => t.created_on >= fromMs.Value)
-      .WhereIf(req.Status.HasValue, t => t.status.Equal(req.Status.Value))
-      .OrderByDescending(t => t.Id)
-      .ToPagedListAsync(req.PageIndex, req.PageSize, ct);
+  var paged = await db.ProductEntity.Query()
+      .WhereIf(!string.IsNullOrWhiteSpace(query.Keyword), p => p.Name.Contains(query.Keyword!))
+      .WhereIf(query.MinPrice.HasValue, p => p.Price >= query.MinPrice!.Value)
+      .WhereIf(query.CategoryIds?.Length > 0, p => p.CategoryId.In(query.CategoryIds!))
+      .OrderByDescending(p => p.Id)
+      .ToPagedListAsync(query.PageIndex, query.PageSize, ct);
   ```
 - **Explicit Bounded Reads**: `ToListAsync()` without `Take()` returns **all** matching rows — there is no implicit 100-row cap (previous versions silently truncated at 100). Use `Take(n)` or `ToPagedListAsync` for bounded reads.
 - **C# Null Semantics**: LINQ/expression equality follows C# null semantics — `x.Name != value` includes rows where `Name` is `NULL`, and nullable-column comparisons are null-compensated in SQL.
@@ -100,9 +97,27 @@ PagedResult<ProductEntity> result = await repository.Query()
 Ergonomic raw SQL helpers on `DataSession` and `Repository`:
 
 ```csharp
-int rows = await session.ExecuteSqlAsync("UPDATE items SET active = 1 WHERE group_id = @id", [("id", groupId)], ct);
-List<Item> items = await session.QuerySqlAsync("SELECT * FROM items WHERE type = @t", reader => reader.ReadItem(), [("t", type)], ct);
+// DataSession takes positional SqlArgument values, bound in placeholder order.
+int rows = await session.ExecuteSqlAsync(
+    "UPDATE items SET active = 1 WHERE group_id = @p0",
+    [new SqlArgument(groupId, null)],
+    ct);
+
+List<Item> items = await session.QuerySqlAsync(
+    "SELECT * FROM items WHERE type = @p0",
+    reader => reader.ReadItem(),
+    [new SqlArgument(type, null)],
+    ct);
+
+// IRepository<TEntity, TKey> takes named parameters from a dictionary or a tuple sequence.
+int affected = await db.ItemRepository.ExecuteSqlAsync(
+    "UPDATE items SET active = 1 WHERE group_id = @id",
+    new Dictionary<string, object?> { ["id"] = groupId },
+    ct);
 ```
+
+Named parameters must come from a `Dictionary<string, object?>` or an `IEnumerable<(string, object?)>`; anonymous
+objects are rejected so the call stays Native AOT compatible.
 
 ### 7. Query Shapes Tuned for the Database
 
@@ -175,28 +190,39 @@ Repository conveniences exist so callers stop hand-writing N+1 loops:
 
 ## Configuration Attributes
 
-| Attribute                                                                             | Scope            | Description                                                                                           |
-| :------------------------------------------------------------------------------------ | :--------------- | :---------------------------------------------------------------------------------------------------- |
-| `[Table("name", Schema = "...", Comment = "...")]`                                    | Class            | Maps entity to database table with optional schema and documentation comment.                         |
-| `[PrimaryKey(AutoIncrement = true)]`                                                  | Property         | Designates primary key with optional identity/auto-increment.                                         |
-| `[Column("col_name", CustomSqlType = "...")]`                                         | Property         | Overrides column name or explicit raw SQL type definition.                                            |
-| `[MaxLength(200)]`                                                                    | Property         | Defines max length for `VARCHAR(n)` / `NVARCHAR(n)` / `VARBINARY(n)`.                                 |
-| `[FixedLength(10)]`                                                                   | Property         | Configures fixed character columns: `CHAR(n)` / `NCHAR(n)`.                                           |
-| `[DecimalPrecision(18, 2)]`                                                           | Property         | Configures precision and scale: `DECIMAL(18, 2)` / `NUMERIC(18, 2)`.                                  |
-| `[DefaultValueSql("0")]`                                                              | Property         | Sets raw SQL default value expression during column creation.                                         |
-| `[ForeignKey("other_table", TargetColumn = "Id", OnDelete = OnDeleteAction.Cascade)]` | Property         | Configures foreign key constraint with referential delete actions.                                    |
-| `[CheckConstraint("Price >= 0", Name = "chk_price")]`                                 | Class / Property | Enforces SQL check constraint in database DDL.                                                        |
-| `[Comment("...")]`                                                                    | Class / Property | Attaches documentation comment in database metadata.                                                  |
-| `[Unicode(false)]`                                                                    | Property         | Sets string storage to ASCII/ANSI `VARCHAR` vs `NVARCHAR`.                                            |
-| `[JsonColumn]`                                                                        | Property         | Automatically serializes complex objects/lists to/from JSON/JSONB using System.Text.Json AOT context. |
-| `[ConcurrencyCheck]` / `[Version]`                                                    | Property         | Marks column for optimistic concurrency tracking.                                                     |
-| `[SoftDelete("DeletedAt")]`                                                           | Class            | Enables soft-delete behavior using the specified timestamp or boolean column.                         |
-| `[MultiTenant("TenantId")]`                                                           | Class            | Configures tenant isolation column enforced automatically by DataSession.                             |
-| `[Indexed(IsUnique = true, IndexName = "...")]`                                       | Property         | Automatically builds single-column index on startup.                                                  |
-| `[CompositeIndex("IX_Name_Age", nameof(Name), nameof(Age), IsUnique = true)]`         | Class            | Defines a multi-column unique or non-unique index.                                                    |
-| `[DataContext]`                                                                       | Class            | Generates typed context containing strongly-typed repositories and schema snapshots.                  |
-| `[DataRecord]`                                                                        | Class / Record   | Generates zero-reflection DTO projection mappers for typed joins.                                     |
-| `[DataMigration("20261025_01")]`                                                      | Class            | Declares an idempotent database migration.                                                            |
+| Attribute                                                                             | Scope             | Description                                                                                                                             |
+| :------------------------------------------------------------------------------------ | :---------------- | :-------------------------------------------------------------------------------------------------------------------------------------- |
+| `[Table("name", Schema = "...", Comment = "...")]`                                    | Class             | Maps entity to database table with optional schema and documentation comment.                                                           |
+| `[PrimaryKey(AutoIncrement = true)]`                                                  | Property          | Designates primary key with optional identity/auto-increment.                                                                           |
+| `[Column("col_name", CustomSqlType = "...")]`                                         | Property          | Overrides column name or explicit raw SQL type definition.                                                                              |
+| `[MaxLength(200)]`                                                                    | Property          | Defines max length for `VARCHAR(n)` / `NVARCHAR(n)` / `VARBINARY(n)`.                                                                   |
+| `[FixedLength(10)]`                                                                   | Property          | Configures fixed character columns: `CHAR(n)` / `NCHAR(n)`.                                                                             |
+| `[DecimalPrecision(18, 2)]`                                                           | Property          | Configures precision and scale: `DECIMAL(18, 2)` / `NUMERIC(18, 2)`.                                                                    |
+| `[DefaultValueSql("0")]`                                                              | Property          | Sets raw SQL default value expression during column creation.                                                                           |
+| `[ForeignKey("other_table", TargetColumn = "Id", OnDelete = OnDeleteAction.Cascade)]` | Property          | Configures foreign key constraint with referential delete actions.                                                                      |
+| `[CheckConstraint("Price >= 0", Name = "chk_price")]`                                 | Class / Property  | Enforces SQL check constraint in database DDL.                                                                                          |
+| `[Comment("...")]`                                                                    | Class / Property  | Attaches documentation comment in database metadata.                                                                                    |
+| `[Unicode(false)]`                                                                    | Property          | Sets string storage to ASCII/ANSI `VARCHAR` vs `NVARCHAR`.                                                                              |
+| `[JsonColumn]`                                                                        | Property          | Serializes complex objects/lists to/from JSON/JSONB. AOT-safe when a `JsonSerializerContext` is registered; otherwise reflection-based. |
+| `[ConcurrencyCheck]` / `[ConcurrencyToken]`                                           | Property          | Marks the column as an optimistic concurrency token: starts at `1`, filtered on update and incremented.                                 |
+| `[IgnoreColumn]`                                                                      | Property          | Excludes the property from column mapping.                                                                                              |
+| `[SoftDelete("DeletedAt")]`                                                           | Class             | Enables soft-delete behavior using the specified timestamp or boolean column.                                                           |
+| `[MultiTenant("TenantId")]`                                                           | Class             | Declares the tenant column; reads and writes are then scoped to `DataSession.TenantId`.                                                 |
+| `[TenantKey]`                                                                         | Property          | Property-level alternative to `[MultiTenant]`; `[MultiTenant]` wins when both are declared.                                             |
+| `[Indexed(IsUnique = true, IndexName = "...")]`                                       | Property          | Automatically builds single-column index on startup.                                                                                    |
+| `[CompositeIndex("IX_Name_Age", nameof(Name), nameof(Age), IsUnique = true)]`         | Class             | Defines a multi-column unique or non-unique index.                                                                                      |
+| `[DataContext]`                                                                       | Class             | Generates typed context containing strongly-typed repositories and schema snapshots.                                                    |
+| `[DataRecord]`                                                                        | Class             | Generates zero-reflection DTO projection mappers for typed joins.                                                                       |
+| `[DataRepository]`                                                                    | Class / Interface | Generates a typed repository, or implements a declared repository interface.                                                            |
+| `[SqlQuery("SELECT ...")]`                                                            | Method            | Marks a repository-interface method that runs the supplied raw SQL.                                                                     |
+| `[DataMigration("20261025_01")]`                                                      | Class             | Declares an idempotent database migration.                                                                                              |
+
+> **Where the guards are enforced.** Tenant scoping, optimistic-concurrency checks and soft-delete filtering are
+> implemented by the typed repositories a `[DataContext]` exposes (`data.ProductEntity`), which build on
+> `Repository<TEntity, TKey>`. The `IRepository<TEntity, TKey>` that dependency injection resolves for a plain
+> `[Table]` entity is a minimal CRUD repository: it filters soft-deleted rows but does **not** evaluate
+> `[MultiTenant]`/`[TenantKey]` or `[ConcurrencyCheck]`/`[ConcurrencyToken]`. For a tenant-scoped or versioned entity,
+> resolve the generated `{Entity}TypedRepository` or the `[DataContext]` instead of `IRepository<TEntity, TKey>`.
 
 ---
 
@@ -366,16 +392,16 @@ int affectedRows = await repository.DeleteWhereAsync(p => p.CategoryId.Equal(cat
 ## Unit of Work & Transactions
 
 ```csharp
-await using var tx = await session.BeginTransactionAsync(IsolationLevel.ReadCommitted, ct);
+await using var tx = await db.Session.BeginTransactionAsync(IsolationLevel.ReadCommitted, ct);
 try
 {
-    await session.ProductEntity.InsertAsync(newProduct, ct);
-    await session.CategoryEntity.UpdateAsync(category, ct);
+    await db.ProductEntity.InsertAsync(newProduct, ct);
+    await db.CategoryEntity.UpdateAsync(category, ct);
     await tx.CommitAsync(ct);
 }
 catch
 {
-    // Auto-rollbacks on dispose if commit was not called
+    // Disposing without a successful commit rolls the transaction back.
     throw;
 }
 ```

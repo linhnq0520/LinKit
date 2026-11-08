@@ -1,7 +1,5 @@
 # LinKit.Outbox.Data
 
-[![NuGet](https://img.shields.io/nuget/v/LinKit.Outbox.Data.svg)](https://www.nuget.org/packages/LinKit.Outbox.Data/)
-
 `LinKit.Outbox.Data` adds durable ADO.NET implementations of `IOutboxStore` and `IInboxStore`. It reuses the connection factory and unit of work from `LinKit.Data` and includes SQL dialect support for SQLite, PostgreSQL, SQL Server, MySQL, and Oracle.
 
 Delivery is **at least once**. The adapter does not claim exactly-once delivery or make a business database transaction atomic with a broker publish.
@@ -61,13 +59,13 @@ await builder.Build().RunAsync();
 
 Select the dialect matching the provider connection:
 
-| Provider | Dialect | Example connection |
-|---|---|---|
-| Microsoft.Data.Sqlite | `DatabaseDialect.Sqlite` | `new SqliteConnection(connectionString)` |
-| Npgsql | `DatabaseDialect.PostgreSql` | `new NpgsqlConnection(connectionString)` |
-| Microsoft.Data.SqlClient | `DatabaseDialect.SqlServer` | `new SqlConnection(connectionString)` |
-| MySqlConnector | `DatabaseDialect.MySql` | `new MySqlConnection(connectionString)` |
-| Oracle.ManagedDataAccess.Core | `DatabaseDialect.Oracle` | `new OracleConnection(connectionString)` |
+| Provider                      | Dialect                      | Example connection                       |
+| ----------------------------- | ---------------------------- | ---------------------------------------- |
+| Microsoft.Data.Sqlite         | `DatabaseDialect.Sqlite`     | `new SqliteConnection(connectionString)` |
+| Npgsql                        | `DatabaseDialect.PostgreSql` | `new NpgsqlConnection(connectionString)` |
+| Microsoft.Data.SqlClient      | `DatabaseDialect.SqlServer`  | `new SqlConnection(connectionString)`    |
+| MySqlConnector                | `DatabaseDialect.MySql`      | `new MySqlConnection(connectionString)`  |
+| Oracle.ManagedDataAccess.Core | `DatabaseDialect.Oracle`     | `new OracleConnection(connectionString)` |
 
 At host startup, `AddLinKitAdoNetOutbox` creates the Outbox/Inbox tables and the Outbox pending index before the publisher hosted service runs. The database principal needs DDL permission for these objects. If production principals cannot create schema, provision the tables/index through deployment tooling before starting the host.
 
@@ -154,7 +152,7 @@ if (await inbox.TryMarkProcessedAsync(id, consumer, TimeSpan.FromMinutes(10), ct
 
 The claim is a single atomic database operation per provider: SQLite/PostgreSQL use an upsert with an expired-row filter, SQL Server/Oracle use `MERGE`, and MySQL deletes expired rows then inserts; unique-key violations map to `false` (already claimed).
 
-**Tradeoff:** a crash *after* claiming but *before* processing leaves the message marked until the expiry elapses (at-most-once for that window). Pass an `expiry` to allow reclaim. The existing `HasBeenProcessedAsync`/`MarkProcessedAsync` are unchanged.
+**Tradeoff:** a crash _after_ claiming but _before_ processing leaves the message marked until the expiry elapses (at-most-once for that window). Pass an `expiry` to allow reclaim. The existing `HasBeenProcessedAsync`/`MarkProcessedAsync` are unchanged.
 
 ## Publisher behavior and operations
 

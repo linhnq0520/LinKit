@@ -1,0 +1,40 @@
+version: 2
+
+# Versions are centralised in LinKit/Directory.Packages.props, so one directory entry covers every
+# project. Majors are left out of the groups: they need a human to decide whether the new API is
+# worth taking, and grouping them with routine bumps hides that decision.
+updates:
+  - package-ecosystem: nuget
+    directory: "/LinKit"
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 5
+    groups:
+      nuget-minor-and-patch:
+        applies-to: version-updates
+        update-types:
+          - minor
+          - patch
+    ignore:
+      # Roslyn and SourceLink track the SDK family LinKit builds with; a major bump is a deliberate
+      # toolchain move, not a routine dependency update.
+      - dependency-name: "Microsoft.CodeAnalysis*"
+        update-types:
+          - version-update:semver-major
+      - dependency-name: "Microsoft.SourceLink.GitHub"
+        update-types:
+          - version-update:semver-major
+
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 5
+    groups:
+      actions-minor-and-patch:
+        applies-to: version-updates
+        update-types:
+          - minor
+          - patch

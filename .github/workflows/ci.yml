@@ -43,11 +43,33 @@ jobs:
           dotnet build LinKit/LinKit.sln --no-restore -c Release
           -warnaserror:RS2002,IL2026,IL2060,IL2067,IL2072,IL2075,IL2091,IL3050
 
-      - name: Test
-        run: >
-          dotnet test LinKit/LinKit.sln --no-build -c Release
-          --collect:"XPlat Code Coverage"
-          --results-directory artifacts/test-results
+      - name: Test (net8.0, net9.0, net10.0)
+        run: dotnet test LinKit/LinKit.sln --no-build -c Release
+
+      # Coverage runs on one target framework only: the same source lines would otherwise be
+      # counted once per TFM. The test projects are named explicitly because a solution-wide
+      # --framework switch forces that TFM onto every project, and the samples and generators
+      # are not multi-targeted. 44 is a ratchet floor, not a goal - it is close to the measured
+      # baseline, so it can only move up as tests are added.
+      - name: Coverage gate
+        shell: bash
+        run: |
+          set -euo pipefail
+          for project in LinKit/Test/LinKit.Messaging.Tests LinKit/LinKit.Json/tests/LinKit.Json.Tests; do
+            dotnet test "$project" --no-build -c Release -f net10.0 \
+              --collect:"XPlat Code Coverage" \
+              --results-directory artifacts/test-results
+          done
+          dotnet tool install --global dotnet-reportgenerator-globaltool
+          export PATH="$PATH:$HOME/.dotnet/tools"
+          reportgenerator \
+            -reports:'artifacts/test-results/**/coverage.cobertura.xml' \
+            -targetdir:artifacts/coverage \
+            -reporttypes:'TextSummary;MarkdownSummaryGithub' \
+            -assemblyfilters:'+LinKit.*;-LinKit.*Tests;-MonolithSample' \
+            -minimumCoverageThresholds:LineCoverage:44 \
+            -verbosity:Warning
+          cat artifacts/coverage/Summary.md >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload coverage
         if: always()
@@ -59,6 +81,74 @@ jobs:
 
       - name: Vulnerable packages
         run: dotnet list LinKit/LinKit.sln package --vulnerable --include-transitive
+
+  # ---------------------------------------------------------------------------
+  # Dialect coverage. LinKit.Data and LinKit.Outbox.Data emit provider-specific SQL, and a
+  # SQLite-only run cannot prove it. These tests are skipped locally unless the connection
+  # variables are set, so this job supplies real servers. Oracle is not included: the official
+  # image is large and licence-gated, so its tests stay opt-in.
+  # ---------------------------------------------------------------------------
+  database-integration:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: linkit_test_pw
+          POSTGRES_DB: linkit
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 10s --health-timeout 5s --health-retries 10
+      mysql:
+        image: mysql:8.4
+        env:
+          MYSQL_ROOT_PASSWORD: linkit_test_pw
+          MYSQL_DATABASE: linkit
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd "mysqladmin ping -h 127.0.0.1 -plinkit_test_pw"
+          --health-interval 10s --health-timeout 5s --health-retries 15
+      mssql:
+        image: mcr.microsoft.com/mssql/server:2022-latest
+        env:
+          ACCEPT_EULA: "Y"
+          MSSQL_SA_PASSWORD: "Linkit_Test_Pw1"
+        ports:
+          - 1433:1433
+        options: >-
+          --health-cmd "(/opt/mssql-tools18/bin/sqlcmd -S localhost -U sa -P Linkit_Test_Pw1 -C -Q 'SELECT 1' || /opt/mssql-tools/bin/sqlcmd -S localhost -U sa -P Linkit_Test_Pw1 -Q 'SELECT 1')"
+          --health-interval 10s --health-timeout 5s --health-retries 20
+    env:
+      LINKIT_TEST_POSTGRES: "Host=localhost;Port=5432;Database=linkit;Username=postgres;Password=linkit_test_pw"
+      LINKIT_TEST_MYSQL: "Server=localhost;Port=3306;Database=linkit;User ID=root;Password=linkit_test_pw;AllowPublicKeyRetrieval=true;SslMode=None"
+      LINKIT_TEST_SQLSERVER: "Server=localhost,1433;Database=master;User Id=sa;Password=Linkit_Test_Pw1;TrustServerCertificate=True"
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Restore
+        run: dotnet restore LinKit/LinKit.sln
+
+      - name: Build test project
+        run: dotnet build LinKit/Test/LinKit.Messaging.Tests -c Release --no-restore
+
+      - name: Check provider connection strings
+        run: |
+          for name in LINKIT_TEST_POSTGRES LINKIT_TEST_MYSQL LINKIT_TEST_SQLSERVER; do
+            if [ -n "${!name}" ]; then echo "$name is set"; else echo "::error::$name is empty"; exit 1; fi
+          done
+
+      # The whole suite runs here rather than an explicit filter, so a provider test added to a
+      # new class cannot be silently skipped. Tests whose connection variable is unset skip
+      # themselves, which keeps Oracle and anything else opt-in.
+      - name: Run tests against real servers
+        run: dotnet test LinKit/Test/LinKit.Messaging.Tests -c Release --no-build -f net10.0
 
   # ---------------------------------------------------------------------------
   # Style gate. The repository has a large pre-existing formatting backlog relative to
@@ -166,7 +256,6 @@ jobs:
   # ---------------------------------------------------------------------------
   samples:
     runs-on: ubuntu-latest
-    continue-on-error: true
     steps:
       - uses: actions/checkout@v4
 

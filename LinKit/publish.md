@@ -13,8 +13,12 @@ their names. Publishing is therefore version-agnostic: pack, then push everythin
 
 ```powershell
 cd LinKit
+Remove-Item -Recurse -Force artifacts/packages -ErrorAction SilentlyContinue
 dotnet pack LinKit.sln -c Release -o artifacts/packages
 ```
+
+Pack into an empty directory. A folder that still holds a previous build is how an old version
+gets pushed by mistake: the push step sends everything it finds.
 
 Every package is expected to contain `README.md`, XML documentation next to each `lib/<tfm>/`
 assembly, a `.snupkg` symbol package, and — for `LinKit.Core`, `LinKit.Data` and `LinKit.Grpc` —
@@ -41,7 +45,17 @@ Get-ChildItem artifacts/packages/*.snupkg |
 
 ## 3. Automated path
 
-`.github/workflows/publish.yml` runs on a `v*.*.*` tag: it builds, tests, packs, verifies that the
-tag matches the version baked into every package, pushes to nuget.org using the `NUGET_API_KEY`
-repository secret, and creates a GitHub release. Prefer this over publishing by hand.
+`.github/workflows/publish.yml` runs on a `v*.*.*` tag: it builds, tests, packs into an empty
+directory, validates every package, pushes to nuget.org using the `NUGET_API_KEY` repository
+secret, and creates a GitHub release. Prefer this over publishing by hand.
+
+The validation is per package, because the twelve packages version independently:
+
+- the file name must match the `id` and `version` inside the package's own nuspec;
+- the version must not be older than the one already published on nuget.org (an equal version is
+  reported and skipped, so a partially completed release can be re-run);
+- the number of produced packages must equal the number of packable projects, so a package that
+  silently failed to pack cannot slip through;
+- the tag must equal the `LinKit.Core` version, since Core is the package every other one depends
+  on and therefore names the release line.
 

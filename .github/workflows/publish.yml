@@ -1,7 +1,8 @@
 name: publish
 
-# Tag pattern: v<version>  (for example v3.4.0). Versions live in the csproj files,
-# which are the single source of truth; the tag is only a trigger.
+# Tag pattern: v<version> (for example v3.4.0). Versions live in the csproj files, which are the
+# single source of truth; the tag is only a trigger. The twelve packages are versioned
+# independently, so the tag names the release line via LinKit.Core rather than every package.
 on:
   push:
     tags:
@@ -47,23 +48,81 @@ jobs:
       - name: Test
         run: dotnet test LinKit/LinKit.sln --no-build -c Release
 
+      # Packing into a directory that may already hold an earlier build is how a stale version
+      # gets pushed by mistake, so the output directory starts empty.
       - name: Pack
-        run: dotnet pack LinKit/LinKit.sln -c Release -o artifacts/packages
+        run: |
+          rm -rf artifacts/packages
+          dotnet pack LinKit/LinKit.sln -c Release -o artifacts/packages
 
-      # Fails the release if the tag does not match every package version that was built.
-      - name: Verify tag matches package versions
+      # Fails the release if the tag does not name a version that was actually built. LinKit.Core
+      # identifies the release line because it is the package every other one depends on.
+      - name: Verify tag matches LinKit.Core version
+        if: github.event_name == 'push'
         shell: bash
         run: |
           set -euo pipefail
           tag="${GITHUB_REF_NAME#v}"
-          built=$(ls artifacts/packages/*.nupkg | grep -v '\.snupkg$' | sed -E 's#.*/([^/]+)\.([0-9]+\.[0-9]+\.[0-9]+(-[^/]+)?)\.nupkg#\2#' | sort -u)
+          core_pkg="artifacts/packages/LinKit.Core.${tag}.nupkg"
           echo "Tag version: $tag"
-          echo "Package versions: $built"
-          # Every package must share the release tag version, so a partial bump cannot slip out.
-          if [ "$(wc -l <<< "$built")" -ne 1 ] || [ "$built" != "$tag" ]; then
-            echo "::error::Packages were built with versions [$built] but the tag is v$tag."
+          ls -1 artifacts/packages/*.nupkg
+          if [ ! -f "$core_pkg" ]; then
+            echo "::error::Tag v$tag does not match the LinKit.Core version that was built. Bump LinKit.Core or retag to a built version."
             exit 1
           fi
+
+      # Each package is checked against its own version: the file name must agree with the nuspec,
+      # and the version must not move a package backwards relative to nuget.org. A version that is
+      # already published is reported instead of failing, so a partially completed release can be
+      # re-run safely (the push step uses --skip-duplicate).
+      - name: Verify package versions
+        shell: bash
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          fail=0
+          count=0
+          for pkg in artifacts/packages/*.nupkg; do
+            case "$pkg" in *.snupkg) continue ;; esac
+            count=$((count + 1))
+            base=$(basename "$pkg" .nupkg)
+            nuspec=$(unzip -p "$pkg" '*.nuspec' | tr -d '\r\n')
+            id=$(sed -n 's:.*<id>\([^<]*\)</id>.*:\1:p' <<< "$nuspec")
+            ver=$(sed -n 's:.*<version>\([^<]*\)</version>.*:\1:p' <<< "$nuspec")
+            if [ -z "$id" ] || [ -z "$ver" ]; then
+              echo "::error file=$pkg::Could not read id and version from the nuspec."
+              fail=1
+              continue
+            fi
+            if [ "$base" != "$id.$ver" ]; then
+              echo "::error file=$pkg::File name does not match nuspec id $id version $ver."
+              fail=1
+              continue
+            fi
+            published=$(curl -fsS --retry 2 "https://api.nuget.org/v3-flatcontainer/${id,,}/index.json" \
+              | jq -r '.versions | last // empty' || true)
+            if [ -z "$published" ]; then
+              echo "$id $ver (not on nuget.org yet)"
+            elif [ "$ver" = "$published" ]; then
+              echo "::warning file=$pkg::$id $ver is already on nuget.org and will be skipped."
+            elif [ "$(printf '%s\n%s\n' "$published" "$ver" | sort -V | head -n1)" = "$ver" ]; then
+              echo "::error file=$pkg::$id $ver is older than the published $published."
+              fail=1
+            else
+              echo "$id $ver (published: $published)"
+            fi
+          done
+          expected=$(find LinKit -name '*.csproj' -not -path '*/obj/*' -not -path '*/bin/*' \
+            | xargs -r -n1 basename \
+            | grep -E '^LinKit\.' \
+            | grep -vE '\.(Generator|Tests|AotSmoke)\.csproj$' \
+            | wc -l)
+          echo "Packed $count of $expected packable projects."
+          if [ "$count" -ne "$expected" ]; then
+            echo "::error::Expected $expected packages but found $count."
+            fail=1
+          fi
+          exit $fail
 
       - name: Upload packages
         uses: actions/upload-artifact@v4

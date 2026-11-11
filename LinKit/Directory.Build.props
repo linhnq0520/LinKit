@@ -61,9 +61,24 @@
     <IncludeSymbols>true</IncludeSymbols>
     <SymbolPackageFormat>snupkg</SymbolPackageFormat>
     <PackageReadmeFile>README.md</PackageReadmeFile>
+    <!--
+      SourceLink makes F11 step into the real source of a shipped package instead of decompiled IL. The symbol package
+      alone is not enough: without these two properties the PDB carries no source mapping and the .snupkg is inert.
+      EmbedUntrackedSources covers generated project files that are not committed to git.
+    -->
+    <PublishRepositoryUrl>true</PublishRepositoryUrl>
+    <EmbedUntrackedSources>true</EmbedUntrackedSources>
     <PackageReleaseNotes>Full documentation &amp; release notes: https://quoclinh.id.vn/docs/linkit</PackageReleaseNotes>
     <EnablePackageValidation>true</EnablePackageValidation>
   </PropertyGroup>
+
+  <!--
+    SourceLink is a build-time provider only: PrivateAssets="all" keeps it out of every nuspec dependency list, so
+    consumers never inherit it.
+  -->
+  <ItemGroup Condition="'$(LinKitIsLibrary)' == 'true'">
+    <PackageReference Include="Microsoft.SourceLink.GitHub" PrivateAssets="all" />
+  </ItemGroup>
 
   <!--
     A package that declares PackageReadmeFile must actually contain the file. Projects whose README lives one or

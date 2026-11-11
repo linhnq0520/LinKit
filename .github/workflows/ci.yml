@@ -19,7 +19,7 @@ jobs:
   build-test:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - uses: actions/setup-dotnet@v4
         with:
@@ -126,7 +126,7 @@ jobs:
       LINKIT_TEST_MYSQL: "Server=localhost;Port=3306;Database=linkit;User ID=root;Password=linkit_test_pw;AllowPublicKeyRetrieval=true;SslMode=None"
       LINKIT_TEST_SQLSERVER: "Server=localhost,1433;Database=master;User Id=sa;Password=Linkit_Test_Pw1;TrustServerCertificate=True"
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - uses: actions/setup-dotnet@v4
         with:
@@ -159,7 +159,7 @@ jobs:
     runs-on: ubuntu-latest
     continue-on-error: true
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - uses: actions/setup-dotnet@v4
         with:
@@ -179,7 +179,7 @@ jobs:
     runs-on: ubuntu-latest
     needs: build-test
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - uses: actions/setup-dotnet@v4
         with:
@@ -233,7 +233,7 @@ jobs:
       matrix:
         rid: [linux-x64]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - uses: actions/setup-dotnet@v4
         with:
@@ -257,7 +257,7 @@ jobs:
   samples:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - uses: actions/setup-dotnet@v4
         with:

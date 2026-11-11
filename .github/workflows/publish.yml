@@ -125,7 +125,7 @@ jobs:
           exit $fail
 
       - name: Upload packages
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: packages-${{ github.ref_name }}
           path: artifacts/packages
